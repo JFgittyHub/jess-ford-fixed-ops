@@ -54,7 +54,7 @@ function TechBoardPage() {
         <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Tech board</h1>
         <p className="mt-3 max-w-xl text-muted">
           {roster.length === 0
-            ? "Add a technician on the roster, then pick them here. There is no tech password."
+            ? "Add a technician on the roster, then pick them here. There is no password."
             : "Pick a technician. The board shows the open repair orders assigned to that person. There is no password."}
         </p>
         <div className="mt-5 max-w-md">{picker}</div>

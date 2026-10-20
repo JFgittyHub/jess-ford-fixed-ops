@@ -18,9 +18,9 @@ jobs:
         with:
           node-version: 22
       # npm 10 rejects this lockfile (`ajv@6.15.0` does not satisfy `ajv@8.20.0`).
-      # npm 11 installs it. setup-node's Node 22 image still ships npm 10.
-      - name: Install npm 11
-        run: npm install -g npm@11
+      # npm 11.21.1 installs it. setup-node's Node 22 image still ships npm 10.
+      - name: Install npm 11.21.1
+        run: npm install -g npm@11.21.1
       - name: Print toolchain versions
         run: node -v && npm -v
       - run: npm ci

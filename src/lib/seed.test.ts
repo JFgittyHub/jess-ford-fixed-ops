@@ -10,7 +10,7 @@ describe("shop sample data", () => {
   it("starts empty, with pay types and zero budgets, and the scorecard still runs", () => {
     const shop = createEmptyShop();
     assert.equal(shop.settings.storeName, "Jess Ford");
-    assert.equal(shop.settings.adminPassword, "admin");
+    assert.equal("adminPassword" in shop.settings, false);
     assert.deepEqual(
       shop.payTypes.map((row) => [row.id, row.rate]),
       [

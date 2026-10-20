@@ -14,15 +14,16 @@
  * Tri-mode:
  *   - Deployed: the deployer injects a per-app `GROK_AUTH_*` + `BETTER_AUTH_URL`
  *     + `DATABASE_URL`, so real federated auth is persisted in Postgres.
- *   - Grok sandbox (`NODE_ENV=development`, and no `VERCEL`, `VERCEL_ENV`, or
- *     `GROK_PROJECT_ID`): the shared preview client is used only when
+ *   - Grok sandbox (development, no `VERCEL` / `VERCEL_ENV` / `GROK_PROJECT_ID`,
+ *     and `GROK_PREVIEW_HOST` or `GROK_SANDBOX_HOST` set to a live-preview
+ *     host): the shared preview client is used only when
  *     `GROK_PREVIEW_CLIENT_SECRET` is set. Sandbox origins are
  *     `https://*.grok-sandbox.com`. Sessions persist in PGLite.
- *   - Anywhere else (Vercel, `NODE_ENV=production`, a project id, or an unset
- *     `NODE_ENV`): no preview client and no sandbox origins. Startup throws
- *     unless `GROK_AUTH_CLIENT_ID`, `GROK_AUTH_CLIENT_SECRET`,
- *     `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL` are set, and
- *     `VITE_AUTH_ENABLED` is not `false`.
+ *   - Anywhere else, including `npm run dev` without that host: no preview
+ *     client and no sandbox origins. Startup throws unless
+ *     `GROK_AUTH_CLIENT_ID`, `GROK_AUTH_CLIENT_SECRET`, `BETTER_AUTH_SECRET`,
+ *     and `BETTER_AUTH_URL` are set, and `VITE_AUTH_ENABLED` is not `false`.
+ *     The production server runs that check again from `server/plugins/auth-guard.ts`.
  *
  * NEVER import this from client code — it pulls in `pg` and server-only
  * Better Auth internals. The client uses `@/lib/auth/client`;

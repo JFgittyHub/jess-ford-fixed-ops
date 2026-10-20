@@ -11,6 +11,7 @@ import { grokPwaPlugin } from "./scripts/grok-pwa-plugin.mjs";
 // @ts-expect-error JS plugin alongside the TS vite config
 import { appEnvPlugin } from "./scripts/app-env-plugin.mjs";
 import { isMigrationFile } from "./scripts/migration-plan.mjs";
+import { isSandboxPreviewHost } from "./src/lib/env.server.ts";
 
 /** The files `src/lib/db.ts` globs — same directory, same non-recursive scope. */
 function hasGlobbedMigrations(root: string): boolean {
@@ -103,6 +104,12 @@ function authPopupPlugin(): Plugin {
           // Ensure Host is the public preview host so Better Auth's dynamic
           // baseURL / redirect_uri match the popup origin.
           if (!requestHeaders.has("host")) requestHeaders.set("host", host);
+
+          // The live preview's host is the positive sandbox marker. Copy it
+          // before the auth module loads. A shop PC's own host is not copied,
+          // so development mode alone cannot select grok_preview.
+          const previewHost = host.split(",")[0]?.trim() ?? "";
+          if (isSandboxPreviewHost(previewHost)) process.env.GROK_PREVIEW_HOST = previewHost;
 
           const request = new Request(`${proto}://${host}${rawUrl}`, {
             method: "GET",

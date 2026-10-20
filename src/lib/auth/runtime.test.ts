@@ -99,9 +99,18 @@ describe("auth startup outside the Grok sandbox", () => {
 });
 
 describe("auth startup in the Grok sandbox", () => {
-  it("uses the preview client and sandbox origins only for a development process", () => {
+  it("does not treat NODE_ENV=development as the sandbox", () => {
+    closed({
+      NODE_ENV: "development",
+      GROK_PREVIEW_CLIENT_SECRET: PREVIEW_SECRET,
+      HOST: "shop-pc.local",
+    });
+  });
+
+  it("uses the preview client only when a Grok preview host is set", () => {
     const surface = resolveAuthSurface({
       NODE_ENV: "development",
+      GROK_PREVIEW_HOST: "https://abc.grok-sandbox.com",
       GROK_PREVIEW_CLIENT_SECRET: PREVIEW_SECRET,
     });
     assert.equal(surface.sandbox, true);
@@ -113,8 +122,25 @@ describe("auth startup in the Grok sandbox", () => {
     assert.doesNotThrow(() =>
       assertProductionAuth({
         NODE_ENV: "development",
+        GROK_PREVIEW_HOST: "abc.grok-sandbox.com",
         GROK_PREVIEW_CLIENT_SECRET: PREVIEW_SECRET,
       }),
     );
+  });
+
+  it("accepts the path-based preview hosts and rejects the same host on Vercel", () => {
+    const marked = resolveAuthSurface({
+      NODE_ENV: "development",
+      GROK_SANDBOX_HOST: "preview.grok.mil",
+      GROK_PREVIEW_CLIENT_SECRET: PREVIEW_SECRET,
+    });
+    assert.equal(marked.sandbox, true);
+    assert.equal(marked.clientId, PREVIEW_CLIENT_ID);
+    closed({
+      NODE_ENV: "development",
+      VERCEL: "1",
+      GROK_PREVIEW_HOST: "abc.grok-sandbox.com",
+      GROK_PREVIEW_CLIENT_SECRET: PREVIEW_SECRET,
+    });
   });
 });

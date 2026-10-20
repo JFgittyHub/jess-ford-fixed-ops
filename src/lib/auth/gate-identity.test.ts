@@ -21,10 +21,14 @@ function enterSandbox() {
     NODE_ENV: process.env.NODE_ENV,
     VERCEL: process.env.VERCEL,
     VERCEL_ENV: process.env.VERCEL_ENV,
+    GROK_PROJECT_ID: process.env.GROK_PROJECT_ID,
+    GROK_PREVIEW_HOST: process.env.GROK_PREVIEW_HOST,
   };
   process.env.NODE_ENV = "development";
   delete process.env.VERCEL;
   delete process.env.VERCEL_ENV;
+  delete process.env.GROK_PROJECT_ID;
+  process.env.GROK_PREVIEW_HOST = "preview.grok-sandbox.com";
   return () => {
     if (previous.NODE_ENV === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previous.NODE_ENV;
@@ -32,6 +36,10 @@ function enterSandbox() {
     else process.env.VERCEL = previous.VERCEL;
     if (previous.VERCEL_ENV === undefined) delete process.env.VERCEL_ENV;
     else process.env.VERCEL_ENV = previous.VERCEL_ENV;
+    if (previous.GROK_PROJECT_ID === undefined) delete process.env.GROK_PROJECT_ID;
+    else process.env.GROK_PROJECT_ID = previous.GROK_PROJECT_ID;
+    if (previous.GROK_PREVIEW_HOST === undefined) delete process.env.GROK_PREVIEW_HOST;
+    else process.env.GROK_PREVIEW_HOST = previous.GROK_PREVIEW_HOST;
   };
 }
 

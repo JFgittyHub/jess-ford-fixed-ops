@@ -84,11 +84,41 @@ interface ShopActions {
   setBudget: (id: string, monthly: number) => void;
   setOverhead: (id: string, monthly: number) => void;
   sendCampaign: (input: Omit<Campaign, "id" | "sentOn">) => void;
-  resetDemo: () => void;
+  resetDemo: (confirmReplace?: boolean) => void;
   clearShop: () => void;
 }
 
 export type ShopState = ShopData & ShopActions;
+
+const OPERATIONAL_KEYS = [
+  "advisors",
+  "techs",
+  "customers",
+  "vehicles",
+  "parts",
+  "laborOps",
+  "orders",
+  "closedHistory",
+  "timeLogs",
+  "appointments",
+  "expenses",
+  "campaigns",
+] as const satisfies readonly (keyof ShopData)[];
+
+/** Customers, roster, tickets, or other shop work. Empty budgets and pay types do not count. */
+export function shopHasOperationalData(state: ShopData): boolean {
+  return OPERATIONAL_KEYS.some((key) => state[key].length > 0);
+}
+
+/**
+ * The sample month may replace an empty shop, or reload data that is already
+ * the sample. A shop with real work stays put unless the caller confirms.
+ */
+export function sampleLoadAllowed(state: ShopData, confirmReplace = false): boolean {
+  if (state.dataset === "sample") return true;
+  if (!shopHasOperationalData(state)) return true;
+  return confirmReplace === true;
+}
 
 function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -146,7 +176,25 @@ function dropStaffPassword<T extends object>(row: T): Omit<T, "password"> {
   return rest;
 }
 
+function withoutAdminPassword(settings: ShopData["settings"] & { adminPassword?: string }): ShopData["settings"] {
+  const { adminPassword: _adminPassword, ...rest } = settings;
+  return rest;
+}
+
+function withoutSavedPasswords(saved: Partial<ShopData>): Partial<ShopData> {
+  const settings = saved.settings && typeof saved.settings === "object"
+    ? withoutAdminPassword(saved.settings as ShopData["settings"] & { adminPassword?: string })
+    : saved.settings;
+  return {
+    ...saved,
+    settings,
+    advisors: Array.isArray(saved.advisors) ? saved.advisors.map((advisor) => dropStaffPassword(advisor)) : saved.advisors,
+    techs: Array.isArray(saved.techs) ? saved.techs.map((tech) => dropStaffPassword(tech)) : saved.techs,
+  };
+}
+
 const dataKeys: (keyof ShopData)[] = [
+  "dataset",
   "settings",
   "advisors",
   "techs",
@@ -164,6 +212,105 @@ const dataKeys: (keyof ShopData)[] = [
   "overhead",
   "campaigns",
 ];
+
+/** Persisted-shop load path. Staff passwords and the old admin password are removed on every branch, including a saved blob with no repair-order list. */
+export function migrateSavedShop(persisted: unknown): ShopState {
+  if (!persisted || typeof persisted !== "object") return persisted as ShopState;
+  const saved = withoutSavedPasswords(persisted as Partial<ShopData>);
+  if (!Array.isArray(saved.orders)) {
+    return {
+      ...saved,
+      dataset: saved.dataset === "sample" ? "sample" : "shop",
+    } as ShopState;
+  }
+  return {
+    ...saved,
+    orders: saved.orders.map((order) => {
+      const prior = order as RepairOrder & { cause?: string; correction?: string; jobs?: JobLine[] };
+      const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
+        ? prior.jobs
+        : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
+      const total = prior.labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
+        + prior.parts.reduce((sum, line) => sum + line.qty * line.price, 0);
+      const wa = normalizeWa(prior.wa);
+      const stamped = wa.choice
+        ? wa
+        : total > 0
+          ? { ...blankWa(), choice: "written" as const, initials: "on file", date: prior.openedOn, time: "08:00", estimate: money2(total) }
+          : wa;
+      return {
+        ...prior,
+        jobs,
+        concern: concernFromJobs(jobs) || prior.concern,
+        bay: prior.bay ?? bayFromStatus(prior.status),
+        mileageOut: prior.mileageOut ?? null,
+        fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, prior.status === "invoiced"),
+        taxRate: typeof prior.taxRate === "number" ? prior.taxRate : (typeof saved.settings?.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE),
+        inspection: prior.inspection ?? demoSheet(prior.id),
+        parts: prior.parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
+        wa: stamped,
+      };
+    }),
+    laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
+    payTypes: Array.isArray(saved.payTypes) && saved.payTypes.length > 0 ? saved.payTypes : defaultPayTypes(saved.settings),
+    campaigns: Array.isArray(saved.campaigns) ? saved.campaigns : [],
+    dataset: saved.dataset === "sample" ? "sample" : "shop",
+    appointments: Array.isArray(saved.appointments)
+      ? saved.appointments.map((row) => {
+          const vehicle = saved.vehicles?.find((item) => item.id === row.vehicleId);
+          const lines = Array.isArray(row.lines) && row.lines.length > 0
+            ? row.lines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
+            : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
+          const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
+          const known = saved.techs?.some((tech) => tech.id === row.techId) ? row.techId : "";
+          return {
+            ...row,
+            date: row.date ?? today(),
+            time: snapHalfHour(row.time ?? "07:00"),
+            minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : row.lane === "loaner" ? 180 : row.lane === "drop" ? 120 : row.lane === "waiter" ? 90 : 60,
+            lines,
+            concern: concernFromLines(lines) || row.concern,
+            vin: row.vin || vehicle?.vin || "",
+            laborOpIds: Array.isArray(row.laborOpIds) ? row.laborOpIds : [],
+            techId: known || fallback[row.id] || saved.techs?.[0]?.id || "",
+          };
+        })
+      : saved.appointments,
+    settings: saved.settings
+      ? { ...saved.settings, phone: saved.settings.phone ?? "", address: saved.settings.address ?? "", fees: normalizeFees(saved.settings.fees), taxRate: typeof saved.settings.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE }
+      : saved.settings,
+    timeLogs: Array.isArray(saved.timeLogs) ? saved.timeLogs : [],
+    closedHistory: Array.isArray(saved.closedHistory)
+      ? saved.closedHistory
+      : (saved.orders ?? []).filter((order) => order.status === "invoiced").map((order) => closedRecord(
+          order,
+          saved.customers?.find((row) => row.id === order.customerId),
+          saved.vehicles?.find((row) => row.id === order.vehicleId),
+        )),
+    advisors: Array.isArray(saved.advisors)
+      ? saved.advisors.map((advisor, index) => {
+          const row = dropStaffPassword(advisor);
+          return {
+            ...row,
+            number: row.number || ADVISOR_NUMBERS[row.id] || String(index + 1),
+            base: typeof row.base === "number" ? row.base : 4200,
+            laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 5,
+            partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 2,
+          };
+        })
+      : saved.advisors,
+    techs: Array.isArray(saved.techs)
+      ? saved.techs.map((tech, index) => {
+          const row = dropStaffPassword(tech);
+          return {
+            ...row,
+            number: row.number || TECH_NUMBERS[row.id] || String(index + 1),
+            board: row.board || ({ luis: "express", sam: "express", marcus: "main", elena: "main", andre: "main", chris: "main", priya: "internal", dana: "none" } satisfies Record<string, TechBoard>)[tech.id] || "main",
+          };
+        })
+      : saved.techs,
+  } as ShopState;
+}
 
 export const useShop = create<ShopState>()(
   persist(
@@ -768,12 +915,15 @@ export const useShop = create<ShopState>()(
           };
           return { campaigns: [row, ...state.campaigns] };
         }),
-      resetDemo: () =>
-        set((state) => ({
-          ...createSeed(),
-          settings: state.settings,
-          focusOrderId: null,
-        })),
+      resetDemo: (confirmReplace) =>
+        set((state) => {
+          if (!sampleLoadAllowed(state, confirmReplace)) return state;
+          return {
+            ...createSeed(),
+            settings: state.settings,
+            focusOrderId: null,
+          };
+        }),
       clearShop: () =>
         set((state) => ({
           ...createEmptyShop(),
@@ -783,99 +933,9 @@ export const useShop = create<ShopState>()(
     }),
     {
       name: "jess-ford-fixed-ops-v1",
-      version: 27,
+      version: 28,
       skipHydration: true,
-      migrate: (persisted) => {
-        if (!persisted || typeof persisted !== "object") return persisted as ShopState;
-        const saved = persisted as Partial<ShopData>;
-        if (!Array.isArray(saved.orders)) return persisted as ShopState;
-        return {
-          ...saved,
-          orders: saved.orders.map((order) => {
-            const prior = order as RepairOrder & { cause?: string; correction?: string; jobs?: JobLine[] };
-            const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
-              ? prior.jobs
-              : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
-            const total = prior.labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
-              + prior.parts.reduce((sum, line) => sum + line.qty * line.price, 0);
-            const wa = normalizeWa(prior.wa);
-            const stamped = wa.choice
-              ? wa
-              : total > 0
-                ? { ...blankWa(), choice: "written" as const, initials: "on file", date: prior.openedOn, time: "08:00", estimate: money2(total) }
-                : wa;
-            return {
-              ...prior,
-              jobs,
-              concern: concernFromJobs(jobs) || prior.concern,
-              bay: prior.bay ?? bayFromStatus(prior.status),
-              mileageOut: prior.mileageOut ?? null,
-              fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, prior.status === "invoiced"),
-              taxRate: typeof prior.taxRate === "number" ? prior.taxRate : (typeof saved.settings?.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE),
-              inspection: prior.inspection ?? demoSheet(prior.id),
-              parts: prior.parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
-              wa: stamped,
-            };
-          }),
-          laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
-          payTypes: Array.isArray(saved.payTypes) && saved.payTypes.length > 0 ? saved.payTypes : defaultPayTypes(saved.settings),
-          campaigns: Array.isArray(saved.campaigns) ? saved.campaigns : [],
-          appointments: Array.isArray(saved.appointments)
-            ? saved.appointments.map((row) => {
-                const vehicle = saved.vehicles?.find((item) => item.id === row.vehicleId);
-                const lines = Array.isArray(row.lines) && row.lines.length > 0
-                  ? row.lines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
-                  : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
-                const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
-                const known = saved.techs?.some((tech) => tech.id === row.techId) ? row.techId : "";
-                return {
-                  ...row,
-                  date: row.date ?? today(),
-                  time: snapHalfHour(row.time ?? "07:00"),
-                  minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : row.lane === "loaner" ? 180 : row.lane === "drop" ? 120 : row.lane === "waiter" ? 90 : 60,
-                  lines,
-                  concern: concernFromLines(lines) || row.concern,
-                  vin: row.vin || vehicle?.vin || "",
-                  laborOpIds: Array.isArray(row.laborOpIds) ? row.laborOpIds : [],
-                  techId: known || fallback[row.id] || saved.techs?.[0]?.id || "",
-                };
-              })
-            : saved.appointments,
-          settings: saved.settings
-            ? { ...saved.settings, phone: saved.settings.phone ?? "", address: saved.settings.address ?? "", fees: normalizeFees(saved.settings.fees), taxRate: typeof saved.settings.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE, adminPassword: saved.settings.adminPassword || "admin" }
-            : saved.settings,
-          timeLogs: Array.isArray(saved.timeLogs) ? saved.timeLogs : [],
-          closedHistory: Array.isArray(saved.closedHistory)
-            ? saved.closedHistory
-            : (saved.orders ?? []).filter((order) => order.status === "invoiced").map((order) => closedRecord(
-                order,
-                saved.customers?.find((row) => row.id === order.customerId),
-                saved.vehicles?.find((row) => row.id === order.vehicleId),
-              )),
-          advisors: Array.isArray(saved.advisors)
-            ? saved.advisors.map((advisor, index) => {
-                const row = dropStaffPassword(advisor);
-                return {
-                  ...row,
-                  number: row.number || ADVISOR_NUMBERS[row.id] || String(index + 1),
-                  base: typeof row.base === "number" ? row.base : 4200,
-                  laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 5,
-                  partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 2,
-                };
-              })
-            : saved.advisors,
-          techs: Array.isArray(saved.techs)
-            ? saved.techs.map((tech, index) => {
-                const row = dropStaffPassword(tech);
-                return {
-                  ...row,
-                  number: row.number || TECH_NUMBERS[row.id] || String(index + 1),
-                  board: row.board || ({ luis: "express", sam: "express", marcus: "main", elena: "main", andre: "main", chris: "main", priya: "internal", dana: "none" } satisfies Record<string, TechBoard>)[tech.id] || "main",
-                };
-              })
-            : saved.techs,
-        } as ShopState;
-      },
+      migrate: (persisted) => migrateSavedShop(persisted),
       partialize: (state) => {
         const saved: Partial<ShopData> = {};
         for (const key of dataKeys) saved[key] = state[key] as never;

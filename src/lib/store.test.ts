@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { pinClock, resetClock } from "./clock.ts";
-import { createEmptyShop } from "./seed.ts";
-import { useShop } from "./store.ts";
+import { createEmptyShop, createSeed } from "./seed.ts";
+import { migrateSavedShop, sampleLoadAllowed, useShop } from "./store.ts";
 import type { Advisor, RepairOrder, Tech, TimeLog } from "./types.ts";
 import type { WaRecord } from "./wa.ts";
 
@@ -132,7 +132,6 @@ describe("shop store", () => {
       ...empty,
       settings: {
         ...empty.settings,
-        adminPassword: "kept-secret",
         storeName: "Coulee",
         cpRate: 210,
         targetElr: 190,
@@ -144,7 +143,7 @@ describe("shop store", () => {
     const cleared = useShop.getState();
     assert.equal(cleared.orders.length, 0);
     assert.equal(cleared.customers.length, 0);
-    assert.equal(cleared.settings.adminPassword, "kept-secret");
+    assert.equal("adminPassword" in cleared.settings, false);
     assert.equal(cleared.settings.storeName, "Coulee");
     assert.equal(cleared.settings.cpRate, 210);
     assert.equal(cleared.settings.targetElr, 190);
@@ -152,9 +151,75 @@ describe("shop store", () => {
     useShop.getState().resetDemo();
     const seeded = useShop.getState();
     assert.ok(seeded.customers.length > 0);
-    assert.equal(seeded.settings.adminPassword, "kept-secret");
+    assert.equal("adminPassword" in seeded.settings, false);
     assert.equal(seeded.settings.storeName, "Coulee");
     assert.equal(seeded.settings.cpRate, 210);
     assert.equal(seeded.settings.targetElr, 190);
+    assert.equal(seeded.dataset, "sample");
+  });
+
+  it("treats a cleared shop as real data and a loaded sample as the demo dataset", () => {
+    const sample = createSeed();
+    useShop.setState({
+      ...sample,
+      settings: { ...sample.settings, storeName: "Coulee" },
+    });
+    useShop.getState().clearShop();
+    assert.equal(useShop.getState().dataset, "shop");
+    assert.equal(useShop.getState().settings.storeName, "Coulee");
+    useShop.getState().resetDemo();
+    assert.equal(useShop.getState().dataset, "sample");
+    assert.equal(useShop.getState().settings.storeName, "Coulee");
+  });
+
+  it("strips staff passwords and the admin password on every load path", () => {
+    const savedSettings = { ...createEmptyShop().settings, adminPassword: "kept-secret", storeName: "Coulee" };
+    const bare = migrateSavedShop({
+      advisors: [{ ...advisor, password: "21" }],
+      techs: [{ ...tech, password: "41" }],
+      settings: savedSettings,
+    });
+    assert.equal(Object.hasOwn(bare.advisors[0] as object, "password"), false);
+    assert.equal(Object.hasOwn(bare.techs[0] as object, "password"), false);
+    assert.equal(Object.hasOwn(bare.settings, "adminPassword"), false);
+    assert.equal(bare.settings.storeName, "Coulee");
+    assert.equal(bare.dataset, "shop");
+
+    const withOrders = migrateSavedShop({
+      orders: [bookedOrder()],
+      advisors: [{ ...advisor, password: "21" }],
+      techs: [{ ...tech, password: "41" }],
+      settings: { ...savedSettings, adminPassword: "old-admin" },
+    });
+    assert.equal(Object.hasOwn(withOrders.advisors[0] as object, "password"), false);
+    assert.equal(Object.hasOwn(withOrders.techs[0] as object, "password"), false);
+    assert.equal(Object.hasOwn(withOrders.settings, "adminPassword"), false);
+    assert.equal(withOrders.settings.storeName, "Coulee");
+    assert.equal(withOrders.orders.length, 1);
+  });
+
+  it("refuses to replace a real shop with the sample month unless that replacement is confirmed", () => {
+    const empty = createEmptyShop();
+    const withCustomer = {
+      ...empty,
+      customers: [{ id: "c", name: "Helen", phone: "5095550100" }],
+    };
+    assert.equal(sampleLoadAllowed(withCustomer, false), false);
+    assert.equal(sampleLoadAllowed(withCustomer, true), true);
+    assert.equal(sampleLoadAllowed(empty, false), true);
+    assert.equal(sampleLoadAllowed({ ...createSeed(), settings: empty.settings }, false), true);
+
+    useShop.setState({
+      ...withCustomer,
+      settings: { ...empty.settings, storeName: "Coulee" },
+    });
+    useShop.getState().resetDemo();
+    assert.equal(useShop.getState().customers.length, 1);
+    assert.equal(useShop.getState().dataset, "shop");
+    assert.equal(useShop.getState().settings.storeName, "Coulee");
+    useShop.getState().resetDemo(true);
+    assert.ok(useShop.getState().customers.length > 1);
+    assert.equal(useShop.getState().dataset, "sample");
+    assert.equal(useShop.getState().settings.storeName, "Coulee");
   });
 });

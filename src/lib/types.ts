@@ -34,7 +34,6 @@ export interface Settings {
   policyGuide: number;
   fees: FeeLine[];
   taxRate: number;
-  adminPassword: string;
 }
 
 export interface Advisor {
@@ -232,7 +231,11 @@ export interface Campaign {
   recipientIds: string[];
 }
 
+/** `sample` is the demo month. Anything else is a real shop and must not open the staff picker. */
+export type ShopDataset = "sample" | "shop";
+
 export interface ShopData {
+  dataset: ShopDataset;
   settings: Settings;
   advisors: Advisor[];
   techs: Tech[];

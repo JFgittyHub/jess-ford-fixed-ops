@@ -17,12 +17,11 @@ import {
   Package,
   Receipt,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { isDemoMode } from "@/lib/demo";
+import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
-import { useSession, writeSession } from "@/lib/session";
-import { useShop } from "@/lib/store";
+import { shopHasOperationalData, useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
 const NAV = [
@@ -75,11 +74,12 @@ export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
-  const { session } = useSession();
+  const dataset = useShop((state) => state.dataset);
+  const realShop = useShop((state) => state.dataset !== "sample" && shopHasOperationalData(state));
+  const [hydrated, setHydrated] = useState(false);
   const historyRef = useRef<string[]>([]);
   const [backTo, setBackTo] = useState<string | null>(null);
 
@@ -107,8 +107,16 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    void useShop.persist.rehydrate();
+    let live = true;
+    void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
+      if (live) setHydrated(true);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
+
+  if (!hydrated || !confirmedDemoStaffAccess({ dataset })) return <DeskLocked storeName={settings.storeName} />;
 
   return (
     <div className="min-h-screen bg-bg text-ink">
@@ -134,17 +142,10 @@ export function Shell({ children }: { children: ReactNode }) {
                 <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
-            {session ? (
-              <>
-                <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
-                  <Settings className="size-4" aria-hidden />
-                  Settings
-                </Button>
-                <Button tone="ghost" small onClick={() => writeSession(null)}>Sign out</Button>
-              </>
-            ) : (
-              <Button tone="ghost" small onClick={() => setSigningIn(true)}>Admin sign in</Button>
-            )}
+            <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
+              <Settings className="size-4" aria-hidden />
+              Settings
+            </Button>
           </div>
           <nav className="nav-scroll px-3 pb-3 md:hidden">
             <NavLinks onNavigate={() => undefined} />
@@ -152,7 +153,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
         <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          Kept in this browser only. The shop starts empty. Demo mode loads a sample month, and Settings can load it again while that mode is on. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          Kept in this browser only. This open desk is the sample month. Settings can reload it, and will ask before replacing shop work. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -187,9 +188,6 @@ export function Shell({ children }: { children: ReactNode }) {
           <Field label="Absorption target %">
             <input className="field tabular-nums" type="number" min={0} step={1} value={Math.round(settings.targetAbsorption * 100)} onChange={(event) => updateSettings({ targetAbsorption: (Number(event.target.value) || 0) / 100 })} />
           </Field>
-          <Field label="Admin password">
-            <input className="field" type="password" autoComplete="new-password" value={settings.adminPassword} onChange={(event) => updateSettings({ adminPassword: event.target.value })} />
-          </Field>
           <Field label="Policy guide % of CP labor">
             <input className="field tabular-nums" type="number" min={0} step={0.1} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
           </Field>
@@ -204,12 +202,12 @@ export function Shell({ children }: { children: ReactNode }) {
                     setConfirmClear(false);
                     return;
                   }
-                  resetDemo();
+                  resetDemo(true);
                   setConfirmReset(false);
                   setOpen(false);
                 }}
               >
-                {confirmReset ? "Load sample month now" : "Load sample month"}
+                {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
               </Button>
             ) : null}
             <Button
@@ -230,38 +228,18 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </form>
       </Modal>
-      <AdminSignIn open={signingIn} password={settings.adminPassword} onClose={() => setSigningIn(false)} />
     </div>
   );
 }
 
-function AdminSignIn({ open, password: adminPassword, onClose }: { open: boolean; password: string; onClose: () => void }) {
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    if (password === adminPassword) {
-      writeSession({ role: "admin" });
-      setPassword("");
-      setError("");
-      onClose();
-      return;
-    }
-    setError("Password is wrong.");
-  }
-
+function DeskLocked({ storeName }: { storeName: string }) {
   return (
-    <Modal open={open} onClose={onClose} title="Admin sign in" description="Settings stay behind this password. Advisors and technicians pick their name. They do not sign in.">
-      <form className="grid gap-3" onSubmit={submit}>
-        <Field label="Admin password">
-          <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
-        </Field>
-        {error ? <p className="text-sm text-primary">{error}</p> : null}
-        <div>
-          <Button tone="primary" type="submit">Sign in</Button>
-        </div>
-      </form>
-    </Modal>
+    <div className="flex min-h-screen items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-md text-center">
+        <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="mx-auto h-auto w-56" />
+        <h1 className="mt-4 font-display text-4xl leading-none">{storeName}</h1>
+        <p className="mt-3 text-sm text-muted">Sign-in via Azure/Entra coming; demo mode only for now.</p>
+      </div>
+    </div>
   );
 }

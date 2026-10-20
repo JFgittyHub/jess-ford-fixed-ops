@@ -206,7 +206,6 @@ function baseSettings() {
     policyGuide: 0.02,
     fees: DEFAULT_FEES.map((line) => ({ ...line })),
     taxRate: DEFAULT_TAX_RATE,
-    adminPassword: "admin",
   };
 }
 
@@ -287,6 +286,7 @@ export function createEmptyShop(): ShopData {
     { id: "oh-utl", name: "Utilities" },
   ];
   return {
+    dataset: "shop",
     settings,
     advisors: [],
     techs: [],
@@ -699,6 +699,7 @@ export function createSeed(): ShopData {
   }));
 
   return {
+    dataset: "sample",
     settings,
     advisors,
     techs,

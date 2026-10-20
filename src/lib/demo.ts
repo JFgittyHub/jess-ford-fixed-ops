@@ -8,8 +8,36 @@ export function isDemoMode(flag?: string): boolean {
   return /^(1|true|yes|on)$/i.test(raw.trim());
 }
 
+/**
+ * The whole desk, including settings and the staff picker, is open only when
+ * demo mode is explicitly confirmed. Phase 2 replaces this with the Entra
+ * identity check.
+ *
+ * Fails closed. Confirmation is the demo flag plus the sample dataset. A
+ * development server is not confirmation, and neither is a missing, unreadable,
+ * or ambiguous flag. There is no admin bypass.
+ */
+export function confirmedDemoStaffAccess(input: {
+  demoFlag?: string | null;
+  dataset?: string | null;
+} = {}): boolean {
+  const demoFlag = "demoFlag" in input ? input.demoFlag : readDemoFlag();
+  if (input.dataset !== "sample") return false;
+  if (typeof demoFlag !== "string") return false;
+  return /^(1|true|yes|on)$/i.test(demoFlag.trim());
+}
+
 function readDemoEnv(): string {
-  const env = import.meta.env as { VITE_DEMO_MODE?: string } | undefined;
-  const value = env?.VITE_DEMO_MODE;
-  return typeof value === "string" ? value : "";
+  const value = readDemoFlag();
+  return value ?? "";
+}
+
+function readDemoFlag(): string | null {
+  try {
+    const env = import.meta.env as { VITE_DEMO_MODE?: string } | undefined;
+    if (!env) return null;
+    return typeof env.VITE_DEMO_MODE === "string" ? env.VITE_DEMO_MODE : null;
+  } catch {
+    return null;
+  }
 }
