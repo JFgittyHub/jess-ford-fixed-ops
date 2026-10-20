@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Meter } from "@/components/ui";
-import { TODAY } from "@/lib/format";
+import { today } from "@/lib/format";
 import type { Appointment, TechBoard } from "@/lib/types";
 
 const START = 7 * 60;
@@ -337,7 +337,7 @@ export function AppointmentCalendar({
                   </article>
                 );
               })}
-              {nowTop !== null && day === TODAY ? (
+              {nowTop !== null && day === today() ? (
                 <div className="pointer-events-none absolute inset-x-0 z-40" style={{ top: nowTop }}>
                   <div className="h-0.5 bg-[#b42318]" />
                 </div>

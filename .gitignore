@@ -12,4 +12,5 @@ attachments
 .env
 .env.*
 *.log
+.local/
 .DS_Store

@@ -1,12 +1,14 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, feeTotal, localStamp, TODAY } from "./format";
+import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
-import { blankWa, normalizeWa, waLimit, type ExtraAuth, type WaRecord } from "./wa";
+import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
-import { laborCatalog, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
-import { closedRecord, closeGaps } from "./metrics";
+import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
+import { isDemoMode } from "./demo";
+import { bookRepairOrder, dropClosedHistory, invoiceRepairOrder, reopenRepairOrder, unbookRepairOrder } from "./ro";
+import { closedRecord } from "./metrics";
 import type { Advisor, Appointment, Campaign, ExpenseTxn, FeeLine, LaborLine, LaborOp, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, Tech, TechBoard } from "./types";
 
 export interface NewOrderInput {
@@ -83,6 +85,7 @@ interface ShopActions {
   setOverhead: (id: string, monthly: number) => void;
   sendCampaign: (input: Omit<Campaign, "id" | "sentOn">) => void;
   resetDemo: () => void;
+  clearShop: () => void;
 }
 
 export type ShopState = ShopData & ShopActions;
@@ -102,13 +105,6 @@ function isHeld(status: RoStatus) {
 
 function mapOrder(orders: RepairOrder[], orderId: string, edit: (order: RepairOrder) => RepairOrder) {
   return orders.map((order) => (order.id === orderId ? edit(order) : order));
-}
-
-function ticketOf(order: Pick<RepairOrder, "labor" | "parts" | "fees">) {
-  const labor = order.labor.reduce((sum, line) => sum + line.hours * line.rate, 0);
-  const parts = order.parts.reduce((sum, line) => sum + line.qty * line.price, 0);
-  const repair = labor + parts;
-  return repair + feeTotal(order.fees, repair);
 }
 
 function normalizeFees(value: unknown, keepShopFlat = false): FeeLine[] {
@@ -145,23 +141,6 @@ function normalizeFees(value: unknown, keepShopFlat = false): FeeLine[] {
   return DEFAULT_FEES.map((line) => ({ ...line }));
 }
 
-function fitsWa(order: RepairOrder, next: number) {
-  const limit = waLimit(normalizeWa(order.wa));
-  return limit !== null && next <= limit + 0.009;
-}
-
-function applyStock(parts: PartSku[], order: RepairOrder, direction: 1 | -1) {
-  return parts.map((part) => {
-    const qty = order.parts.filter((line) => line.partId === part.id).reduce((sum, line) => sum + line.qty, 0);
-    if (!qty) return part;
-    return {
-      ...part,
-      onHand: Math.max(0, part.onHand + direction * qty),
-      lastSale: direction === -1 ? TODAY : part.lastSale,
-    };
-  });
-}
-
 const dataKeys: (keyof ShopData)[] = [
   "settings",
   "advisors",
@@ -184,7 +163,7 @@ const dataKeys: (keyof ShopData)[] = [
 export const useShop = create<ShopState>()(
   persist(
     (set) => ({
-      ...createSeed(),
+      ...(isDemoMode() ? createSeed() : createEmptyShop()),
       focusOrderId: null,
       setFocus: (id) => set({ focusOrderId: id }),
       updateSettings: (patch) =>
@@ -406,50 +385,47 @@ export const useShop = create<ShopState>()(
       invoiceOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status !== "booked" || !fitsWa(order, ticketOf(order)) || closeGaps(order, state.techs, state.advisors, state.timeLogs).length > 0) return state;
-          const parts = order.stockApplied ? state.parts : applyStock(state.parts, order, -1);
+          if (!order) return state;
+          const result = invoiceRepairOrder(order, state.parts, state.techs, state.advisors, state.timeLogs, today());
+          if (!result) return state;
           const copy = closedRecord(
-            { ...order, status: "invoiced", invoicedOn: TODAY },
+            result.order,
             state.customers.find((row) => row.id === order.customerId),
             state.vehicles.find((row) => row.id === order.vehicleId),
           );
           copy.id = uid("hist");
           return {
-            parts,
+            parts: result.parts,
             closedHistory: [copy, ...state.closedHistory],
-            orders: mapOrder(state.orders, orderId, (row) => ({
-              ...row,
-              status: "invoiced",
-              invoicedOn: TODAY,
-              stockApplied: true,
-            })),
+            orders: mapOrder(state.orders, orderId, () => result.order),
           };
         }),
       bookOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || isHeld(order.status) || !fitsWa(order, ticketOf(order))) return state;
-          return { orders: mapOrder(state.orders, orderId, (row) => ({ ...row, status: "booked" })) };
+          if (!order) return state;
+          const next = bookRepairOrder(order);
+          if (!next) return state;
+          return { orders: mapOrder(state.orders, orderId, () => next) };
         }),
       unbookOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status !== "booked") return state;
-          return { orders: mapOrder(state.orders, orderId, (row) => ({ ...row, status: "ready" })) };
+          if (!order) return state;
+          const next = unbookRepairOrder(order);
+          if (!next) return state;
+          return { orders: mapOrder(state.orders, orderId, () => next) };
         }),
       reopenOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status !== "invoiced") return state;
-          const parts = order.stockApplied ? applyStock(state.parts, order, 1) : state.parts;
+          if (!order) return state;
+          const result = reopenRepairOrder(order, state.parts);
+          if (!result) return state;
           return {
-            parts,
-            orders: mapOrder(state.orders, orderId, (row) => ({
-              ...row,
-              status: "ready",
-              invoicedOn: null,
-              stockApplied: false,
-            })),
+            parts: result.parts,
+            closedHistory: dropClosedHistory(state.closedHistory, orderId),
+            orders: mapOrder(state.orders, orderId, () => result.order),
           };
         }),
       addLabor: (orderId, line) =>
@@ -641,7 +617,7 @@ export const useShop = create<ShopState>()(
           const order: RepairOrder = {
             id,
             number,
-            openedOn: TODAY,
+            openedOn: today(),
             promiseTime: input.promiseTime,
             status: "open",
             bay: "dispatch",
@@ -739,7 +715,7 @@ export const useShop = create<ShopState>()(
           const vin = (input.vin || "").trim().toUpperCase();
           const row: Appointment = {
             ...input,
-            date: input.date || TODAY,
+            date: input.date || today(),
             time: snapHalfHour(input.time || "07:00"),
             minutes: Math.max(30, Math.round((input.minutes || 60) / 30) * 30),
             lines: kept,
@@ -790,12 +766,13 @@ export const useShop = create<ShopState>()(
             name: input.name.trim(),
             message: input.message.trim(),
             audience: input.audience,
-            sentOn: TODAY,
+            sentOn: today(),
             recipientIds: input.recipientIds,
           };
           return { campaigns: [row, ...state.campaigns] };
         }),
       resetDemo: () => set({ ...createSeed(), focusOrderId: null }),
+      clearShop: () => set({ ...createEmptyShop(), focusOrderId: null }),
     }),
     {
       name: "jess-ford-fixed-ops-v1",
@@ -846,7 +823,7 @@ export const useShop = create<ShopState>()(
                 const known = saved.techs?.some((tech) => tech.id === row.techId) ? row.techId : "";
                 return {
                   ...row,
-                  date: row.date ?? "2026-10-19",
+                  date: row.date ?? today(),
                   time: snapHalfHour(row.time ?? "07:00"),
                   minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : row.lane === "loaner" ? 180 : row.lane === "drop" ? 120 : row.lane === "waiter" ? 90 : 60,
                   lines,

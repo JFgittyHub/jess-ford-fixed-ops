@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # npm 10 rejects this lockfile (`ajv@6.15.0` does not satisfy `ajv@8.20.0`).
+      # npm 11 installs it. setup-node's Node 22 image still ships npm 10.
+      - name: Install npm 11
+        run: npm install -g npm@11
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

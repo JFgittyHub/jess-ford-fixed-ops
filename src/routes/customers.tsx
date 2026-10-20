@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { NewOrder } from "@/components/new-order";
 import { Shell } from "@/components/shell";
 import { Button, Field, Pill } from "@/components/ui";
-import { daySpan, TODAY } from "@/lib/format";
+import { daySpan, today } from "@/lib/format";
 import { isSold, lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { Campaign } from "@/lib/types";
@@ -27,7 +27,7 @@ function CustomersPage() {
   const [query, setQuery] = useState("");
   const [riskOnly, setRiskOnly] = useState(false);
   const [writing, setWriting] = useState<string | null>(null);
-  const [name, setName] = useState("October maintenance");
+  const [name, setName] = useState("Maintenance reminder");
   const [audience, setAudience] = useState<Campaign["audience"]>("due7");
   const [message, setMessage] = useState("Jess Ford service: your vehicle is due for a visit. Call the store to book maintenance. Reply STOP to opt out.");
   const [skipOpen, setSkipOpen] = useState(true);
@@ -82,7 +82,7 @@ function CustomersPage() {
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Marketing</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Who is due back</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        A quiet owner is a lost maintenance visit. Names stay in this browser. Today is {TODAY}.
+        A quiet owner is a lost maintenance visit. Names stay in this browser. Today is {today()}.
       </p>
 
       <section className="card mt-5">

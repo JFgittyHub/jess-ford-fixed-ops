@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { BAY_LABEL, STATUS_LABEL, TODAY, clockTime, formatDuration, punchHours } from "@/lib/format";
+import { BAY_LABEL, STATUS_LABEL, clockTime, formatDuration, punchHours, today as shopToday } from "@/lib/format";
 import { lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import { useSession, writeSession } from "@/lib/session";
@@ -110,7 +110,7 @@ function TechBoardPage() {
   const jobs = assignedOpen(tech.id, shop.orders);
   const open = shop.timeLogs.find((row) => row.techId === tech.id && row.endedAt === null) ?? null;
   const current = open ? shop.orders.find((order) => order.id === open.orderId) : undefined;
-  const todayLogs = shop.timeLogs.filter((row) => row.techId === tech.id && (row.startedAt.startsWith(TODAY) || row.endedAt === null));
+  const todayLogs = shop.timeLogs.filter((row) => row.techId === tech.id && (row.startedAt.startsWith(shopToday()) || row.endedAt === null));
   const today = loggedHours(todayLogs, tech.id, null, now);
   const flagged = jobs.reduce((sum, order) => sum + order.labor.filter((line) => line.techId === tech.id).reduce((hours, line) => hours + line.hours, 0), 0);
   const ordered = [...jobs].sort((a, b) => (a.id === open?.orderId ? -1 : b.id === open?.orderId ? 1 : a.promiseTime.localeCompare(b.promiseTime)));

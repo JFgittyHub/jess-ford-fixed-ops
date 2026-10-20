@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { DAY_OF_MONTH, DAYS_IN_MONTH, usd } from "@/lib/format";
+import { dayOfMonth, daysInMonth, usd } from "@/lib/format";
 import { isSold, orderMoney } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 
@@ -20,7 +20,7 @@ function AdvisorsPage() {
   const [partsPercent, setPartsPercent] = useState("2");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const pace = DAY_OF_MONTH / DAYS_IN_MONTH;
+  const pace = dayOfMonth() / daysInMonth();
   const sold = shop.orders.filter(isSold);
 
   return (

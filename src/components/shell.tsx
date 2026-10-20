@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { DAY_LABEL } from "@/lib/format";
+import { todayLabel } from "@/lib/format";
 import { homeFor, pathAllowed, useSession, writeSession, type Session } from "@/lib/session";
 import { useShop } from "@/lib/store";
 import type { Advisor, Tech } from "@/lib/types";
@@ -71,8 +71,10 @@ export function Shell({ children }: { children: ReactNode }) {
   const settings = useShop((state) => state.settings);
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
+  const clearShop = useShop((state) => state.clearShop);
   const [open, setOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
@@ -140,11 +142,11 @@ export function Shell({ children }: { children: ReactNode }) {
               <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-14 w-auto md:hidden" />
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{settings.storeName}</p>
-                <p className="truncate text-xs text-muted">{settings.city} · {DAY_LABEL}</p>
+                <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
             {session.role === "admin" ? (
-              <Button tone="ghost" small onClick={() => { setConfirmReset(false); setOpen(true); }} aria-label="Store settings">
+              <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
                 <Settings className="size-4" aria-hidden />
                 Settings
               </Button>
@@ -159,7 +161,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
         <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{pathAllowed(session, pathname) ? children : null}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          Kept in this browser only. Sample October for Jess Ford — rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          Kept in this browser only. The shop starts empty. Load the sample month from Settings, or start with VITE_DEMO_MODE, when you want the demo customers and repair orders. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -207,6 +209,7 @@ export function Shell({ children }: { children: ReactNode }) {
               onClick={() => {
                 if (!confirmReset) {
                   setConfirmReset(true);
+                  setConfirmClear(false);
                   return;
                 }
                 resetDemo();
@@ -214,7 +217,22 @@ export function Shell({ children }: { children: ReactNode }) {
                 setOpen(false);
               }}
             >
-              {confirmReset ? "Restore sample month now" : "Restore sample month"}
+              {confirmReset ? "Load sample month now" : "Load sample month"}
+            </Button>
+            <Button
+              tone={confirmClear ? "accent" : "ghost"}
+              onClick={() => {
+                if (!confirmClear) {
+                  setConfirmClear(true);
+                  setConfirmReset(false);
+                  return;
+                }
+                clearShop();
+                setConfirmClear(false);
+                setOpen(false);
+              }}
+            >
+              {confirmClear ? "Clear shop data now" : "Clear shop data"}
             </Button>
           </div>
         </form>

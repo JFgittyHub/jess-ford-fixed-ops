@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, punchHours, usd } from "@/lib/format";
+import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, monthName, punchHours, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney, closeGaps } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
@@ -413,7 +413,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         ) : booked ? (
           <>
             <Button onClick={() => shop.unbookOrder(order.id)}>Unbook</Button>
-            <Button tone="primary" disabled={gaps.length > 0} onClick={() => shop.invoiceOrder(order.id)}>Close — count it in October</Button>
+            <Button tone="primary" disabled={gaps.length > 0} onClick={() => shop.invoiceOrder(order.id)}>Close — count it in {monthName()}</Button>
           </>
         ) : (
           <Button tone="primary" disabled={!readyToInvoice(order)} onClick={() => shop.bookOrder(order.id)}>Book — ready to close</Button>

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { printRepairOrder } from "@/components/repair-order-print";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { TODAY, feeCharge, feeTotal, salesTax, usd } from "@/lib/format";
+import { feeCharge, feeTotal, salesTax, today, usd } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { partSell, rateFor } from "@/lib/pay";
 import { useShop } from "@/lib/store";
@@ -115,7 +115,7 @@ function EstimatesPage() {
         condition: "new",
       });
     }
-    shop.updateWa(id, { choice: "written", estimate: beforeTax, date: TODAY, time: "08:00" });
+    shop.updateWa(id, { choice: "written", estimate: beforeTax, date: today(), time: "08:00" });
     navigate({ to: "/orders" });
   }
 
@@ -258,7 +258,7 @@ function EstimatesPage() {
         <p className="ro-kicker">{shop.settings.storeName}</p>
         <h1>Repair estimate</h1>
         <p>{customer?.name ?? "Customer"}{vehicle ? ` · ${vehicle.year} Ford ${vehicle.model}` : ""}{mileage ? ` · ${Number(mileage).toLocaleString("en-US")} miles` : ""}</p>
-        <p>Advisor {advisor ? `#${advisor.number} ${advisor.name}` : "—"} · {TODAY}</p>
+        <p>Advisor {advisor ? `#${advisor.number} ${advisor.name}` : "—"} · {today()}</p>
         <h2>Concerns</h2>
         {written.length === 0 ? <p>No concerns written.</p> : written.map((line, index) => <p key={index}>{lineLetter(index)}. {line}</p>)}
         <h2>Labor</h2>

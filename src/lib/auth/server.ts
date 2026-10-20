@@ -14,18 +14,19 @@
  * Tri-mode:
  *   - Deployed: the deployer injects a per-app `GROK_AUTH_*` + `BETTER_AUTH_URL`
  *     + `DATABASE_URL`, so real federated auth is persisted in Postgres.
- *   - Sandbox live preview: no injection -> falls back to the shared **preview
- *     client** (`./preview`) and derives the preview's `https://*.grok-sandbox.com`
- *     origin from the request, so real sign-in works (no demo users). Sessions
- *     and identities persist in the embedded PGLite DB (same DB as app data);
- *     the process restart wipes both. Live-preview iframe clients use a bearer
- *     token (partitioned cookies) — see `client.ts`.
+ *   - Sandbox live preview: no per-app injection and no `GROK_PROJECT_ID` ->
+ *     the shared **preview client** (`./preview`) is used only when
+ *     `GROK_PREVIEW_CLIENT_SECRET` is set. The preview's
+ *     `https://*.grok-sandbox.com` origin is derived from the request.
+ *     Sessions persist in the embedded PGLite DB; a process restart wipes
+ *     them. Live-preview iframe clients use a bearer token — see `client.ts`.
+ *     A deployed app never falls back to that preview secret.
  *   - Off (`VITE_AUTH_ENABLED=false`, the shipped default): no providers;
  *     `requireUserId` resolves a dev user with no database configured, and
  *     throws fail-closed once `DATABASE_URL` is set (see `verify.server.ts`).
  *
- * NEVER import this from client code — it pulls in `pg` + the preview secret +
- * server-only Better Auth internals. The client uses `@/lib/auth/client`;
+ * NEVER import this from client code — it pulls in `pg` and server-only
+ * Better Auth internals. The client uses `@/lib/auth/client`;
  * components read the user via `@/lib/auth/use-current-user`; server functions get
  * a verified id via `@/lib/auth/middleware`.
  */
@@ -36,6 +37,7 @@ import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
+import { isWorkspacePreview } from "../env.server";
 import { emailAndPasswordEnabled } from "./email-password";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
@@ -43,8 +45,8 @@ import { pgliteDialect } from "./pglite-dialect";
 import {
   GROK_ISSUER_DEFAULT,
   PREVIEW_ALLOWED_HOSTS,
-  PREVIEW_CLIENT_ID,
-  PREVIEW_CLIENT_SECRET,
+  previewClientSecretFromEnv,
+  resolveBrokerClient,
 } from "./preview";
 
 // Kick (and share) PGLite bootstrap as soon as the auth server module loads.
@@ -74,12 +76,18 @@ const env = (key: string): string | undefined => {
 // provisions auth; set it to "false" to force auth off everywhere (dev user).
 const authDisabled = env("VITE_AUTH_ENABLED") === "false";
 
-// Broker federation creds: the deployer injects a per-app client when deployed;
-// otherwise fall back to the shared live-preview client, which the broker accepts
-// for any `*.grok-sandbox.com` callback (see `./preview`).
+// Broker federation creds. A deployed app (`GROK_PROJECT_ID` set) uses only the
+// per-app client. The shared preview client is a sandbox fallback, and only
+// when `GROK_PREVIEW_CLIENT_SECRET` was injected — never a value in source.
 const grokIssuer = env("GROK_AUTH_ISSUER") ?? GROK_ISSUER_DEFAULT;
-const grokClientId = env("GROK_AUTH_CLIENT_ID") ?? PREVIEW_CLIENT_ID;
-const grokClientSecret = env("GROK_AUTH_CLIENT_SECRET") ?? PREVIEW_CLIENT_SECRET;
+const brokerClient = resolveBrokerClient({
+  deployed: !isWorkspacePreview(),
+  authClientId: env("GROK_AUTH_CLIENT_ID"),
+  authClientSecret: env("GROK_AUTH_CLIENT_SECRET"),
+  previewClientSecret: previewClientSecretFromEnv(),
+});
+const grokClientId = brokerClient.clientId;
+const grokClientSecret = brokerClient.clientSecret;
 
 /** True when federated sign-in is active (real auth is enforced). */
 export const authConfigured =

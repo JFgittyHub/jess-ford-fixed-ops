@@ -4,7 +4,7 @@ import { NewOrder } from "@/components/new-order";
 import { OrderEditor } from "@/components/order-editor";
 import { Shell } from "@/components/shell";
 import { Button, Pill } from "@/components/ui";
-import { BAY_LABEL, daySpan, STATUS_LABEL, usd } from "@/lib/format";
+import { BAY_LABEL, daySpan, monthName, STATUS_LABEL, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
 import { isOpen, isSold, lookups, orderMoney } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
@@ -84,7 +84,7 @@ function OrdersPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Repair orders</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
-          <p className="mt-2 max-w-xl text-muted">{openCount} open. {soldCount} closed in October. Book a ticket when it is ready, then close it. Close is what moves absorption.</p>
+          <p className="mt-2 max-w-xl text-muted">{openCount} open. {soldCount} closed in {monthName()}. Book a ticket when it is ready, then close it. Close is what moves absorption.</p>
         </div>
         {session?.role === "tech" ? null : <Button tone="primary" onClick={() => setWriting(true)}>Write RO</Button>}
       </div>
