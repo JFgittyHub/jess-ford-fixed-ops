@@ -107,7 +107,8 @@ function NewOrderForm({
           const booked = preset?.appointmentId
             ? shop.appointments.find((row) => row.id === preset.appointmentId)
             : undefined;
-          const carriedTech = booked?.techId || shop.techs[0]?.id || "";
+          // An appointment with no tech stays unassigned. Invoice already requires a technician number on every labor line.
+          const carriedTech = booked ? (booked.techId ?? "").trim() : (shop.techs[0]?.id ?? "");
           const id = shop.createOrder({
             customerId: nextCustomer,
             vehicleId: nextVehicle,

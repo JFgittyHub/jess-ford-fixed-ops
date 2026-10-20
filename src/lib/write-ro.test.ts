@@ -606,6 +606,42 @@ describe("Write RO", () => {
     assert.equal(order.labor.every((line) => line.techId === andre.id), true);
     view.root.unmount();
   });
+
+  it("leaves carried labor unassigned when the appointment has no tech", async () => {
+    loadShop();
+    const marcus = tech("marcus", "41", "Marcus Hale");
+    useShop.setState({
+      techs: [marcus, tech("andre", "7", "Andre Brooks")],
+      laborOps: [
+        { id: "op-dsl", opcode: "DSL", description: "Diesel fuel filters and oil", hours: 2.4, payType: "cp" },
+      ],
+      appointments: useShop.getState().appointments.map((row) =>
+        row.id === "appt-glenn" ? { ...row, techId: "", laborOpIds: ["op-dsl"] } : row,
+      ),
+    });
+    assert.equal(useShop.getState().techs[0]?.id, marcus.id);
+
+    const view = await renderWriteRo();
+    await view.set({
+      open: true,
+      onClose() {},
+      preset: {
+        customerId: "glenn",
+        vehicleId: "glenn-car",
+        advisorId: "advisor-glenn",
+        concern: "Diesel service",
+        laborOpIds: ["op-dsl"],
+        appointmentId: "appt-glenn",
+      },
+    });
+    await view.submit();
+
+    const order = useShop.getState().orders[0];
+    assert.ok(order);
+    assert.deepEqual(order.labor.map((line) => line.opcode), ["DSL"]);
+    assert.equal(order.labor.every((line) => line.techId === ""), true);
+    view.root.unmount();
+  });
 });
 
 function tech(id: string, number: string, name: string): Tech {
