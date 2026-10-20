@@ -18,7 +18,6 @@ function AdvisorsPage() {
   const [base, setBase] = useState("4200");
   const [laborPercent, setLaborPercent] = useState("5");
   const [partsPercent, setPartsPercent] = useState("2");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const pace = dayOfMonth() / daysInMonth();
   const sold = shop.orders.filter(isSold);
@@ -28,7 +27,7 @@ function AdvisorsPage() {
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Advisors</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The drive</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        Add an advisor, or change the number, name, pay plan, and password. An advisor signs in with the advisor number and only sees their own repair orders, appointments, estimates, and parts.
+        Add an advisor, or change the number, name, and pay plan. An advisor is chosen on the ticket. There is no advisor password.
       </p>
 
       <form
@@ -38,11 +37,11 @@ function AdvisorsPage() {
           const basePay = Number(base);
           const labor = Number(laborPercent);
           const parts = Number(partsPercent);
-          if (!number.trim() || !name.trim() || !password.trim() || !Number.isFinite(basePay) || !Number.isFinite(labor) || !Number.isFinite(parts)) {
-            setError("Need a number, a name, a password, and a pay plan.");
+          if (!number.trim() || !name.trim() || !Number.isFinite(basePay) || !Number.isFinite(labor) || !Number.isFinite(parts)) {
+            setError("Need a number, a name, and a pay plan.");
             return;
           }
-          const ok = addAdvisor({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts, password: password.trim() });
+          const ok = addAdvisor({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts });
           if (!ok) {
             setError("That advisor number is already on the drive.");
             return;
@@ -52,7 +51,6 @@ function AdvisorsPage() {
           setBase("4200");
           setLaborPercent("5");
           setPartsPercent("2");
-          setPassword("");
           setError("");
         }}
       >
@@ -71,9 +69,6 @@ function AdvisorsPage() {
         <Field label="Parts %">
           <input className="field tabular-nums" type="number" min={0} step={0.1} value={partsPercent} onChange={(event) => setPartsPercent(event.target.value)} />
         </Field>
-        <Field label="Password">
-          <input className="field" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-        </Field>
         <div className="flex items-end">
           <Button tone="primary" type="submit">Add advisor</Button>
         </div>
@@ -89,7 +84,6 @@ function AdvisorsPage() {
               <th>Monthly base</th>
               <th>Labor %</th>
               <th>Parts %</th>
-              <th>Password</th>
               <th></th>
             </tr>
           </thead>
@@ -110,9 +104,6 @@ function AdvisorsPage() {
                 </td>
                 <td>
                   <input className="field w-24 tabular-nums" aria-label={`${advisor.name} parts percent`} type="number" min={0} step={0.1} value={advisor.partsPercent} onChange={(event) => updateAdvisor(advisor.id, { partsPercent: Number(event.target.value) || 0 })} />
-                </td>
-                <td>
-                  <PasswordField label={`${advisor.name} password`} onCommit={(value) => updateAdvisor(advisor.id, { password: value })} />
                 </td>
                 <td>
                   <Button small onClick={() => {
@@ -153,26 +144,6 @@ function AdvisorsPage() {
         })}
       </div>
     </Shell>
-  );
-}
-
-function PasswordField({ label, onCommit }: { label: string; onCommit: (value: string) => boolean }) {
-  const [draft, setDraft] = useState("");
-  return (
-    <input
-      className="field w-36"
-      aria-label={label}
-      type="password"
-      autoComplete="new-password"
-      placeholder="New password"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        if (!draft.trim()) return;
-        onCommit(draft);
-        setDraft("");
-      }}
-    />
   );
 }
 

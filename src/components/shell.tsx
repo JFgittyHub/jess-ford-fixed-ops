@@ -21,9 +21,8 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { cn } from "@/lib/cn";
 import { isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
-import { homeFor, pathAllowed, useSession, writeSession, type Session } from "@/lib/session";
+import { useSession, writeSession } from "@/lib/session";
 import { useShop } from "@/lib/store";
-import type { Advisor, Tech } from "@/lib/types";
 import { Button, Field, Modal } from "./ui";
 
 const NAV = [
@@ -43,9 +42,9 @@ const NAV = [
   { to: "/fees", label: "Fees", icon: Receipt, gear: true },
 ] as const;
 
-function NavLinks({ onNavigate, session }: { onNavigate?: () => void; session: Session }) {
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const items = NAV.filter((item) => pathAllowed(session, item.to));
+  const items = NAV;
   return (
     <>
       {items.map((item) => {
@@ -76,12 +75,11 @@ export function Shell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
-  const { session, ready } = useSession();
-  const advisors = useShop((state) => state.advisors);
-  const techs = useShop((state) => state.techs);
+  const { session } = useSession();
   const historyRef = useRef<string[]>([]);
   const [backTo, setBackTo] = useState<string | null>(null);
 
@@ -112,16 +110,6 @@ export function Shell({ children }: { children: ReactNode }) {
     void useShop.persist.rehydrate();
   }, []);
 
-  useEffect(() => {
-    if (!ready || !session || pathAllowed(session, pathname)) return;
-    void router.navigate({ to: homeFor(session) });
-  }, [ready, session, pathname, router]);
-
-  if (!ready) return <div className="min-h-screen bg-bg" />;
-  if (!session) return <SignIn advisors={advisors} techs={techs} adminPassword={settings.adminPassword} />;
-
-  const who = session.role === "admin" ? "Admin" : session.role === "advisor" ? `Advisor ${advisors.find((row) => row.id === session.id)?.number ?? ""}` : `Tech ${techs.find((row) => row.id === session.id)?.number ?? ""}`;
-
   return (
     <div className="min-h-screen bg-bg text-ink">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col overflow-y-auto border-r border-line bg-surface px-3 py-4 md:flex">
@@ -130,7 +118,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <p className="mt-2 px-1 text-sm text-muted">Fixed operations</p>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          <NavLinks session={session} />
+          <NavLinks />
         </nav>
         <p className="px-3 pt-4 text-xs leading-relaxed text-muted">
           Jess Ford. Not connected to OASIS, warranty submission, or a DMS.
@@ -146,21 +134,23 @@ export function Shell({ children }: { children: ReactNode }) {
                 <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
-            {session.role === "admin" ? (
-              <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
-                <Settings className="size-4" aria-hidden />
-                Settings
-              </Button>
+            {session ? (
+              <>
+                <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
+                  <Settings className="size-4" aria-hidden />
+                  Settings
+                </Button>
+                <Button tone="ghost" small onClick={() => writeSession(null)}>Sign out</Button>
+              </>
             ) : (
-              <p className="text-sm text-muted">{who}</p>
+              <Button tone="ghost" small onClick={() => setSigningIn(true)}>Admin sign in</Button>
             )}
-            <Button tone="ghost" small onClick={() => writeSession(null)}>Sign out</Button>
           </div>
           <nav className="nav-scroll px-3 pb-3 md:hidden">
-            <NavLinks onNavigate={() => undefined} session={session} />
+            <NavLinks onNavigate={() => undefined} />
           </nav>
         </header>
-        <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{pathAllowed(session, pathname) ? children : null}</main>
+        <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
           Kept in this browser only. The shop starts empty. Demo mode loads a sample month, and Settings can load it again while that mode is on. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
@@ -240,53 +230,38 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         </form>
       </Modal>
+      <AdminSignIn open={signingIn} password={settings.adminPassword} onClose={() => setSigningIn(false)} />
     </div>
   );
 }
 
-function SignIn({ advisors, techs, adminPassword }: { advisors: Advisor[]; techs: Tech[]; adminPassword: string }) {
-  const [number, setNumber] = useState("");
+function AdminSignIn({ open, password: adminPassword, onClose }: { open: boolean; password: string; onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const num = number.trim().toLowerCase();
-    const advisor = advisors.find((row) => row.number.trim().toLowerCase() === num);
-    if (advisor && password === advisor.password) {
-      writeSession({ role: "advisor", id: advisor.id });
-      return;
-    }
-    const tech = techs.find((row) => row.number.trim().toLowerCase() === num);
-    if (tech && password === tech.password) {
-      writeSession({ role: "tech", id: tech.id });
-      return;
-    }
-    if ((num === "" || num === "admin") && password === adminPassword) {
+    if (password === adminPassword) {
       writeSession({ role: "admin" });
+      setPassword("");
+      setError("");
+      onClose();
       return;
     }
-    setError("Number or password is wrong.");
+    setError("Password is wrong.");
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-md">
-        <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="mx-auto h-auto w-56" />
-        <h1 className="mt-4 text-center font-display text-4xl leading-none">Sign in</h1>
-        <p className="mt-2 text-center text-sm text-muted">Advisors and technicians use their number. Admin leaves the number blank.</p>
-        <form className="card mt-5 grid gap-3" onSubmit={submit}>
-          <Field label="Number">
-            <input className="field tabular-nums" value={number} onChange={(event) => setNumber(event.target.value)} autoComplete="username" />
-          </Field>
-          <Field label="Password">
-            <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
-          </Field>
-          {error ? <p className="text-sm text-primary">{error}</p> : null}
+    <Modal open={open} onClose={onClose} title="Admin sign in" description="Settings stay behind this password. Advisors and technicians pick their name. They do not sign in.">
+      <form className="grid gap-3" onSubmit={submit}>
+        <Field label="Admin password">
+          <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
+        </Field>
+        {error ? <p className="text-sm text-primary">{error}</p> : null}
+        <div>
           <Button tone="primary" type="submit">Sign in</Button>
-          <p className="text-sm text-muted">Demo passwords match the number until an admin changes them. Admin password starts as admin.</p>
-        </form>
-      </div>
-    </div>
+        </div>
+      </form>
+    </Modal>
   );
 }

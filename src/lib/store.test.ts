@@ -13,7 +13,6 @@ const advisor: Advisor = {
   base: 4800,
   laborPercent: 6,
   partsPercent: 3,
-  password: "21",
 };
 
 const tech: Tech = {
@@ -28,7 +27,6 @@ const tech: Tech = {
   availableHoursMonth: 118,
   clockedHoursMonth: 0,
   clockedToday: 0,
-  password: "41",
 };
 
 const wa: WaRecord = {

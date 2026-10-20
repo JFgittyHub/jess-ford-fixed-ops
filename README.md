@@ -2,7 +2,9 @@
 
 Service desk for Jess Ford in Grand Coulee and Pullman. Advisors write repair orders, techs flag time, parts come off the shelf when a ticket is invoiced, and the office can see the month against Washington’s repair-authorization rules (RCW 46.71).
 
-The shop calendar is Pacific Time. The screen shows today’s date, not a baked-in sample day. A fresh start has no customers or repair orders. Set `VITE_DEMO_MODE` before the app starts to load the sample month. Settings offers that load again only while demo mode is on. The office signs in as admin with a blank user name, or the user name `admin`, and the password `admin`.
+The shop calendar is Pacific Time. The screen shows today’s date, not a baked-in sample day. A fresh start has no customers or repair orders. Set `VITE_DEMO_MODE` before the app starts to load the sample month. Settings offers that load again only while demo mode is on.
+
+The desk opens without a staff login. Advisors and technicians pick their name on the tech board and on a ticket. They do not have passwords. The office signs in from the header with the admin password. A fresh shop’s password is `admin`. Settings can change it. Clearing the shop or loading the sample month keeps that password.
 
 Postgres, accounts, and the live DMS connection come later. Until then the shop lives in this browser.
 

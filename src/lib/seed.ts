@@ -310,21 +310,21 @@ export function createSeed(): ShopData {
   const settings = baseSettings();
 
   const advisors: Advisor[] = [
-    { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3, password: "21" },
-    { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2, password: "14" },
-    { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2, password: "8" },
-    { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2, password: "30" },
+    { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3 },
+    { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2 },
+    { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2 },
+    { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2 },
   ];
 
   const techs: Tech[] = [
-    { id: "marcus", number: "41", name: "Marcus Hale", skill: "master", board: "main", payStyle: "flat", flagRate: 36, hourlyRate: 36, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5, password: "41" },
-    { id: "elena", number: "18", name: "Elena Voss", skill: "a", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4, password: "18" },
-    { id: "andre", number: "7", name: "Andre Brooks", skill: "diesel", board: "main", payStyle: "flat", flagRate: 33, hourlyRate: 33, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 3, password: "7" },
-    { id: "chris", number: "23", name: "Chris Dalton", skill: "b", board: "main", payStyle: "flat", flagRate: 27, hourlyRate: 27, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4.5, password: "23" },
-    { id: "dana", number: "15", name: "Dana Whitfield", skill: "b", board: "none", payStyle: "hourly", flagRate: 26, hourlyRate: 29, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 4, password: "15" },
-    { id: "priya", number: "33", name: "Priya Shah", skill: "a", board: "internal", payStyle: "flat", flagRate: 28, hourlyRate: 28, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 2.5, password: "33" },
-    { id: "luis", number: "4", name: "Luis Ortega", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4, password: "4" },
-    { id: "sam", number: "11", name: "Sam Okonkwo", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5, password: "11" },
+    { id: "marcus", number: "41", name: "Marcus Hale", skill: "master", board: "main", payStyle: "flat", flagRate: 36, hourlyRate: 36, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
+    { id: "elena", number: "18", name: "Elena Voss", skill: "a", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4 },
+    { id: "andre", number: "7", name: "Andre Brooks", skill: "diesel", board: "main", payStyle: "flat", flagRate: 33, hourlyRate: 33, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 3 },
+    { id: "chris", number: "23", name: "Chris Dalton", skill: "b", board: "main", payStyle: "flat", flagRate: 27, hourlyRate: 27, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4.5 },
+    { id: "dana", number: "15", name: "Dana Whitfield", skill: "b", board: "none", payStyle: "hourly", flagRate: 26, hourlyRate: 29, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 4 },
+    { id: "priya", number: "33", name: "Priya Shah", skill: "a", board: "internal", payStyle: "flat", flagRate: 28, hourlyRate: 28, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 2.5 },
+    { id: "luis", number: "4", name: "Luis Ortega", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4 },
+    { id: "sam", number: "11", name: "Sam Okonkwo", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
   ];
 
   const customers = NAMES.map((name, i) => ({

@@ -9,7 +9,6 @@ import { LANE_LABEL, snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
-import { useSession } from "@/lib/session";
 import type { Appointment } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
@@ -26,7 +25,6 @@ const STARTS = Array.from({ length: 22 }, (_, index) => {
 
 function SchedulePage() {
   const shop = useShop();
-  const { session } = useSession();
   const look = lookups(shop);
   const [preset, setPreset] = useState<Appointment | null>(null);
   const [customerId, setCustomerId] = useState(shop.customers[0]?.id ?? "");
@@ -54,13 +52,12 @@ function SchedulePage() {
   }
   const noShows = shop.appointments.filter((row) => row.date === today() && row.status === "no_show").length;
   const inShop = shop.appointments.filter((row) => row.date === today() && (row.status === "in_shop" || row.status === "arrived")).length;
-  const lockedTech = session?.role === "tech" ? session.id : "";
   const rank = { express: 0, main: 1, internal: 2, none: 3 };
   const board = [...shop.techs]
-    .filter((tech) => (lockedTech ? tech.id === lockedTech : tech.board !== "none"))
+    .filter((tech) => tech.board !== "none")
     .sort((a, b) => rank[a.board] - rank[b.board] || a.number.localeCompare(b.number, undefined, { numeric: true }));
   const dayHours = shop.appointments
-    .filter((row) => row.date === day && (!lockedTech || row.techId === lockedTech))
+    .filter((row) => row.date === day)
     .reduce((sum, row) => sum + laborHours(row, shop.laborOps), 0);
 
   return (
@@ -77,7 +74,7 @@ function SchedulePage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {lockedTech ? null : <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>}
+          <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>
           <Button small onClick={() => setDay((value) => addDays(value, -1))}>Previous</Button>
           <p className="min-w-40 text-center text-sm font-semibold">{dayLabel(day)}</p>
           <DayJump value={day} onChange={setDay} />
@@ -126,7 +123,7 @@ function SchedulePage() {
               ? row.laborOpIds.map((id) => shop.laborOps.find((op) => op.id === id)?.opcode).filter(Boolean).join(", ")
               : "No labor ops",
             status: row.status === "no_show" ? "No-show" : row.status === "in_shop" ? "In shop" : row.status === "arrived" ? "Arrived" : "Scheduled",
-            canWrite: session?.role !== "tech" && !row.orderId && row.status !== "no_show",
+            canWrite: !row.orderId && row.status !== "no_show",
           };
         }}
       />
@@ -213,7 +210,6 @@ function Selected({
   onWrite: () => void;
   onEdit: () => void;
 }) {
-  const { session } = useSession();
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -229,7 +225,7 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <Button small onClick={onEdit}>Edit details</Button>
-        {session?.role === "tech" || row.orderId || row.status === "no_show" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
+        {row.orderId || row.status === "no_show" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>
     </div>
   );
@@ -256,8 +252,6 @@ function AppointmentFields({
   showStatus?: boolean;
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">) => void;
 }) {
-  const { session } = useSession();
-  const lockedAdvisor = session?.role === "advisor" ? session.id : "";
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(snapHalfHour(initial.time));
   const [minutes, setMinutes] = useState(initial.minutes);
@@ -281,7 +275,7 @@ function AppointmentFields({
         event.preventDefault();
         if (!lines.some((line) => line.concern.trim()) || !resolvedVehicle) return;
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
-        onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId: lockedAdvisor || advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status });
+        onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status });
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
@@ -357,7 +351,7 @@ function AppointmentFields({
         </select>
       </Field>
       <Field label="Advisor">
-        <select className="field" value={lockedAdvisor || advisorId} disabled={Boolean(lockedAdvisor)} onChange={(event) => setAdvisorId(event.target.value)}>
+        <select className="field" value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
           {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
         </select>
       </Field>

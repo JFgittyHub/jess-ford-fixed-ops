@@ -44,7 +44,6 @@ export interface Advisor {
   base: number;
   laborPercent: number;
   partsPercent: number;
-  password: string;
 }
 
 export interface Tech {
@@ -59,7 +58,6 @@ export interface Tech {
   availableHoursMonth: number;
   clockedHoursMonth: number;
   clockedToday: number;
-  password: string;
 }
 
 export interface Customer {

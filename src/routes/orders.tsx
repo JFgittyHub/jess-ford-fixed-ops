@@ -8,7 +8,6 @@ import { BAY_LABEL, daySpan, monthName, STATUS_LABEL, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
 import { isOpen, isSold, lookups, orderMoney } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
-import { useSession } from "@/lib/session";
 import type { BayStatus, ClosedRecord, RepairOrder, RoStatus } from "@/lib/types";
 
 export const Route = createFileRoute("/orders")({ component: OrdersPage });
@@ -17,7 +16,6 @@ type Filter = "open" | "booked" | "sold" | "closed" | "all";
 
 function OrdersPage() {
   const shop = useShop();
-  const { session } = useSession();
   const look = lookups(shop);
   const focusOrderId = useShop((state) => state.focusOrderId);
   const setFocus = useShop((state) => state.setFocus);
@@ -37,8 +35,6 @@ function OrdersPage() {
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return shop.orders.filter((order) => {
-      if (session?.role === "advisor" && order.advisorId !== session.id) return false;
-      if (session?.role === "tech" && !order.labor.some((line) => line.techId === session.id)) return false;
       if (filter === "open" && (!isOpen(order) || order.status === "booked")) return false;
       if (filter === "booked" && order.status !== "booked") return false;
       if (filter === "sold" && !isSold(order)) return false;
@@ -51,18 +47,15 @@ function OrdersPage() {
       const hay = `${order.number} ${customer?.name ?? ""} ${customer?.phone ?? ""} ${vehicle?.model ?? ""} ${vehicle?.vin ?? ""} ${waPlate} ${order.concern} ${money.total.toFixed(2)} ${Math.round(money.total)} ${techsOn(order, look).map((tech) => tech.number).join(" ")}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [shop.orders, filter, query, look, session]);
+  }, [shop.orders, filter, query, look]);
 
   const history = useMemo(() => {
     const q = query.trim().toLowerCase();
     const digits = q.replace(/\D/g, "");
     return shop.closedHistory.filter((row) => {
-      const order = shop.orders.find((item) => item.id === row.orderId);
-      if (session?.role === "advisor" && order?.advisorId !== session.id) return false;
-      if (session?.role === "tech" && !order?.labor.some((line) => line.techId === session.id)) return false;
       return matchesHistory(row, q, digits);
     }).sort((a, b) => b.closedOn.localeCompare(a.closedOn) || b.number - a.number);
-  }, [shop.closedHistory, shop.orders, query, session]);
+  }, [shop.closedHistory, query]);
 
   const listed = useMemo(() => {
     if (filter !== "closed") return rows;
@@ -86,7 +79,7 @@ function OrdersPage() {
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
           <p className="mt-2 max-w-xl text-muted">{openCount} open. {soldCount} closed in {monthName()}. Book a ticket when it is ready, then close it. Close is what moves absorption.</p>
         </div>
-        {session?.role === "tech" ? null : <Button tone="primary" onClick={() => setWriting(true)}>Write RO</Button>}
+        <Button tone="primary" onClick={() => setWriting(true)}>Write RO</Button>
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">

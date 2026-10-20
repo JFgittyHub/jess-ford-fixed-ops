@@ -34,11 +34,11 @@ interface ShopActions {
   setFocus: (id: string | null) => void;
   updateSettings: (patch: Partial<ShopData["settings"]>) => void;
   clockTech: (techId: string, hours: number) => void;
-  addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board" | "password">) => boolean;
-  updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board" | "password">>) => boolean;
+  addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">) => boolean;
+  updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">>) => boolean;
   removeTech: (id: string) => "ok" | "used";
-  addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "password">) => boolean;
-  updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "password">>) => boolean;
+  addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent">) => boolean;
+  updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent">>) => boolean;
   removeAdvisor: (id: string) => "ok" | "used";
   updateOrder: (orderId: string, patch: Partial<Pick<RepairOrder, "concern" | "mileage" | "mileageOut" | "promiseTime" | "advisorId" | "status" | "bay">>) => void;
   updateJob: (orderId: string, jobId: string, patch: Partial<Pick<JobLine, "concern" | "cause" | "correction">>) => void;
@@ -141,6 +141,11 @@ function normalizeFees(value: unknown, keepShopFlat = false): FeeLine[] {
   return DEFAULT_FEES.map((line) => ({ ...line }));
 }
 
+function dropStaffPassword<T extends object>(row: T): Omit<T, "password"> {
+  const { password: _password, ...rest } = row as T & { password?: string };
+  return rest;
+}
+
 const dataKeys: (keyof ShopData)[] = [
   "settings",
   "advisors",
@@ -194,8 +199,7 @@ export const useShop = create<ShopState>()(
       addTech: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
-        const password = input.password.trim();
-        if (!name || !number || !password) return false;
+        if (!name || !number) return false;
         let added = false;
         set((state) => {
           if (state.techs.some((tech) => tech.number === number)) return state;
@@ -212,7 +216,6 @@ export const useShop = create<ShopState>()(
             availableHoursMonth: 118,
             clockedHoursMonth: 0,
             clockedToday: 0,
-            password,
           };
           return { techs: [...state.techs, tech].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })) };
         });
@@ -225,19 +228,17 @@ export const useShop = create<ShopState>()(
           if (!current) return state;
           const number = patch.number === undefined ? current.number : patch.number.trim();
           const name = patch.name === undefined ? current.name : patch.name.trim();
-          const password = patch.password === undefined ? current.password : patch.password.trim();
-          if (!number || !name || !password) return state;
+          if (!number || !name) return state;
           if (state.techs.some((tech) => tech.id !== id && tech.number === number)) return state;
           updated = true;
           return {
             techs: state.techs.map((tech) =>
               tech.id === id
                 ? {
-                    ...tech,
+                    ...dropStaffPassword(tech),
                     ...patch,
                     number,
                     name,
-                    password,
                     flagRate: patch.flagRate === undefined ? tech.flagRate : money2(Math.max(0, patch.flagRate)),
                     hourlyRate: patch.hourlyRate === undefined ? tech.hourlyRate : money2(Math.max(0, patch.hourlyRate)),
                   }
@@ -261,8 +262,7 @@ export const useShop = create<ShopState>()(
       addAdvisor: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
-        const password = input.password.trim();
-        if (!name || !number || !password) return false;
+        if (!name || !number) return false;
         let added = false;
         set((state) => {
           if (state.advisors.some((advisor) => advisor.number === number)) return state;
@@ -274,7 +274,6 @@ export const useShop = create<ShopState>()(
             base: money2(Math.max(0, input.base)),
             laborPercent: Math.max(0, input.laborPercent),
             partsPercent: Math.max(0, input.partsPercent),
-            password,
           };
           return { advisors: [...state.advisors, advisor].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })) };
         });
@@ -287,19 +286,17 @@ export const useShop = create<ShopState>()(
           if (!current) return state;
           const number = patch.number === undefined ? current.number : patch.number.trim();
           const name = patch.name === undefined ? current.name : patch.name.trim();
-          const password = patch.password === undefined ? current.password : patch.password.trim();
-          if (!number || !name || !password) return state;
+          if (!number || !name) return state;
           if (state.advisors.some((advisor) => advisor.id !== id && advisor.number === number)) return state;
           updated = true;
           return {
             advisors: state.advisors.map((advisor) =>
               advisor.id === id
                 ? {
-                    ...advisor,
+                    ...dropStaffPassword(advisor),
                     ...patch,
                     number,
                     name,
-                    password,
                     base: patch.base === undefined ? advisor.base : money2(Math.max(0, patch.base)),
                     laborPercent: patch.laborPercent === undefined ? advisor.laborPercent : Math.max(0, patch.laborPercent),
                     partsPercent: patch.partsPercent === undefined ? advisor.partsPercent : Math.max(0, patch.partsPercent),
@@ -786,7 +783,7 @@ export const useShop = create<ShopState>()(
     }),
     {
       name: "jess-ford-fixed-ops-v1",
-      version: 26,
+      version: 27,
       skipHydration: true,
       migrate: (persisted) => {
         if (!persisted || typeof persisted !== "object") return persisted as ShopState;
@@ -856,22 +853,26 @@ export const useShop = create<ShopState>()(
                 saved.vehicles?.find((row) => row.id === order.vehicleId),
               )),
           advisors: Array.isArray(saved.advisors)
-            ? saved.advisors.map((advisor, index) => ({
-                ...advisor,
-                number: advisor.number || ADVISOR_NUMBERS[advisor.id] || String(index + 1),
-                password: advisor.password || advisor.number || ADVISOR_NUMBERS[advisor.id] || String(index + 1),
-                base: typeof advisor.base === "number" ? advisor.base : 4200,
-                laborPercent: typeof advisor.laborPercent === "number" ? advisor.laborPercent : 5,
-                partsPercent: typeof advisor.partsPercent === "number" ? advisor.partsPercent : 2,
-              }))
+            ? saved.advisors.map((advisor, index) => {
+                const row = dropStaffPassword(advisor);
+                return {
+                  ...row,
+                  number: row.number || ADVISOR_NUMBERS[row.id] || String(index + 1),
+                  base: typeof row.base === "number" ? row.base : 4200,
+                  laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 5,
+                  partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 2,
+                };
+              })
             : saved.advisors,
           techs: Array.isArray(saved.techs)
-            ? saved.techs.map((tech, index) => ({
-                ...tech,
-                number: tech.number || TECH_NUMBERS[tech.id] || String(index + 1),
-                password: tech.password || tech.number || TECH_NUMBERS[tech.id] || String(index + 1),
-                board: tech.board || ({ luis: "express", sam: "express", marcus: "main", elena: "main", andre: "main", chris: "main", priya: "internal", dana: "none" } satisfies Record<string, TechBoard>)[tech.id] || "main",
-              }))
+            ? saved.techs.map((tech, index) => {
+                const row = dropStaffPassword(tech);
+                return {
+                  ...row,
+                  number: row.number || TECH_NUMBERS[row.id] || String(index + 1),
+                  board: row.board || ({ luis: "express", sam: "express", marcus: "main", elena: "main", andre: "main", chris: "main", priya: "internal", dana: "none" } satisfies Record<string, TechBoard>)[tech.id] || "main",
+                };
+              })
             : saved.techs,
         } as ShopState;
       },
