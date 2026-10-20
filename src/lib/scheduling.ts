@@ -14,6 +14,25 @@ function menu(rows: Array<[string, string, number]>): OnlineService[] {
   return rows.map(([id, name, laborHours]) => ({ id, name, laborHours }));
 }
 
+const LEGACY_LANE: Record<string, string> = {
+  express: "waiter",
+  loaner: "drop",
+};
+
+/** Keep a lane on this store's transport list. Express becomes Waiter and loaner becomes Drop-off. */
+export function normalizeLane(value: unknown, options: TransportOption[]): string {
+  const ids = options.map((row) => row.id);
+  const raw = typeof value === "string" ? value : "";
+  if (ids.includes(raw)) return raw;
+  const mapped = LEGACY_LANE[raw];
+  if (mapped && ids.includes(mapped)) return mapped;
+  return ids[0] ?? "waiter";
+}
+
+export function laneLabel(value: string, options: TransportOption[]): string {
+  return options.find((row) => row.id === value)?.name ?? value;
+}
+
 function transports(): TransportOption[] {
   return [
     { id: "waiter", name: "Waiter" },

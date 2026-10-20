@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 import { textingAdapter } from "./adapters/texting.ts";
 import { createSeed } from "./seed.ts";
 import type { ShopStorage } from "./shop-storage.ts";
-import { addOnlineService, addTransportOption, normalizeScheduling, removeTransportOption } from "./scheduling.ts";
-import { createShopStore } from "./store.ts";
+import { addOnlineService, addTransportOption, normalizeLane, normalizeScheduling, removeTransportOption } from "./scheduling.ts";
+import { createShopStore, migrateSavedShop } from "./store.ts";
 import { isFullVin, vinCheckDigit } from "./vin.ts";
 
 describe("two stores", () => {
@@ -95,6 +95,36 @@ describe("two stores", () => {
 });
 
 describe("scheduling helpers", () => {
+  it("offers only the store's transport list and maps express and loaner", () => {
+    const options = normalizeScheduling(undefined).transportOptions;
+    assert.deepEqual(options.map((row) => row.name), ["Waiter", "Drop-off"]);
+    assert.equal(normalizeLane("express", options), "waiter");
+    assert.equal(normalizeLane("loaner", options), "drop");
+    assert.equal(normalizeLane("waiter", options), "waiter");
+    assert.equal(normalizeLane("something-else", options), "waiter");
+    const withShuttle = addTransportOption({ ...normalizeScheduling(undefined), transportOptions: options }, "Shuttle", "shuttle");
+    assert.ok(withShuttle);
+    const shuttle = withShuttle.transportOptions.find((row) => row.name === "Shuttle");
+    assert.ok(shuttle);
+    assert.equal(normalizeLane(shuttle.id, withShuttle.transportOptions), shuttle.id);
+    assert.equal(withShuttle.transportOptions.some((row) => row.name === "Express" || row.name === "Loaner"), false);
+
+    for (const storeId of ["grand-coulee", "pullman"] as const) {
+      const seeded = createSeed(storeId);
+      const ids = new Set(seeded.settings.scheduling.transportOptions.map((row) => row.id));
+      assert.equal(seeded.appointments.every((row) => ids.has(row.lane)), true);
+      assert.equal(seeded.appointments.some((row) => row.lane === "express" || row.lane === "loaner"), false);
+    }
+
+    const migrated = migrateSavedShop({
+      orders: [],
+      appointments: [{ id: "legacy", lane: "loaner", minutes: 180, concern: "Ride", lines: [{ id: "a", code: "A", concern: "Ride" }] }],
+    });
+    const legacy = migrated.appointments?.find((row) => row.id === "legacy");
+    assert.equal(legacy?.lane, "drop");
+    assert.equal(legacy?.minutes, 180);
+  });
+
   it("drops a price if one is passed in, and will not empty the transport list", () => {
     const scheduling = normalizeScheduling({
       onlineMenu: [{ id: "x", name: "Oil", laborHours: 0.5, price: 49 }],

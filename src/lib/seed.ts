@@ -760,16 +760,16 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   }
 
   const appointments: Appointment[] = [
-    appt("a1", "07:20", 30, "c20", "v20", "megan", ["Oil change"], "express", "no_show", null, "luis", ["LOF"]),
+    appt("a1", "07:20", 30, "c20", "v20", "megan", ["Oil change"], "waiter", "no_show", null, "luis", ["LOF"]),
     appt("a2", "07:30", 150, "c1", "v1", "megan", ["Brake pulsation at highway speed"], "drop", "in_shop", "open-helen", "chris", ["BRKF"]),
     appt("a3", "07:45", 90, "c9", "v9", "alicia", ["30,000-mile service"], "waiter", "in_shop", "open-pat", "priya", ["LOF", "CABIN"]),
-    appt("a4", "08:15", 60, "c16", "v16", "derek", ["Service campaign update"], "express", "in_shop", "open-carl", "sam", ["CAMP"]),
+    appt("a4", "08:15", 60, "c16", "v16", "derek", ["Service campaign update"], "waiter", "in_shop", "open-carl", "sam", ["CAMP"]),
     appt("a5", "08:40", 120, "c7", "v7", "jordan", ["Rattle over bumps", "Check the front alignment"], "drop", "in_shop", "open-sandra", "elena", ["WNOI", "ALIGN"]),
-    appt("a6", "09:10", 60, "c12", "v12", "megan", ["Oil and rotation"], "express", "scheduled", null, "marcus", ["LOF", "ROT"], shopDate("2026-10-19")),
+    appt("a6", "09:10", 60, "c12", "v12", "megan", ["Oil and rotation"], "waiter", "scheduled", null, "marcus", ["LOF", "ROT"], shopDate("2026-10-19")),
     appt("a7", "09:40", 150, "c13", "v13", "jordan", ["Diesel service", "DEF light on"], "drop", "scheduled", null, "andre", ["DSL"], shopDate("2026-10-20")),
     appt("a8", "10:30", 120, "c6", "v6", "derek", ["Clunk from the front end"], "drop", "scheduled", null, "marcus", ["DIAG"], shopDate("2026-10-20")),
     appt("a9", "11:00", 90, "c15", "v15", "alicia", ["Oil change, waiter"], "waiter", "scheduled", null, "luis", ["LOF"], shopDate("2026-10-21")),
-    appt("a10", "13:00", 180, "c23", "v23", "jordan", ["AC blows warm", "Check the cabin filter"], "loaner", "scheduled", null, "chris", ["WHVAC", "CABIN"], shopDate("2026-10-22")),
+    appt("a10", "13:00", 180, "c23", "v23", "jordan", ["AC blows warm", "Check the cabin filter"], "drop", "scheduled", null, "chris", ["WHVAC", "CABIN"], shopDate("2026-10-22")),
   ];
 
   const budgets = [

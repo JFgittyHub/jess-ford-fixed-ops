@@ -5,11 +5,12 @@ import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, day
 import { NewOrder } from "@/components/new-order";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
-import { LANE_LABEL, snapHalfHour, today } from "@/lib/format";
+import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
+import { laneLabel, normalizeLane } from "@/lib/scheduling";
 import { useShop } from "@/lib/store";
-import type { Appointment } from "@/lib/types";
+import type { Appointment, TransportOption } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
 
@@ -36,7 +37,8 @@ function SchedulePage() {
   const [time, setTime] = useState("15:30");
   const [minutes, setMinutes] = useState(60);
   const [concern, setConcern] = useState("");
-  const [lane, setLane] = useState<Appointment["lane"]>("drop");
+  const transports = shop.settings.scheduling.transportOptions;
+  const [lane, setLane] = useState(() => normalizeLane("drop", transports));
   const [day, setDay] = useState(today());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
@@ -116,7 +118,7 @@ function SchedulePage() {
             advisor: advisor?.name ?? "Advisor",
             tech: look.tech.get(row.techId) ? `#${look.tech.get(row.techId)?.number} ${look.tech.get(row.techId)?.name}` : "No technician",
             when: `${dayLabel(row.date)} · ${clockRange(row.time, row.minutes)}`,
-            lane: LANE_LABEL[row.lane],
+            lane: laneLabel(row.lane, transports),
             concern: row.concern,
             vin: row.vin || look.vehicle.get(row.vehicleId)?.vin || "No VIN",
             ops: row.laborOpIds.length
@@ -134,6 +136,7 @@ function SchedulePage() {
           row={selected}
           name={look.customer.get(selected.customerId)?.name ?? "Customer"}
           vehicle={look.vehicle.get(selected.vehicleId)}
+          laneName={laneLabel(selected.lane, transports)}
           onStatus={(status) => shop.setAppointmentStatus(selected.id, status)}
           onWrite={() => setPreset(selected)}
           onEdit={() => openAppointment(selected.id)}
@@ -148,6 +151,7 @@ function SchedulePage() {
           advisors={shop.advisors}
           techs={board}
           laborOps={shop.laborOps}
+          transports={transports}
           submitLabel="Book it"
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value) => {
@@ -167,6 +171,7 @@ function SchedulePage() {
             advisors={shop.advisors}
             techs={board}
             laborOps={shop.laborOps}
+            transports={transports}
             submitLabel="Save changes"
             showStatus
             initial={editing}
@@ -199,6 +204,7 @@ function Selected({
   row,
   name,
   vehicle,
+  laneName,
   onStatus,
   onWrite,
   onEdit,
@@ -206,6 +212,7 @@ function Selected({
   row: Appointment;
   name: string;
   vehicle?: { year: number; model: string };
+  laneName: string;
   onStatus: (status: Appointment["status"]) => void;
   onWrite: () => void;
   onEdit: () => void;
@@ -215,7 +222,7 @@ function Selected({
       <div>
         <p className="font-semibold">{name}</p>
         <p className="text-sm text-muted">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : ""} · {row.concern}</p>
-        <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {LANE_LABEL[row.lane]}</p>
+        <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {laneName}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone={row.status === "no_show" ? "bad" : row.status === "in_shop" ? "good" : undefined}>
@@ -238,6 +245,7 @@ function AppointmentFields({
   advisors,
   techs,
   laborOps,
+  transports,
   submitLabel,
   showStatus,
   onSubmit,
@@ -248,6 +256,7 @@ function AppointmentFields({
   advisors: { id: string; number: string; name: string }[];
   techs: { id: string; number: string; name: string }[];
   laborOps: { id: string; opcode: string; description: string; hours: number }[];
+  transports: TransportOption[];
   submitLabel: string;
   showStatus?: boolean;
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">) => void;
@@ -262,7 +271,7 @@ function AppointmentFields({
   const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern }]);
   const [vin, setVin] = useState(initial.vin);
   const [laborOpIds, setLaborOpIds] = useState(initial.laborOpIds ?? []);
-  const [lane, setLane] = useState(initial.lane);
+  const [lane, setLane] = useState(() => normalizeLane(initial.lane, transports));
   const [status, setStatus] = useState(initial.status);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
@@ -291,8 +300,8 @@ function AppointmentFields({
           </select>
         </Field>
         <Field label="Lane">
-          <select className="field" value={lane} onChange={(event) => setLane(event.target.value as Appointment["lane"])}>
-            {(Object.keys(LANE_LABEL) as Appointment["lane"][]).map((item) => <option key={item} value={item}>{LANE_LABEL[item]}</option>)}
+          <select className="field" value={lane} onChange={(event) => setLane(event.target.value)}>
+            {transports.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
           </select>
         </Field>
       </div>

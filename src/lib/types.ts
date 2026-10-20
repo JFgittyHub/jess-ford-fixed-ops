@@ -13,7 +13,8 @@ export type PayStyle = "flat" | "hourly";
 export type Skill = "master" | "a" | "b" | "diesel" | "express" | "quick";
 export type TechBoard = "express" | "main" | "internal" | "none";
 export type ApptStatus = "scheduled" | "arrived" | "no_show" | "in_shop";
-export type Lane = "waiter" | "drop" | "express" | "loaner";
+/** Transport option id. Older appointments used express and loaner; those load as waiter and drop. */
+export type Lane = string;
 export type Department = "service" | "parts";
 
 export interface FeeLine {

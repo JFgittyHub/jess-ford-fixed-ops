@@ -6,7 +6,7 @@ import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
 import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
-import { addClosedDate, addOnlineService, addTransportOption, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService } from "./scheduling";
+import { addClosedDate, addOnlineService, addTransportOption, normalizeLane, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService } from "./scheduling";
 import { fullVin } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
@@ -346,6 +346,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
   }
   const techList = Array.isArray(saved.techs) ? saved.techs : [];
   const vehicleList = Array.isArray(saved.vehicles) ? saved.vehicles : [];
+  const transports = (withScheduling(saved.settings) ?? saved.settings)?.scheduling?.transportOptions ?? normalizeScheduling(undefined).transportOptions;
   return {
     ...saved,
     orders: saved.orders.filter((order) => order && typeof order === "object").map((order) => {
@@ -389,11 +390,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
             : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
           const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
           const known = techList.some((tech) => tech.id === row.techId) ? row.techId : "";
+          const priorLane = row.lane;
           return {
             ...row,
             date: row.date ?? today(),
             time: snapHalfHour(row.time ?? "07:00"),
-            minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : row.lane === "loaner" ? 180 : row.lane === "drop" ? 120 : row.lane === "waiter" ? 90 : 60,
+            minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : priorLane === "loaner" ? 180 : priorLane === "drop" ? 120 : priorLane === "waiter" ? 90 : 60,
+            lane: normalizeLane(priorLane, transports),
             lines,
             concern: concernFromLines(lines) || row.concern,
             vin: row.vin || vehicle?.vin || "",
@@ -1115,7 +1118,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               const vin = (patch.vin === undefined ? row.vin : patch.vin).trim().toUpperCase();
               const laborOpIds = Array.isArray(patch.laborOpIds) ? patch.laborOpIds : row.laborOpIds ?? [];
               const vehicleId = patch.vehicleId || row.vehicleId;
-              return { ...row, ...patch, minutes, time, date, lines: kept, concern: concernFromLines(kept) || row.concern, vin, laborOpIds, vehicleId, id: row.id, orderId: row.orderId };
+              const lane = normalizeLane(patch.lane === undefined ? row.lane : patch.lane, state.settings.scheduling.transportOptions);
+              return { ...row, ...patch, minutes, time, date, lines: kept, concern: concernFromLines(kept) || row.concern, vin, laborOpIds, vehicleId, lane, id: row.id, orderId: row.orderId };
             })
             .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
         })),
@@ -1137,6 +1141,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             concern: concernFromLines(kept),
             vin,
             laborOpIds: input.laborOpIds ?? [],
+            lane: normalizeLane(input.lane, state.settings.scheduling.transportOptions),
             id: uid("ap"),
             status: "scheduled",
             orderId: null,
