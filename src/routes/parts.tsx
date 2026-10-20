@@ -114,6 +114,7 @@ function PartsPage() {
                       value={part.onHand}
                       onChange={(event) => shop.setOnHand(part.id, Number(event.target.value) || 0)}
                     />
+                    {part.onHand < 0 ? <Pill tone="bad">Oversold</Pill> : null}
                     {part.onOrder > 0 ? <span className="mt-1 block text-xs text-muted">{part.onOrder} on order</span> : null}
                   </td>
                   <td className="tabular-nums">{usd(part.onHand * part.cost)}</td>

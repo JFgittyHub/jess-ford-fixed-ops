@@ -14,16 +14,15 @@
  * Tri-mode:
  *   - Deployed: the deployer injects a per-app `GROK_AUTH_*` + `BETTER_AUTH_URL`
  *     + `DATABASE_URL`, so real federated auth is persisted in Postgres.
- *   - Sandbox live preview: no per-app injection and no `GROK_PROJECT_ID` ->
- *     the shared **preview client** (`./preview`) is used only when
- *     `GROK_PREVIEW_CLIENT_SECRET` is set. The preview's
- *     `https://*.grok-sandbox.com` origin is derived from the request.
- *     Sessions persist in the embedded PGLite DB; a process restart wipes
- *     them. Live-preview iframe clients use a bearer token — see `client.ts`.
- *     A deployed app never falls back to that preview secret.
- *   - Off (`VITE_AUTH_ENABLED=false`, the shipped default): no providers;
- *     `requireUserId` resolves a dev user with no database configured, and
- *     throws fail-closed once `DATABASE_URL` is set (see `verify.server.ts`).
+ *   - Grok sandbox (`NODE_ENV=development`, and no `VERCEL`, `VERCEL_ENV`, or
+ *     `GROK_PROJECT_ID`): the shared preview client is used only when
+ *     `GROK_PREVIEW_CLIENT_SECRET` is set. Sandbox origins are
+ *     `https://*.grok-sandbox.com`. Sessions persist in PGLite.
+ *   - Anywhere else (Vercel, `NODE_ENV=production`, a project id, or an unset
+ *     `NODE_ENV`): no preview client and no sandbox origins. Startup throws
+ *     unless `GROK_AUTH_CLIENT_ID`, `GROK_AUTH_CLIENT_SECRET`,
+ *     `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL` are set, and
+ *     `VITE_AUTH_ENABLED` is not `false`.
  *
  * NEVER import this from client code — it pulls in `pg` and server-only
  * Better Auth internals. The client uses `@/lib/auth/client`;
@@ -37,17 +36,12 @@ import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { ensureDbReady, getPglite } from "../db";
-import { isWorkspacePreview } from "../env.server";
 import { emailAndPasswordEnabled } from "./email-password";
 import { GATE_PROVIDER_ID, gateIdentitySessions } from "./gate-session.server";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
-import {
-  GROK_ISSUER_DEFAULT,
-  PREVIEW_ALLOWED_HOSTS,
-  previewClientSecretFromEnv,
-  resolveBrokerClient,
-} from "./preview";
+import { GROK_ISSUER_DEFAULT } from "./preview";
+import { assertProductionAuth, resolveAuthSurface } from "./runtime";
 
 // Kick (and share) PGLite bootstrap as soon as the auth server module loads.
 void ensureDbReady();
@@ -72,66 +66,23 @@ const env = (key: string): string | undefined => {
   return value ? value : undefined;
 };
 
-// Explicit off-switch. The deployer sets `VITE_AUTH_ENABLED=true` when it
-// provisions auth; set it to "false" to force auth off everywhere (dev user).
-const authDisabled = env("VITE_AUTH_ENABLED") === "false";
+// Outside the Grok sandbox this throws before Better Auth is constructed, so a
+// Vercel deploy or any production process cannot fall back to grok_preview,
+// sandbox origins, or a shared dev user.
+assertProductionAuth();
+const authSurface = resolveAuthSurface();
 
-// Broker federation creds. A deployed app (`GROK_PROJECT_ID` set) uses only the
-// per-app client. The shared preview client is a sandbox fallback, and only
-// when `GROK_PREVIEW_CLIENT_SECRET` was injected — never a value in source.
+const authDisabled = env("VITE_AUTH_ENABLED") === "false";
 const grokIssuer = env("GROK_AUTH_ISSUER") ?? GROK_ISSUER_DEFAULT;
-const brokerClient = resolveBrokerClient({
-  deployed: !isWorkspacePreview(),
-  authClientId: env("GROK_AUTH_CLIENT_ID"),
-  authClientSecret: env("GROK_AUTH_CLIENT_SECRET"),
-  previewClientSecret: previewClientSecretFromEnv(),
-});
-const grokClientId = brokerClient.clientId;
-const grokClientSecret = brokerClient.clientSecret;
+const grokClientId = authSurface.clientId;
+const grokClientSecret = authSurface.clientSecret;
 
 /** True when federated sign-in is active (real auth is enforced). */
 export const authConfigured =
   !authDisabled && Boolean(grokClientId && grokClientSecret);
 
-// This app's own Better Auth origin. When deployed the deployer injects the
-// public URL. In the sandbox live preview there's no fixed URL (each preview gets
-// a dynamic `*.grok-sandbox.com` host), so we hand Better Auth a dynamic baseURL:
-// it derives the origin per-request from the (proxied) host, validated against the
-// preview allowlist, which makes the OAuth `redirect_uri` the concrete preview URL
-// the broker's preview client accepts.
-const explicitBaseURL = env("BETTER_AUTH_URL");
-// Explicit `string[]` (not a readonly tuple) — Better Auth's DynamicBaseURLConfig
-// requires a mutable `allowedHosts: string[]`.
-const previewAllowedHosts: string[] = [...PREVIEW_ALLOWED_HOSTS];
-// Local `npm run dev` (port 8080 contract). Browsers may send Origin as any of
-// these for the same server — trusting only `localhost` rejects `127.0.0.1` and
-// breaks email/password with "Invalid origin".
-const LOCAL_DEV_ORIGINS: string[] = [
-  "http://localhost:8080",
-  "http://127.0.0.1:8080",
-  "http://[::1]:8080",
-];
-const baseURL = explicitBaseURL ?? {
-  // Include loopback hosts so dynamic baseURL resolves for local email/password
-  // (not only the preview wildcard).
-  allowedHosts: [...previewAllowedHosts, "localhost", "127.0.0.1", "[::1]"],
-  // `auto` → trust both http:// and https:// expansions of allowedHosts
-  // (preview is https; local dev is http).
-  protocol: "auto" as const,
-  fallback: "http://localhost:8080",
-};
-
-// Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
-// Missing entries here surface as FORBIDDEN "Invalid origin".
-const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
-  : [
-      // Host wildcards (matched against Origin's host)
-      ...previewAllowedHosts,
-      // Full-origin wildcards (matched against Origin)
-      ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
-      ...LOCAL_DEV_ORIGINS,
-    ];
+const baseURL = authSurface.baseURL;
+const trustedOrigins = authSurface.trustedOrigins;
 
 const databaseUrl = env("DATABASE_URL");
 
@@ -182,9 +133,11 @@ const grokOAuthPlugin = authConfigured
 
 export const auth = betterAuth({
   baseURL,
-  // Deployed apps inject BETTER_AUTH_SECRET. Preview: process-stable secret on
-  // globalThis so HMR doesn't invalidate PGLite-backed sessions (see above).
-  secret: env("BETTER_AUTH_SECRET") ?? previewAuthSecret(),
+  // Production requires BETTER_AUTH_SECRET (asserted above). The sandbox keeps
+  // a process-stable secret so HMR doesn't invalidate PGLite sessions.
+  secret: authSurface.sandbox
+    ? (authSurface.authSecret ?? previewAuthSecret())
+    : (authSurface.authSecret as string),
   database,
 
   // CSRF / origin check for credentialed auth POSTs (email sign-up/sign-in, …).

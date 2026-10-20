@@ -16,6 +16,25 @@ import {
 const ISSUER = "https://gate.app-builder-testing.com";
 const AUDIENCE = "app:proj-123";
 
+function enterSandbox() {
+  const previous = {
+    NODE_ENV: process.env.NODE_ENV,
+    VERCEL: process.env.VERCEL,
+    VERCEL_ENV: process.env.VERCEL_ENV,
+  };
+  process.env.NODE_ENV = "development";
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
+  return () => {
+    if (previous.NODE_ENV === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous.NODE_ENV;
+    if (previous.VERCEL === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = previous.VERCEL;
+    if (previous.VERCEL_ENV === undefined) delete process.env.VERCEL_ENV;
+    else process.env.VERCEL_ENV = previous.VERCEL_ENV;
+  };
+}
+
 type TestKey = { privateKey: KeyObject; jwk: JWK; kid: string };
 
 async function makeKey(kid: string): Promise<TestKey> {
@@ -278,20 +297,25 @@ describe("gateIdentityFromHeaders", () => {
     };
     delete process.env.GROK_PROJECT_ID;
     delete process.env.GROK_GATE_ORIGIN;
-    const token = await signToken(
-      key,
-      { sub: "user-1" },
-      { issuer: "http://127.0.0.1:6014", audience: "preview" },
-    );
-    const identity = await gateIdentityFromHeaders(
-      new Headers({
-        host: "my-session.grok-sandbox.com",
-        "x-grok-identity": token,
-      }),
-      fetchImpl,
-    );
-    assert.equal(identity?.sub, "user-1");
-    assert.equal(fetchedFrom[0], "http://127.0.0.1:6014/__gate/identity-key");
+    const leave = enterSandbox();
+    try {
+      const token = await signToken(
+        key,
+        { sub: "user-1" },
+        { issuer: "http://127.0.0.1:6014", audience: "preview" },
+      );
+      const identity = await gateIdentityFromHeaders(
+        new Headers({
+          host: "my-session.grok-sandbox.com",
+          "x-grok-identity": token,
+        }),
+        fetchImpl,
+      );
+      assert.equal(identity?.sub, "user-1");
+      assert.equal(fetchedFrom[0], "http://127.0.0.1:6014/__gate/identity-key");
+    } finally {
+      leave();
+    }
   });
 
   it("rejects a wrong-issuer token in the loopback default mode", async () => {
@@ -299,16 +323,21 @@ describe("gateIdentityFromHeaders", () => {
     const { fetchImpl } = staticJwks([key.jwk]);
     delete process.env.GROK_PROJECT_ID;
     delete process.env.GROK_GATE_ORIGIN;
-    const token = await signToken(
-      key,
-      { sub: "user-1" },
-      { issuer: ISSUER, audience: "preview" },
-    );
-    const identity = await gateIdentityFromHeaders(
-      new Headers({ "x-grok-identity": token }),
-      fetchImpl,
-    );
-    assert.equal(identity, null);
+    const leave = enterSandbox();
+    try {
+      const token = await signToken(
+        key,
+        { sub: "user-1" },
+        { issuer: ISSUER, audience: "preview" },
+      );
+      const identity = await gateIdentityFromHeaders(
+        new Headers({ "x-grok-identity": token }),
+        fetchImpl,
+      );
+      assert.equal(identity, null);
+    } finally {
+      leave();
+    }
   });
 
   it("verifies a preview-audience token when only GROK_GATE_ORIGIN is set", async () => {
@@ -316,6 +345,7 @@ describe("gateIdentityFromHeaders", () => {
     const { fetchImpl } = staticJwks([key.jwk]);
     delete process.env.GROK_PROJECT_ID;
     process.env.GROK_GATE_ORIGIN = ISSUER;
+    const leave = enterSandbox();
     try {
       const token = await signToken(
         key,
@@ -333,6 +363,7 @@ describe("gateIdentityFromHeaders", () => {
         teamId: null,
       });
     } finally {
+      leave();
       delete process.env.GROK_GATE_ORIGIN;
     }
   });
@@ -364,6 +395,7 @@ describe("gateIdentityFromHeaders", () => {
     const { fetchImpl } = staticJwks([key.jwk]);
     delete process.env.GROK_PROJECT_ID;
     process.env.GROK_GATE_ORIGIN = ISSUER;
+    const leave = enterSandbox();
     try {
       const token = await signToken(key, { sub: "user-1" });
       const identity = await gateIdentityFromHeaders(
@@ -372,6 +404,7 @@ describe("gateIdentityFromHeaders", () => {
       );
       assert.equal(identity, null);
     } finally {
+      leave();
       delete process.env.GROK_GATE_ORIGIN;
     }
   });
@@ -406,13 +439,29 @@ describe("gateTokenAudience", () => {
     }
   });
 
-  it("pins preview when GROK_PROJECT_ID is unset", () => {
+  it("pins preview when the process is the Grok sandbox", () => {
     delete process.env.GROK_PROJECT_ID;
     process.env.GROK_GATE_ORIGIN = ISSUER;
+    const leave = enterSandbox();
     try {
       assert.equal(gateTokenAudience(), "preview");
     } finally {
+      leave();
       delete process.env.GROK_GATE_ORIGIN;
+    }
+  });
+
+  it("does not use the preview audience for a production process with no project id", () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    delete process.env.GROK_PROJECT_ID;
+    delete process.env.VERCEL;
+    delete process.env.VERCEL_ENV;
+    try {
+      assert.notEqual(gateTokenAudience(), "preview");
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
     }
   });
 });

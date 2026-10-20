@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
 import { homeFor, pathAllowed, useSession, writeSession, type Session } from "@/lib/session";
 import { useShop } from "@/lib/store";
@@ -161,7 +162,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
         <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{pathAllowed(session, pathname) ? children : null}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          Kept in this browser only. The shop starts empty. Load the sample month from Settings, or start with VITE_DEMO_MODE, when you want the demo customers and repair orders. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          Kept in this browser only. The shop starts empty. Demo mode loads a sample month, and Settings can load it again while that mode is on. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -204,21 +205,23 @@ export function Shell({ children }: { children: ReactNode }) {
           </Field>
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button tone="primary" type="submit">Done</Button>
-            <Button
-              tone={confirmReset ? "accent" : "ghost"}
-              onClick={() => {
-                if (!confirmReset) {
-                  setConfirmReset(true);
-                  setConfirmClear(false);
-                  return;
-                }
-                resetDemo();
-                setConfirmReset(false);
-                setOpen(false);
-              }}
-            >
-              {confirmReset ? "Load sample month now" : "Load sample month"}
-            </Button>
+            {isDemoMode() ? (
+              <Button
+                tone={confirmReset ? "accent" : "ghost"}
+                onClick={() => {
+                  if (!confirmReset) {
+                    setConfirmReset(true);
+                    setConfirmClear(false);
+                    return;
+                  }
+                  resetDemo();
+                  setConfirmReset(false);
+                  setOpen(false);
+                }}
+              >
+                {confirmReset ? "Load sample month now" : "Load sample month"}
+              </Button>
+            ) : null}
             <Button
               tone={confirmClear ? "accent" : "ghost"}
               onClick={() => {

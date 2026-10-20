@@ -126,16 +126,24 @@ describe("repair order money", () => {
   const order = ticket(written(400));
 
   it("prices labor, parts, capped fees, and tax", () => {
-    // Labor and parts stay exact hours × rate. The ticket sum can sit a
-    // fraction of a cent off in binary; cents are what the desk bills.
-    const money = orderMoney(order);
-    assert.equal(money.labor, 283.5);
-    assert.equal(money.parts, 83.9);
-    assert.equal(money.fees, 37.39);
-    assert.equal(money2(money.ticket), 404.79);
-    assert.equal(money2(ticketBeforeTax(order)), 404.79);
-    assert.equal(money.tax, 26.31);
-    assert.equal(money2(money.total), 431.1);
+    // 8% of labor + parts reaches the $35 shop-fee cap at $437.50.
+    // 2.5h × $189 + $50 of parts is $522.50, so the cap has to bind.
+    const capped = {
+      ...order,
+      labor: [{ ...order.labor[0], hours: 2.5 }],
+      parts: [{ ...order.parts[0], qty: 1, price: 50 }],
+      fees: [{ id: "shop", name: "Misc Shop Fee", amount: 8, basis: "percent" as const, cap: 35 }],
+    };
+    const money = orderMoney(capped);
+    assert.ok(money.labor + money.parts >= 437.5);
+    assert.equal(money.labor, 472.5);
+    assert.equal(money.parts, 50);
+    assert.equal(money.fees, 35);
+    // Ticket is labor + parts + the capped fee. Tax is 6.5% of that.
+    assert.equal(money2(money.ticket), 557.5);
+    assert.equal(money2(ticketBeforeTax(capped)), 557.5);
+    assert.equal(money.tax, 36.24);
+    assert.equal(money2(money.total), 593.74);
   });
 
   it("sells parts by pay type", () => {

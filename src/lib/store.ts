@@ -771,8 +771,18 @@ export const useShop = create<ShopState>()(
           };
           return { campaigns: [row, ...state.campaigns] };
         }),
-      resetDemo: () => set({ ...createSeed(), focusOrderId: null }),
-      clearShop: () => set({ ...createEmptyShop(), focusOrderId: null }),
+      resetDemo: () =>
+        set((state) => ({
+          ...createSeed(),
+          settings: state.settings,
+          focusOrderId: null,
+        })),
+      clearShop: () =>
+        set((state) => ({
+          ...createEmptyShop(),
+          settings: state.settings,
+          focusOrderId: null,
+        })),
     }),
     {
       name: "jess-ford-fixed-ops-v1",

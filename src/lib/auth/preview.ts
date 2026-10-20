@@ -10,9 +10,10 @@
  * The public client id stays here. The client secret does not: the platform
  * injects `GROK_PREVIEW_CLIENT_SECRET` for the sandbox only. It must equal the
  * broker's `GROK_PREVIEW_CLIENT_SECRET` (the broker stores only
- * `base64url(SHA-256)` of that value). A deployed app (`GROK_PROJECT_ID` set)
- * never uses this client — it needs its own `GROK_AUTH_CLIENT_ID` and
- * `GROK_AUTH_CLIENT_SECRET`, and a missing pair leaves auth unconfigured.
+ * `base64url(SHA-256)` of that value). Only a Grok sandbox
+ * (`NODE_ENV=development`, and no `VERCEL`, `VERCEL_ENV`, or `GROK_PROJECT_ID`)
+ * may use this client. Every other process needs its own `GROK_AUTH_CLIENT_ID`
+ * and `GROK_AUTH_CLIENT_SECRET`, and refuses to start without them.
  */
 export const PREVIEW_CLIENT_ID = "grok_preview";
 
