@@ -37,7 +37,7 @@ interface ShopActions {
   clockTech: (techId: string, hours: number) => void;
   addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">) => boolean;
   updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">>) => boolean;
-  removeTech: (id: string) => "ok" | "used";
+  removeTech: (id: string) => "ok" | "used" | "appointments";
   addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent">) => boolean;
   updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent">>) => boolean;
   removeAdvisor: (id: string) => "ok" | "used";
@@ -471,10 +471,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return updated;
       },
       removeTech: (id) => {
-        let result: "ok" | "used" = "ok";
+        let result: "ok" | "used" | "appointments" = "ok";
         set((state) => {
           if (state.orders.some((order) => order.labor.some((line) => line.techId === id) || order.inspection?.techId === id)) {
             result = "used";
+            return state;
+          }
+          if (state.appointments.some((row) => row.techId === id)) {
+            result = "appointments";
             return state;
           }
           return { techs: state.techs.filter((tech) => tech.id !== id) };
@@ -915,13 +919,6 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               return { ...row, ...patch, minutes, time, date, lines: kept, concern: concernFromLines(kept) || row.concern, vin, laborOpIds, vehicleId, id: row.id, orderId: row.orderId };
             })
             .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
-          vehicles: state.vehicles.map((vehicle) => {
-            const row = state.appointments.find((item) => item.id === id);
-            if (!row) return vehicle;
-            const vehicleId = patch.vehicleId || row.vehicleId;
-            const vin = (patch.vin === undefined ? row.vin : patch.vin).trim().toUpperCase();
-            return vehicle.id === vehicleId && vin ? { ...vehicle, vin } : vehicle;
-          }),
         })),
       addAppointment: (input) =>
         set((state) => {

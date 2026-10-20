@@ -163,7 +163,7 @@ function DispatchPage() {
                 <td>
                   <Button small onClick={() => {
                     const result = removeTech(tech.id);
-                    setError(result === "ok" ? "" : `${tech.name} is still on a repair order.`);
+                    setError(result === "ok" ? "" : result === "appointments" ? `${tech.name} still has appointments. Reassign them before removing.` : `${tech.name} is still on a repair order.`);
                   }}>Remove</Button>
                 </td>
               </tr>
