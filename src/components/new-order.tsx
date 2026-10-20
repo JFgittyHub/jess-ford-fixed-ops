@@ -104,6 +104,10 @@ function NewOrderForm({
             nextVehicle = created.vehicleId;
           }
           if (!nextCustomer || !nextVehicle || written.length === 0) return;
+          const booked = preset?.appointmentId
+            ? shop.appointments.find((row) => row.id === preset.appointmentId)
+            : undefined;
+          const carriedTech = booked?.techId || shop.techs[0]?.id || "";
           const id = shop.createOrder({
             customerId: nextCustomer,
             vehicleId: nextVehicle,
@@ -121,7 +125,7 @@ function NewOrderForm({
                 hours: op.hours,
                 rate: rateFor(op.payType, shop.payTypes),
                 payType: op.payType,
-                techId: shop.techs[0]?.id ?? "",
+                techId: carriedTech,
               }];
             }),
           });
