@@ -54,7 +54,7 @@ export function defaultScheduling(store: StoreId = "grand-coulee"): SchedulingSe
         day(6, "08:00", "16:00"),
       ],
       closedDates: ["2026-11-27", "2026-12-24"],
-      bookingWindow: { daysAhead: 14, minLeadHours: 4 },
+      bookingWindow: { daysAhead: 14, minLeadHours: 0 },
       onlineMenu: menu([
         ["pl-oil", "Oil and filter", 0.6],
         ["pl-align", "Four-wheel alignment", 1.2],
@@ -74,7 +74,7 @@ export function defaultScheduling(store: StoreId = "grand-coulee"): SchedulingSe
       day(6, "08:00", "13:00"),
     ],
     closedDates: ["2026-11-26", "2026-12-25"],
-    bookingWindow: { daysAhead: 21, minLeadHours: 2 },
+    bookingWindow: { daysAhead: 21, minLeadHours: 0 },
     onlineMenu: menu([
       ["gc-oil", "Oil and filter", 0.5],
       ["gc-rotate", "Tire rotation", 0.3],

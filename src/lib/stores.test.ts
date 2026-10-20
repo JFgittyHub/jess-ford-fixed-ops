@@ -54,6 +54,7 @@ describe("two stores", () => {
     const couleeWindow = shop.getState().settings.scheduling.bookingWindow.daysAhead;
     const couleeSaturday = shop.getState().settings.scheduling.hours[6]?.close;
     assert.equal(couleeWindow, 21);
+    assert.equal(shop.getState().settings.scheduling.bookingWindow.minLeadHours, 0);
     assert.equal(couleeSaturday, "13:00");
     assert.deepEqual(shop.getState().settings.scheduling.closedDates, ["2026-11-26", "2026-12-25"]);
     assert.deepEqual(
@@ -64,7 +65,7 @@ describe("two stores", () => {
 
     shop.getState().switchStore("pullman");
     assert.equal(shop.getState().settings.scheduling.bookingWindow.daysAhead, 14);
-    assert.equal(shop.getState().settings.scheduling.bookingWindow.minLeadHours, 4);
+    assert.equal(shop.getState().settings.scheduling.bookingWindow.minLeadHours, 0);
     assert.equal(shop.getState().settings.scheduling.hours[6]?.close, "16:00");
     assert.deepEqual(shop.getState().settings.scheduling.closedDates, ["2026-11-27", "2026-12-24"]);
     assert.equal(shop.getState().settings.storeName, "Jess Ford Pullman");

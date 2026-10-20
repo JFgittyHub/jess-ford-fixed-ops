@@ -28,7 +28,7 @@ export interface FeeLine {
 /** How far ahead an online customer may book, and how much notice the shop needs. */
 export interface BookingWindow {
   daysAhead: number;
-  /** Minimum hours between the request and the appointment start. */
+  /** Minimum hours between the request and the appointment start. 0 until a store sets one. */
   minLeadHours: number;
 }
 
