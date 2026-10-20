@@ -2,6 +2,9 @@ import type { JobLine } from "./jobs";
 import type { MultiPoint } from "./mpi";
 import type { WaRecord } from "./wa";
 
+export type StoreId = "grand-coulee" | "pullman";
+export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
 export type PayType = string;
 export type PayKind = "customer" | "warranty" | "internal";
 export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "invoiced";
@@ -21,6 +24,42 @@ export interface FeeLine {
   cap: number;
 }
 
+/** How far ahead an online customer may book, and how much notice the shop needs. */
+export interface BookingWindow {
+  daysAhead: number;
+  /** Minimum hours between the request and the appointment start. */
+  minLeadHours: number;
+}
+
+export interface DayHours {
+  weekday: WeekdayIndex;
+  /** Weekly closure. A specific date is listed separately in closedDates. */
+  closed: boolean;
+  open: string;
+  close: string;
+}
+
+/** One row on the online service menu. Labor time only — no price. */
+export interface OnlineService {
+  id: string;
+  name: string;
+  laborHours: number;
+}
+
+/** How the customer spends the visit. Seeded with Waiter and Drop-off. */
+export interface TransportOption {
+  id: string;
+  name: string;
+}
+
+export interface SchedulingSettings {
+  hours: DayHours[];
+  closedDates: string[];
+  bookingWindow: BookingWindow;
+  onlineMenu: OnlineService[];
+  transportOptions: TransportOption[];
+}
+
 export interface Settings {
   storeName: string;
   city: string;
@@ -34,6 +73,7 @@ export interface Settings {
   policyGuide: number;
   fees: FeeLine[];
   taxRate: number;
+  scheduling: SchedulingSettings;
 }
 
 export interface Advisor {
@@ -62,7 +102,14 @@ export interface Tech {
 export interface Customer {
   id: string;
   name: string;
+  /** Desk contact number. */
   phone: string;
+  /**
+   * Mobile used for a later one-time code. Empty means none on file, so that
+   * visit would stay unverified until an advisor matches the record.
+   */
+  mobile: string;
+  email: string;
 }
 
 export interface Vehicle {

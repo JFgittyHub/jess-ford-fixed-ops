@@ -70,7 +70,7 @@ function CustomersPage() {
   const rows = useMemo(() => {
     return base.filter((row) => {
       if (riskOnly && row.age < 150 && row.visits > 0) return false;
-      const hay = `${row.customer.name} ${row.customer.phone} ${row.vehicles.map((vehicle) => vehicle.model).join(" ")}`.toLowerCase();
+      const hay = `${row.customer.name} ${row.customer.phone} ${row.customer.mobile} ${row.customer.email} ${row.vehicles.map((vehicle) => `${vehicle.model} ${vehicle.vin}`).join(" ")}`.toLowerCase();
       return hay.includes(query.trim().toLowerCase());
     }).sort((a, b) => b.age - a.age);
   }, [base, query, riskOnly]);
@@ -166,9 +166,19 @@ function CustomersPage() {
                 <td>
                   <span className="block font-semibold">{row.customer.name}</span>
                   <span className="text-sm text-muted">{row.customer.phone}</span>
+                  <span className="block text-sm text-muted">{row.customer.email}</span>
+                  {row.customer.mobile && row.customer.mobile !== row.customer.phone ? <span className="block text-sm text-muted">{row.customer.mobile}</span> : null}
+                  {row.customer.mobile ? null : <span className="block text-sm text-muted">No mobile on file</span>}
                   {lastText ? <span className="block text-sm text-muted">Texted {lastText.sentOn}</span> : null}
                 </td>
-                <td>{row.vehicles.map((vehicle) => `${vehicle.year} ${vehicle.model}`).join(", ")}</td>
+                <td>
+                  {row.vehicles.map((vehicle) => (
+                    <span key={vehicle.id} className="block">
+                      {vehicle.year} Ford {vehicle.model}
+                      <span className="block font-mono text-xs text-muted">{vehicle.vin}</span>
+                    </span>
+                  ))}
+                </td>
                 <td className="tabular-nums">{row.visits}</td>
                 <td>
                   {row.last || "—"}

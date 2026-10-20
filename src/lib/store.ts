@@ -6,11 +6,13 @@ import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
 import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
+import { addClosedDate, addOnlineService, addTransportOption, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService } from "./scheduling";
+import { fullVin } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
 import { bookRepairOrder, dropClosedHistory, invoiceRepairOrder, reopenRepairOrder, unbookRepairOrder } from "./ro";
 import { closedRecord } from "./metrics";
-import type { Advisor, Appointment, Campaign, ExpenseTxn, FeeLine, LaborLine, LaborOp, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, Tech, TechBoard } from "./types";
+import type { Advisor, Appointment, BookingWindow, Campaign, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, StoreId, Tech, TechBoard, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -28,12 +30,27 @@ export interface NewCustomerInput {
   phone: string;
   year: number;
   model: string;
+  mobile?: string;
+  email?: string;
 }
 
 interface ShopActions {
   focusOrderId: string | null;
+  activeStoreId: StoreId;
+  stores: Record<StoreId, ShopData>;
   setFocus: (id: string | null) => void;
+  switchStore: (id: StoreId) => void;
   updateSettings: (patch: Partial<ShopData["settings"]>) => void;
+  updateDayHours: (weekday: WeekdayIndex, patch: Partial<Pick<DayHours, "closed" | "open" | "close">>) => void;
+  addClosedDate: (iso: string) => boolean;
+  removeClosedDate: (iso: string) => void;
+  updateBookingWindow: (patch: Partial<BookingWindow>) => void;
+  addOnlineService: (input: { name: string; laborHours: number }) => boolean;
+  updateOnlineService: (id: string, patch: Partial<Pick<OnlineService, "name" | "laborHours">>) => boolean;
+  removeOnlineService: (id: string) => void;
+  addTransportOption: (name: string) => boolean;
+  renameTransportOption: (id: string, name: string) => boolean;
+  removeTransportOption: (id: string) => boolean;
   clockTech: (techId: string, hours: number) => void;
   addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">) => boolean;
   updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">>) => boolean;
@@ -126,8 +143,61 @@ function uid(prefix: string) {
 }
 
 function demoVin() {
-  const serial = Math.floor(Math.random() * 1e8).toString().padStart(8, "0");
-  return `1FTDEMO${serial}AA`;
+  const serial = 100000 + Math.floor(Math.random() * 899999);
+  return fullVin({ prefix: "1FTAB12C", year: 2022, plant: "A", serial });
+}
+
+function pickShop(state: ShopData): ShopData {
+  const shop = {} as ShopData;
+  for (const key of dataKeys) {
+    (shop as Record<keyof ShopData, ShopData[keyof ShopData]>)[key] = state[key];
+  }
+  return shop;
+}
+
+function withCustomerFields<T extends { phone?: string; mobile?: string; email?: string }>(customers: T[] | undefined) {
+  if (!Array.isArray(customers)) return customers;
+  return customers.filter((row) => row && typeof row === "object").map((row) => ({
+    ...row,
+    phone: row.phone ?? "",
+    mobile: typeof row.mobile === "string" ? row.mobile : "",
+    email: typeof row.email === "string" ? row.email : "",
+  }));
+}
+
+function withScheduling(settings: ShopData["settings"] | undefined) {
+  if (!settings) return settings;
+  return {
+    ...settings,
+    phone: settings.phone ?? "",
+    address: settings.address ?? "",
+    fees: normalizeFees(settings.fees),
+    taxRate: typeof settings.taxRate === "number" ? settings.taxRate : DEFAULT_TAX_RATE,
+    scheduling: normalizeScheduling(settings.scheduling),
+  };
+}
+
+function createDesk(demoMode: boolean): { activeStoreId: StoreId; stores: Record<StoreId, ShopData> } {
+  if (!demoMode) {
+    const coulee = createEmptyShop();
+    const pullman = createEmptyShop();
+    pullman.settings = {
+      ...pullman.settings,
+      storeName: "Jess Ford Pullman",
+      city: "Pullman, WA",
+      address: "Pullman service drive",
+      phone: "(555) 332-2100",
+      scheduling: normalizeScheduling(undefined, "pullman"),
+    };
+    return { activeStoreId: "grand-coulee", stores: { "grand-coulee": coulee, pullman } };
+  }
+  return {
+    activeStoreId: "grand-coulee",
+    stores: {
+      "grand-coulee": createSeed("grand-coulee"),
+      pullman: createSeed("pullman"),
+    },
+  };
 }
 
 function isHeld(status: RoStatus) {
@@ -270,6 +340,8 @@ export function migrateSavedShop(persisted: unknown): ShopState {
     return {
       ...saved,
       dataset: saved.dataset === "sample" ? "sample" : "shop",
+      customers: withCustomerFields(saved.customers) ?? saved.customers,
+      settings: withScheduling(saved.settings) ?? saved.settings,
     } as ShopState;
   }
   const techList = Array.isArray(saved.techs) ? saved.techs : [];
@@ -330,9 +402,8 @@ export function migrateSavedShop(persisted: unknown): ShopState {
           };
         })
       : saved.appointments,
-    settings: saved.settings
-      ? { ...saved.settings, phone: saved.settings.phone ?? "", address: saved.settings.address ?? "", fees: normalizeFees(saved.settings.fees), taxRate: typeof saved.settings.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE }
-      : saved.settings,
+    customers: withCustomerFields(saved.customers) ?? saved.customers,
+    settings: withScheduling(saved.settings) ?? saved.settings,
     timeLogs: Array.isArray(saved.timeLogs) ? saved.timeLogs : [],
     closedHistory: Array.isArray(saved.closedHistory)
       ? saved.closedHistory
@@ -369,13 +440,38 @@ export function migrateSavedShop(persisted: unknown): ShopState {
 /** Rehydrate path. Strips passwords even when the blob is already version 28. */
 export function mergeSavedShop(persisted: unknown, current: ShopState): ShopState {
   if (!persisted || typeof persisted !== "object") return current;
+  const record = persisted as Partial<ShopData> & { activeStoreId?: StoreId; stores?: Partial<Record<StoreId, Partial<ShopData>>> };
+  if (record.stores && typeof record.stores === "object") {
+    const stores = {
+      "grand-coulee": mergeShopSlice(record.stores["grand-coulee"], current.stores["grand-coulee"]),
+      pullman: mergeShopSlice(record.stores.pullman, current.stores.pullman),
+    } satisfies Record<StoreId, ShopData>;
+    const activeStoreId: StoreId = record.activeStoreId === "pullman" ? "pullman" : "grand-coulee";
+    return { ...current, ...stores[activeStoreId], activeStoreId, stores };
+  }
   const saved = migrateSavedShop(persisted);
   if (!saved || typeof saved !== "object") return current;
   const data: Partial<ShopData> = {};
   for (const key of dataKeys) {
     if (key in saved) data[key] = saved[key] as never;
   }
-  return { ...current, ...data };
+  const merged = { ...current, ...data };
+  const activeStoreId = current.activeStoreId ?? "grand-coulee";
+  const stores = {
+    ...(current.stores ?? {}),
+    [activeStoreId]: pickShop(merged),
+  } as Record<StoreId, ShopData>;
+  return { ...merged, activeStoreId, stores };
+}
+
+function mergeShopSlice(saved: Partial<ShopData> | undefined, fallback: ShopData): ShopData {
+  if (!saved || typeof saved !== "object") return fallback;
+  const migrated = migrateSavedShop(saved);
+  const data: Partial<ShopData> = {};
+  for (const key of dataKeys) {
+    if (key in migrated && migrated[key] !== undefined) data[key] = migrated[key] as never;
+  }
+  return { ...fallback, ...data };
 }
 
 export interface ShopStoreOptions {
@@ -387,11 +483,38 @@ export interface ShopStoreOptions {
 
 export function createShopStore(options: ShopStoreOptions = {}) {
   const demoMode = options.demoMode ?? isDemoMode();
+  const desk = createDesk(demoMode);
+  const active = desk.stores[desk.activeStoreId];
   return create<ShopState>()(
     persist(
-      (set) => ({
-        ...(demoMode ? createSeed() : createEmptyShop()),
+      (rawSet) => {
+        const set: typeof rawSet = (partial, replace) => {
+          rawSet((state) => {
+            const patch = typeof partial === "function" ? partial(state) : partial;
+            if (patch === state) return state;
+            const next = (replace ? { ...patch } : { ...state, ...patch }) as ShopState;
+            const activeStoreId = next.activeStoreId === "pullman" || next.activeStoreId === "grand-coulee" ? next.activeStoreId : state.activeStoreId;
+            return {
+              ...next,
+              activeStoreId,
+              stores: { ...(next.stores ?? state.stores), [activeStoreId]: pickShop(next) },
+            };
+          });
+        };
+        return {
+        ...active,
+        activeStoreId: desk.activeStoreId,
+        stores: desk.stores,
       focusOrderId: null,
+      switchStore: (id) => {
+        if (id !== "grand-coulee" && id !== "pullman") return;
+        set((state) => {
+          if (state.activeStoreId === id) return state;
+          const next = state.stores[id];
+          if (!next) return state;
+          return { ...next, activeStoreId: id, stores: state.stores, focusOrderId: null };
+        });
+      },
       setFocus: (id) => set({ focusOrderId: id }),
       updateSettings: (patch) =>
         set((state) => {
@@ -406,6 +529,82 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               : state.orders,
           };
         }),
+      updateDayHours: (weekday, patch) =>
+        set((state) => ({
+          settings: { ...state.settings, scheduling: patchDayHours(state.settings.scheduling, weekday, patch) },
+        })),
+      addClosedDate: (iso) => {
+        let added = false;
+        set((state) => {
+          const next = addClosedDate(state.settings.scheduling, iso);
+          if (next === state.settings.scheduling) return state;
+          added = true;
+          return { settings: { ...state.settings, scheduling: next } };
+        });
+        return added;
+      },
+      removeClosedDate: (iso) =>
+        set((state) => ({
+          settings: { ...state.settings, scheduling: removeClosedDate(state.settings.scheduling, iso) },
+        })),
+      updateBookingWindow: (patch) =>
+        set((state) => ({
+          settings: { ...state.settings, scheduling: patchBookingWindow(state.settings.scheduling, patch) },
+        })),
+      addOnlineService: (input) => {
+        let added = false;
+        set((state) => {
+          const next = addOnlineService(state.settings.scheduling, input, uid("svc"));
+          if (!next) return state;
+          added = true;
+          return { settings: { ...state.settings, scheduling: next } };
+        });
+        return added;
+      },
+      updateOnlineService: (id, patch) => {
+        let updated = false;
+        set((state) => {
+          const next = updateOnlineService(state.settings.scheduling, id, patch);
+          if (!next) return state;
+          updated = true;
+          return { settings: { ...state.settings, scheduling: next } };
+        });
+        return updated;
+      },
+      removeOnlineService: (id) =>
+        set((state) => ({
+          settings: { ...state.settings, scheduling: removeOnlineService(state.settings.scheduling, id) },
+        })),
+      addTransportOption: (name) => {
+        let added = false;
+        set((state) => {
+          const next = addTransportOption(state.settings.scheduling, name, uid("ride"));
+          if (!next) return state;
+          added = true;
+          return { settings: { ...state.settings, scheduling: next } };
+        });
+        return added;
+      },
+      renameTransportOption: (id, name) => {
+        let renamed = false;
+        set((state) => {
+          const next = renameTransportOption(state.settings.scheduling, id, name);
+          if (!next) return state;
+          renamed = true;
+          return { settings: { ...state.settings, scheduling: next } };
+        });
+        return renamed;
+      },
+      removeTransportOption: (id) => {
+        let removed = false;
+        set((state) => {
+          const next = removeTransportOption(state.settings.scheduling, id);
+          if (!next) return state;
+          removed = true;
+          return { settings: { ...state.settings, scheduling: next } };
+        });
+        return removed;
+      },
       clockTech: (techId, hours) =>
         set((state) => ({
           techs: state.techs.map((tech) =>
@@ -868,7 +1067,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const customerId = uid("c");
         const vehicleId = uid("v");
         set((state) => ({
-          customers: [{ id: customerId, name: input.name.trim(), phone: input.phone.trim() }, ...state.customers],
+          customers: [{ id: customerId, name: input.name.trim(), phone: input.phone.trim(), mobile: input.mobile?.trim() ?? "", email: input.email?.trim() ?? "" }, ...state.customers],
           vehicles: [
             {
               id: vehicleId,
@@ -991,7 +1190,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           if (!sampleLoadAllowed(state, confirmReplace)) return state;
           return {
-            ...createSeed(),
+            ...createSeed(state.activeStoreId),
             settings: state.settings,
             focusOrderId: null,
           };
@@ -1002,9 +1201,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           settings: state.settings,
           focusOrderId: null,
         })),
-    }),
-      {
-        name: SHOP_STORAGE_KEY,
+      };
+    },
+    {
+      name: SHOP_STORAGE_KEY,
         storage: createJSONStorage(() => {
           const backing = options.storage ?? browserLocalStorage();
           return demoMode ? shopPersistStorage(true, backing) : passwordStrippingStorage(backing);
@@ -1014,7 +1214,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         migrate: (persisted) => migrateSavedShop(persisted),
         merge: (persisted, current) => mergeSavedShop(persisted, current as ShopState),
         partialize: (state) => {
-          const saved: Partial<ShopData> = {};
+          const saved: Partial<ShopData> & { activeStoreId: StoreId; stores: Record<StoreId, ShopData> } = {
+            activeStoreId: state.activeStoreId,
+            stores: state.stores,
+          };
           for (const key of dataKeys) saved[key] = state[key] as never;
           return saved as ShopState;
         },

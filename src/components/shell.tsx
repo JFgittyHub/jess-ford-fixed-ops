@@ -22,7 +22,14 @@ import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
 import { shopHasOperationalData, useShop } from "@/lib/store";
+import type { StoreId } from "@/lib/types";
+import { SchedulingSettingsForm } from "./scheduling-settings";
 import { Button, Field, Modal } from "./ui";
+
+const STORES: { id: StoreId; label: string }[] = [
+  { id: "grand-coulee", label: "Grand Coulee" },
+  { id: "pullman", label: "Pullman" },
+];
 
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
@@ -87,6 +94,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
 function OpenDesk({ children }: { children: ReactNode }) {
   const settings = useShop((state) => state.settings);
+  const activeStoreId = useShop((state) => state.activeStoreId);
+  const switchStore = useShop((state) => state.switchStore);
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
   const clearShop = useShop((state) => state.clearShop);
@@ -139,7 +148,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
       </aside>
       <div className="md:pl-60">
         <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
-          <div className="flex items-center justify-between gap-3 px-4 py-3 md:px-8">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-14 w-auto md:hidden" />
               <div className="min-w-0">
@@ -147,18 +156,33 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
-            <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
-              <Settings className="size-4" aria-hidden />
-              Settings
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div role="group" aria-label="Active store" className="flex gap-1">
+                {STORES.map((store) => (
+                  <Button
+                    key={store.id}
+                    small
+                    tone={activeStoreId === store.id ? "primary" : "ghost"}
+                    aria-pressed={activeStoreId === store.id}
+                    onClick={() => switchStore(store.id)}
+                  >
+                    {store.label}
+                  </Button>
+                ))}
+              </div>
+              <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
+                <Settings className="size-4" aria-hidden />
+                Settings
+              </Button>
+            </div>
           </div>
           <nav className="nav-scroll px-3 pb-3 md:hidden">
             <NavLinks onNavigate={() => undefined} />
           </nav>
         </header>
-        <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
+        <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          This visit is the sample month. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload it, and will ask before replacing shop work. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -167,7 +191,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           </button>
         ) : null}
       </div>
-      <Modal open={open} onClose={() => setOpen(false)} title="Store settings" description="Name, city, and the targets on the pulse. Labor rates live on Pay Type.">
+      <Modal open={open} onClose={() => setOpen(false)} wide title="Store settings" description="Name, city, targets, and scheduling for this store. Labor rates live on Pay Type.">
         <form
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={(event) => {
@@ -196,6 +220,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           <Field label="Policy guide % of CP labor">
             <input className="field tabular-nums" type="number" min={0} step={0.1} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
           </Field>
+          <SchedulingSettingsForm />
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button tone="primary" type="submit">Done</Button>
             {isDemoMode() ? (

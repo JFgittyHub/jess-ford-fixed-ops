@@ -1,3 +1,6 @@
+import type { StoreId } from "../types";
+
+export type { StoreId };
 export type Status = "good" | "watch" | "bad" | "empty";
 export type Commitment = "Green" | "Yellow" | "Red";
 export type CvpStanding = "Above Group" | "At Group" | "Below Group";
@@ -52,7 +55,6 @@ export type MonthBoard = {
   period2: Tech[];
 };
 
-export type StoreId = "grand-coulee" | "pullman";
 export type ViewId = StoreId | "group";
 
 export type AppState = {
