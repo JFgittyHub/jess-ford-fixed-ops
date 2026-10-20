@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { shopTodayDate } from "@/lib/clock";
 import { isDemoMode } from "@/lib/demo";
+import { SCORECARD_STORAGE_KEY, scrubDemoStorage } from "@/lib/shop-storage";
 import { PULLMAN_SAMPLE_MONTHS, SAMPLE_MONTHS, sampleFor } from "@/lib/scorecard/sample";
 import {
   ELR_STANDARD,
@@ -40,7 +41,7 @@ import {
 } from "@/lib/scorecard/model";
 import { Button, Field } from "@/components/ui";
 
-const STORAGE_KEY = "jess-ford-scorecard-v2";
+const STORAGE_KEY = SCORECARD_STORAGE_KEY;
 
 const VIEWS: { id: ViewId; label: string }[] = [
   { id: "group", label: "Group" },
@@ -123,14 +124,27 @@ export function ScorecardPulse() {
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
+    if (isDemoMode()) {
+      try {
+        scrubDemoStorage(window.localStorage);
+      } catch {
+        /* storage unavailable */
+      }
+      setReady(true);
+      return;
+    }
     const stored = readStored();
     if (stored) setState(stored);
     setReady(true);
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (!ready || isDemoMode()) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      /* storage unavailable */
+    }
   }, [state, ready]);
 
   const today = shopTodayDate();

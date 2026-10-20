@@ -11,7 +11,7 @@ import { grokPwaPlugin } from "./scripts/grok-pwa-plugin.mjs";
 // @ts-expect-error JS plugin alongside the TS vite config
 import { appEnvPlugin } from "./scripts/app-env-plugin.mjs";
 import { isMigrationFile } from "./scripts/migration-plan.mjs";
-import { isSandboxPreviewHost } from "./src/lib/env.server.ts";
+import { createAuthPopupRequest } from "./src/lib/auth/popup-request.ts";
 
 /** The files `src/lib/db.ts` globs — same directory, same non-recursive scope. */
 function hasGlobbedMigrations(root: string): boolean {
@@ -85,36 +85,10 @@ function authPopupPlugin(): Plugin {
             return;
           }
 
-          const host = String(
-            req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost:8080",
-          );
-          const proto = String(
-            req.headers["x-forwarded-proto"] ??
-              ((req.socket as { encrypted?: boolean } | undefined)?.encrypted ? "https" : "http"),
-          );
-          const requestHeaders = new Headers();
-          for (const [key, value] of Object.entries(req.headers)) {
-            if (value === undefined) continue;
-            if (Array.isArray(value)) {
-              for (const v of value) requestHeaders.append(key, v);
-            } else {
-              requestHeaders.set(key, value);
-            }
-          }
-          // Ensure Host is the public preview host so Better Auth's dynamic
-          // baseURL / redirect_uri match the popup origin.
-          if (!requestHeaders.has("host")) requestHeaders.set("host", host);
-
-          // The live preview's host is the positive sandbox marker. Copy it
-          // before the auth module loads. A shop PC's own host is not copied,
-          // so development mode alone cannot select grok_preview.
-          const previewHost = host.split(",")[0]?.trim() ?? "";
-          if (isSandboxPreviewHost(previewHost)) process.env.GROK_PREVIEW_HOST = previewHost;
-
-          const request = new Request(`${proto}://${host}${rawUrl}`, {
-            method: "GET",
-            headers: requestHeaders,
-          });
+          const encrypted = (req.socket as { encrypted?: boolean } | undefined)?.encrypted === true;
+          // Host is only this popup's request URL. Do not copy it into
+          // GROK_PREVIEW_HOST or GROK_SANDBOX_HOST.
+          const request = createAuthPopupRequest(req.headers, rawUrl, encrypted);
 
           const mod = (await server.ssrLoadModule("/src/lib/auth/popup.server.ts")) as {
             handleAuthPopupRequest: (req: Request) => Promise<Response>;

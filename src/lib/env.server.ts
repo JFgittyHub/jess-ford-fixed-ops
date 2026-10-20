@@ -14,7 +14,8 @@ function readEnv(source: Record<string, string | undefined>, key: string): strin
  * `preview-path-prefix.ts`. This workspace's dev process sets none of them:
  * no `GROK_*` variable and no sandbox marker file is present, and `npm run dev`
  * only makes `NODE_ENV` development inside Vite. A shop PC looks the same, so
- * development mode alone is not the sandbox.
+ * development mode alone is not the sandbox. Request headers, including
+ * `X-Forwarded-Host`, are not a marker.
  */
 const SANDBOX_PREVIEW_HOSTS = new Set([
   "grok-sandbox.com",

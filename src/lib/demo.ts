@@ -1,11 +1,18 @@
 /**
  * Sample customers, repair orders, and scorecard months are off unless this
- * is on. Set `VITE_DEMO_MODE` to `1`, `true`, `yes`, or `on`, or load the
- * sample month from Settings. Only `VITE_` variables reach the browser.
+ * is on. Set `VITE_DEMO_MODE` to the exact string `true` or `1` (spaces around
+ * it are ignored). `yes`, `on`, `TRUE`, and every other value stay off.
+ * Only `VITE_` variables reach the browser.
  */
+export function isExplicitDemoFlag(flag: string | null | undefined): boolean {
+  if (typeof flag !== "string") return false;
+  const value = flag.trim();
+  return value === "true" || value === "1";
+}
+
 export function isDemoMode(flag?: string): boolean {
   const raw = flag !== undefined ? flag : readDemoEnv();
-  return /^(1|true|yes|on)$/i.test(raw.trim());
+  return isExplicitDemoFlag(raw);
 }
 
 /**
@@ -23,8 +30,7 @@ export function confirmedDemoStaffAccess(input: {
 } = {}): boolean {
   const demoFlag = "demoFlag" in input ? input.demoFlag : readDemoFlag();
   if (input.dataset !== "sample") return false;
-  if (typeof demoFlag !== "string") return false;
-  return /^(1|true|yes|on)$/i.test(demoFlag.trim());
+  return isExplicitDemoFlag(demoFlag);
 }
 
 function readDemoEnv(): string {

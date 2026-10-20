@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { pinClock, resetClock } from "./clock.ts";
 import { createEmptyShop, createSeed } from "./seed.ts";
-import { migrateSavedShop, sampleLoadAllowed, useShop } from "./store.ts";
+import { confirmedDemoStaffAccess } from "./demo.ts";
+import { SCORECARD_STORAGE_KEY, SHOP_STORAGE_KEY, type ShopStorage } from "./shop-storage.ts";
+import { createShopStore, migrateSavedShop, mergeSavedShop, sampleLoadAllowed, useShop } from "./store.ts";
 import type { Advisor, RepairOrder, Tech, TimeLog } from "./types.ts";
 import type { WaRecord } from "./wa.ts";
 
@@ -222,4 +224,125 @@ describe("shop store", () => {
     assert.equal(useShop.getState().dataset, "sample");
     assert.equal(useShop.getState().settings.storeName, "Coulee");
   });
+
+  it("keeps a demo visit in memory and drops it on reload", async () => {
+    const backing = memoryStorage();
+    const demoBlob = JSON.stringify({
+      state: {
+        dataset: "sample",
+        customers: [{ id: "old", name: "Helen Typed" }],
+        advisors: [{ id: "old", name: "Typed Advisor", password: "21" }],
+        settings: { adminPassword: "kept-secret" },
+      },
+      version: 28,
+    });
+    backing.setItem(SHOP_STORAGE_KEY, demoBlob);
+    backing.setItem(SCORECARD_STORAGE_KEY, "{\"typed\":1}");
+
+    const visit = createShopStore({ demoMode: true, storage: backing });
+    await visit.persist.rehydrate();
+    assert.equal(backing.getItem(SHOP_STORAGE_KEY), null);
+    assert.equal(backing.getItem(SCORECARD_STORAGE_KEY), null);
+    assert.equal(visit.getState().customers.some((row) => row.name === "Helen Typed"), false);
+    const seedCustomers = visit.getState().customers.map((row) => row.name);
+    const seedAdvisors = visit.getState().advisors.map((row) => row.name);
+
+    visit.getState().createCustomer({ name: "Helen Typed", phone: "5095550199", year: 2020, model: "F-150" });
+    assert.equal(
+      visit.getState().addAdvisor({ number: "9901", name: "Typed Advisor", base: 1000, laborPercent: 1, partsPercent: 1 }),
+      true,
+    );
+    assert.equal(visit.getState().dataset, "sample");
+    assert.equal(confirmedDemoStaffAccess({ demoFlag: "true", dataset: visit.getState().dataset }), true);
+    assert.equal(visit.getState().customers.some((row) => row.name === "Helen Typed"), true);
+    assert.equal(backing.getItem(SHOP_STORAGE_KEY), null);
+    assert.equal(backing.getItem(SCORECARD_STORAGE_KEY), null);
+    assert.equal(backing.size(), 0);
+
+    const reloaded = createShopStore({ demoMode: true, storage: backing });
+    await reloaded.persist.rehydrate();
+    assert.deepEqual(reloaded.getState().customers.map((row) => row.name), seedCustomers);
+    assert.deepEqual(reloaded.getState().advisors.map((row) => row.name), seedAdvisors);
+    assert.equal(reloaded.getState().dataset, "sample");
+    assert.equal(confirmedDemoStaffAccess({ demoFlag: "true", dataset: reloaded.getState().dataset }), true);
+    assert.equal(backing.size(), 0);
+  });
+
+  it("does not overwrite a real shop while a demo visit is open", async () => {
+    const backing = memoryStorage();
+    const real = JSON.stringify({
+      state: { dataset: "shop", customers: [{ id: "real", name: "Real Helen" }] },
+      version: 28,
+    });
+    backing.setItem(SHOP_STORAGE_KEY, real);
+    const visit = createShopStore({ demoMode: true, storage: backing });
+    visit.getState().createCustomer({ name: "Helen Typed", phone: "5095550199", year: 2020, model: "F-150" });
+    await visit.persist.rehydrate();
+    assert.equal(backing.getItem(SHOP_STORAGE_KEY), real);
+    assert.equal(visit.getState().customers.some((row) => row.name === "Real Helen"), false);
+    assert.equal(visit.getState().customers.some((row) => row.name === "Helen Typed"), true);
+  });
+
+  it("strips passwords from a version 28 blob, including a null advisor and an order with no labor or parts", async () => {
+    const broken = migrateSavedShop({
+      settings: { ...createEmptyShop().settings, adminPassword: "kept-secret", storeName: "Coulee" },
+      advisors: [null, { ...advisor, password: "21" }],
+      techs: "oops",
+      orders: [{ ...bookedOrder(), labor: undefined, parts: undefined }],
+    });
+    assert.equal(passwordKeyCount(broken), 0);
+    assert.equal(broken.settings.storeName, "Coulee");
+    assert.equal(broken.advisors.length, 1);
+    assert.equal(Object.hasOwn(broken.advisors[0] as object, "password"), false);
+    assert.ok(Array.isArray(broken.orders[0]?.labor));
+    assert.ok(Array.isArray(broken.orders[0]?.parts));
+    assert.equal(broken.techs, "oops");
+
+    const backing = memoryStorage();
+    backing.setItem(SHOP_STORAGE_KEY, JSON.stringify({
+      state: {
+        dataset: "shop",
+        settings: { ...createEmptyShop().settings, adminPassword: "kept-secret", storeName: "Coulee" },
+        advisors: [null, { ...advisor, password: "21" }],
+        techs: [{ ...tech, password: "41" }],
+        orders: [{ ...bookedOrder(), labor: undefined, parts: undefined }],
+      },
+      version: 28,
+    }));
+    const shop = createShopStore({ demoMode: false, storage: backing });
+    await shop.persist.rehydrate();
+    const stored = backing.getItem(SHOP_STORAGE_KEY) ?? "";
+    assert.equal(stored.includes("adminPassword"), false);
+    assert.equal(stored.includes("\"password\""), false);
+    assert.equal(passwordKeyCount(shop.getState().settings), 0);
+    assert.equal(passwordKeyCount(shop.getState().advisors), 0);
+    assert.equal(passwordKeyCount(shop.getState().techs), 0);
+    assert.equal(shop.getState().settings.storeName, "Coulee");
+    assert.ok(Array.isArray(shop.getState().orders[0]?.labor));
+    assert.ok(Array.isArray(shop.getState().orders[0]?.parts));
+    assert.equal(mergeSavedShop(undefined, shop.getState()), shop.getState());
+  });
 });
+
+function memoryStorage(): ShopStorage & { size: () => number } {
+  const items = new Map<string, string>();
+  return {
+    getItem: (key) => items.get(key) ?? null,
+    setItem: (key, value) => {
+      items.set(key, value);
+    },
+    removeItem: (key) => {
+      items.delete(key);
+    },
+    size: () => items.size,
+  };
+}
+
+function passwordKeyCount(value: unknown): number {
+  if (Array.isArray(value)) return value.reduce((sum, item) => sum + passwordKeyCount(item), 0);
+  if (!value || typeof value !== "object") return 0;
+  return Object.entries(value).reduce((sum, [key, child]) => {
+    const here = key === "password" || key === "adminPassword" ? 1 : 0;
+    return sum + here + passwordKeyCount(child);
+  }, 0);
+}

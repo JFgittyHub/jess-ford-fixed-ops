@@ -67,6 +67,25 @@ function tabLabel(path: string) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
+  const storeName = useShop((state) => state.settings.storeName);
+  const dataset = useShop((state) => state.dataset);
+  const [hydrated, setHydrated] = useState(() => useShop.persist.hasHydrated());
+
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
+      if (live) setHydrated(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (!hydrated || !confirmedDemoStaffAccess({ dataset })) return <DeskLocked storeName={storeName} />;
+  return <OpenDesk>{children}</OpenDesk>;
+}
+
+function OpenDesk({ children }: { children: ReactNode }) {
   const settings = useShop((state) => state.settings);
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
@@ -77,9 +96,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
-  const dataset = useShop((state) => state.dataset);
   const realShop = useShop((state) => state.dataset !== "sample" && shopHasOperationalData(state));
-  const [hydrated, setHydrated] = useState(false);
   const historyRef = useRef<string[]>([]);
   const [backTo, setBackTo] = useState<string | null>(null);
 
@@ -105,18 +122,6 @@ export function Shell({ children }: { children: ReactNode }) {
     setBackTo(stack.length > 1 ? stack[stack.length - 2] : null);
     void router.navigate({ to: previous });
   }
-
-  useEffect(() => {
-    let live = true;
-    void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
-      if (live) setHydrated(true);
-    });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  if (!hydrated || !confirmedDemoStaffAccess({ dataset })) return <DeskLocked storeName={settings.storeName} />;
 
   return (
     <div className="min-h-screen bg-bg text-ink">
@@ -153,7 +158,7 @@ export function Shell({ children }: { children: ReactNode }) {
         </header>
         <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          Kept in this browser only. This open desk is the sample month. Settings can reload it, and will ask before replacing shop work. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          This visit is the sample month. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload it, and will ask before replacing shop work. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>

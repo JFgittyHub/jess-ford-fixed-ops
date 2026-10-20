@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
 import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
@@ -7,6 +7,7 @@ import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
 import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
 import { isDemoMode } from "./demo";
+import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
 import { bookRepairOrder, dropClosedHistory, invoiceRepairOrder, reopenRepairOrder, unbookRepairOrder } from "./ro";
 import { closedRecord } from "./metrics";
 import type { Advisor, Appointment, Campaign, ExpenseTxn, FeeLine, LaborLine, LaborOp, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, Tech, TechBoard } from "./types";
@@ -171,25 +172,73 @@ function normalizeFees(value: unknown, keepShopFlat = false): FeeLine[] {
   return DEFAULT_FEES.map((line) => ({ ...line }));
 }
 
-function dropStaffPassword<T extends object>(row: T): Omit<T, "password"> {
-  const { password: _password, ...rest } = row as T & { password?: string };
-  return rest;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function withoutAdminPassword(settings: ShopData["settings"] & { adminPassword?: string }): ShopData["settings"] {
-  const { adminPassword: _adminPassword, ...rest } = settings;
-  return rest;
+/** Drop `password` and `adminPassword` anywhere in a saved blob. Nulls stay null. */
+export function stripPasswordKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => stripPasswordKeys(item));
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "password" || key === "adminPassword") continue;
+    out[key] = stripPasswordKeys(child);
+  }
+  return out;
+}
+
+function containsPasswordKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => containsPasswordKey(item));
+  if (!isRecord(value)) return false;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "password" || key === "adminPassword" || containsPasswordKey(child)) return true;
+  }
+  return false;
+}
+
+function dropStaffPassword<T>(row: T): T {
+  if (!isRecord(row)) return row;
+  const { password: _password, ...rest } = row as T & { password?: string };
+  return rest as T;
 }
 
 function withoutSavedPasswords(saved: Partial<ShopData>): Partial<ShopData> {
-  const settings = saved.settings && typeof saved.settings === "object"
-    ? withoutAdminPassword(saved.settings as ShopData["settings"] & { adminPassword?: string })
-    : saved.settings;
+  return stripPasswordKeys(saved) as Partial<ShopData>;
+}
+
+function rewriteWithoutPasswords(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!containsPasswordKey(parsed)) return raw;
+    return JSON.stringify(stripPasswordKeys(parsed));
+  } catch {
+    return raw;
+  }
+}
+
+/** Every read and write drops leftover passwords, including a blob already marked version 28. */
+function passwordStrippingStorage(backing: ShopStorage): ShopStorage {
   return {
-    ...saved,
-    settings,
-    advisors: Array.isArray(saved.advisors) ? saved.advisors.map((advisor) => dropStaffPassword(advisor)) : saved.advisors,
-    techs: Array.isArray(saved.techs) ? saved.techs.map((tech) => dropStaffPassword(tech)) : saved.techs,
+    getItem(key) {
+      const raw = backing.getItem(key);
+      if (key !== SHOP_STORAGE_KEY || raw == null) return raw;
+      const cleaned = rewriteWithoutPasswords(raw);
+      if (cleaned !== raw) {
+        try {
+          backing.setItem(key, cleaned);
+        } catch {
+          /* storage unavailable */
+        }
+      }
+      return cleaned;
+    },
+    setItem(key, value) {
+      backing.setItem(key, key === SHOP_STORAGE_KEY ? rewriteWithoutPasswords(value) : value);
+    },
+    removeItem(key) {
+      backing.removeItem(key);
+    },
   };
 }
 
@@ -223,15 +272,19 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       dataset: saved.dataset === "sample" ? "sample" : "shop",
     } as ShopState;
   }
+  const techList = Array.isArray(saved.techs) ? saved.techs : [];
+  const vehicleList = Array.isArray(saved.vehicles) ? saved.vehicles : [];
   return {
     ...saved,
-    orders: saved.orders.map((order) => {
+    orders: saved.orders.filter((order) => order && typeof order === "object").map((order) => {
       const prior = order as RepairOrder & { cause?: string; correction?: string; jobs?: JobLine[] };
+      const labor = Array.isArray(prior.labor) ? prior.labor : [];
+      const parts = Array.isArray(prior.parts) ? prior.parts.filter((line) => line && typeof line === "object") : [];
       const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
         ? prior.jobs
         : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
-      const total = prior.labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
-        + prior.parts.reduce((sum, line) => sum + line.qty * line.price, 0);
+      const total = labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
+        + parts.reduce((sum, line) => sum + line.qty * line.price, 0);
       const wa = normalizeWa(prior.wa);
       const stamped = wa.choice
         ? wa
@@ -247,7 +300,8 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, prior.status === "invoiced"),
         taxRate: typeof prior.taxRate === "number" ? prior.taxRate : (typeof saved.settings?.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE),
         inspection: prior.inspection ?? demoSheet(prior.id),
-        parts: prior.parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
+        labor,
+        parts: parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
         wa: stamped,
       };
     }),
@@ -256,13 +310,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
     campaigns: Array.isArray(saved.campaigns) ? saved.campaigns : [],
     dataset: saved.dataset === "sample" ? "sample" : "shop",
     appointments: Array.isArray(saved.appointments)
-      ? saved.appointments.map((row) => {
-          const vehicle = saved.vehicles?.find((item) => item.id === row.vehicleId);
+      ? saved.appointments.filter((row) => row && typeof row === "object").map((row) => {
+          const vehicle = vehicleList.find((item) => item.id === row.vehicleId);
           const lines = Array.isArray(row.lines) && row.lines.length > 0
             ? row.lines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
             : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
           const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
-          const known = saved.techs?.some((tech) => tech.id === row.techId) ? row.techId : "";
+          const known = techList.some((tech) => tech.id === row.techId) ? row.techId : "";
           return {
             ...row,
             date: row.date ?? today(),
@@ -272,7 +326,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
             concern: concernFromLines(lines) || row.concern,
             vin: row.vin || vehicle?.vin || "",
             laborOpIds: Array.isArray(row.laborOpIds) ? row.laborOpIds : [],
-            techId: known || fallback[row.id] || saved.techs?.[0]?.id || "",
+            techId: known || fallback[row.id] || techList[0]?.id || "",
           };
         })
       : saved.appointments,
@@ -282,13 +336,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
     timeLogs: Array.isArray(saved.timeLogs) ? saved.timeLogs : [],
     closedHistory: Array.isArray(saved.closedHistory)
       ? saved.closedHistory
-      : (saved.orders ?? []).filter((order) => order.status === "invoiced").map((order) => closedRecord(
+      : (saved.orders ?? []).filter((order) => order && order.status === "invoiced").map((order) => closedRecord(
           order,
           saved.customers?.find((row) => row.id === order.customerId),
           saved.vehicles?.find((row) => row.id === order.vehicleId),
         )),
     advisors: Array.isArray(saved.advisors)
-      ? saved.advisors.map((advisor, index) => {
+      ? saved.advisors.filter((advisor) => advisor && typeof advisor === "object").map((advisor, index) => {
           const row = dropStaffPassword(advisor);
           return {
             ...row,
@@ -300,7 +354,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         })
       : saved.advisors,
     techs: Array.isArray(saved.techs)
-      ? saved.techs.map((tech, index) => {
+      ? saved.techs.filter((tech) => tech && typeof tech === "object").map((tech, index) => {
           const row = dropStaffPassword(tech);
           return {
             ...row,
@@ -312,10 +366,31 @@ export function migrateSavedShop(persisted: unknown): ShopState {
   } as ShopState;
 }
 
-export const useShop = create<ShopState>()(
-  persist(
-    (set) => ({
-      ...(isDemoMode() ? createSeed() : createEmptyShop()),
+/** Rehydrate path. Strips passwords even when the blob is already version 28. */
+export function mergeSavedShop(persisted: unknown, current: ShopState): ShopState {
+  if (!persisted || typeof persisted !== "object") return current;
+  const saved = migrateSavedShop(persisted);
+  if (!saved || typeof saved !== "object") return current;
+  const data: Partial<ShopData> = {};
+  for (const key of dataKeys) {
+    if (key in saved) data[key] = saved[key] as never;
+  }
+  return { ...current, ...data };
+}
+
+export interface ShopStoreOptions {
+  /** Explicit demo flag. Defaults to `VITE_DEMO_MODE`. A development server is not demo mode. */
+  demoMode?: boolean;
+  /** Backing store. Demo mode never writes through it. */
+  storage?: ShopStorage;
+}
+
+export function createShopStore(options: ShopStoreOptions = {}) {
+  const demoMode = options.demoMode ?? isDemoMode();
+  return create<ShopState>()(
+    persist(
+      (set) => ({
+        ...(demoMode ? createSeed() : createEmptyShop()),
       focusOrderId: null,
       setFocus: (id) => set({ focusOrderId: id }),
       updateSettings: (patch) =>
@@ -931,19 +1006,27 @@ export const useShop = create<ShopState>()(
           focusOrderId: null,
         })),
     }),
-    {
-      name: "jess-ford-fixed-ops-v1",
-      version: 28,
-      skipHydration: true,
-      migrate: (persisted) => migrateSavedShop(persisted),
-      partialize: (state) => {
-        const saved: Partial<ShopData> = {};
-        for (const key of dataKeys) saved[key] = state[key] as never;
-        return saved as ShopState;
+      {
+        name: SHOP_STORAGE_KEY,
+        storage: createJSONStorage(() => {
+          const backing = options.storage ?? browserLocalStorage();
+          return demoMode ? shopPersistStorage(true, backing) : passwordStrippingStorage(backing);
+        }),
+        version: 28,
+        skipHydration: true,
+        migrate: (persisted) => migrateSavedShop(persisted),
+        merge: (persisted, current) => mergeSavedShop(persisted, current as ShopState),
+        partialize: (state) => {
+          const saved: Partial<ShopData> = {};
+          for (const key of dataKeys) saved[key] = state[key] as never;
+          return saved as ShopState;
+        },
       },
-    },
-  ),
-);
+    ),
+  );
+}
+
+export const useShop = createShopStore();
 
 export function useShopHydrated() {
   return useShop.persist.hasHydrated();
