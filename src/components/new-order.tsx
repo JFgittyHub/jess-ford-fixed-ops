@@ -13,17 +13,49 @@ function draftLine(concern = ""): DraftLine {
   return { id: `d${draftSeq}`, concern };
 }
 
-export function NewOrder({
+type NewOrderPreset = {
+  customerId?: string;
+  vehicleId?: string;
+  advisorId?: string;
+  concern?: string;
+  lines?: { concern: string }[];
+  laborOpIds?: string[];
+  appointmentId?: string;
+};
+
+function presetIdentity(preset?: NewOrderPreset) {
+  return [
+    preset?.appointmentId ?? "",
+    preset?.customerId ?? "",
+    preset?.vehicleId ?? "",
+    preset?.advisorId ?? "",
+    preset?.concern ?? "",
+    (preset?.lines ?? []).map((line) => line.concern).join("\n"),
+    (preset?.laborOpIds ?? []).join(","),
+  ].join("\u001f");
+}
+
+export function NewOrder(props: {
+  open: boolean;
+  onClose: () => void;
+  preset?: NewOrderPreset;
+}) {
+  // The dialog stays mounted on the schedule and marketing pages. A fresh key
+  // re-reads the appointment or customer that was just passed in.
+  return <NewOrderForm key={props.open ? presetIdentity(props.preset) : "closed"} {...props} />;
+}
+
+function NewOrderForm({
   open,
   onClose,
   preset,
 }: {
   open: boolean;
   onClose: () => void;
-  preset?: { customerId?: string; vehicleId?: string; advisorId?: string; concern?: string; lines?: { concern: string }[]; laborOpIds?: string[]; appointmentId?: string };
+  preset?: NewOrderPreset;
 }) {
   const shop = useShop();
-  const [mode, setMode] = useState<"existing" | "new">(preset?.customerId ? "existing" : "existing");
+  const [mode, setMode] = useState<"existing" | "new">("existing");
   const [customerId, setCustomerId] = useState(preset?.customerId ?? shop.customers[0]?.id ?? "");
   const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const [vehicleId, setVehicleId] = useState(preset?.vehicleId ?? vehicles[0]?.id ?? "");
