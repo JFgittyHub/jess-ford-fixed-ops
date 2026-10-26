@@ -262,6 +262,42 @@ export function compileBoards(month: string, sources: { label: string; board: Mo
   };
 }
 
+const OWNER_STORES: { id: StoreId; name: string; short: string }[] = [
+  { id: "grand-coulee", name: "Grand Coulee", short: "Coulee" },
+  { id: "pullman", name: "Pullman", short: "Pullman" },
+];
+
+export type OwnerStoreSlice = {
+  id: StoreId;
+  name: string;
+  short: string;
+  board: MonthBoard;
+};
+
+/** Read-only combined month for both stores, plus each store's own board. */
+export function ownerMonth(stores: Record<StoreId, Record<string, MonthBoard>>, month: string): { combined: MonthBoard; stores: OwnerStoreSlice[] } {
+  const slices = OWNER_STORES.map((store) => ({
+    ...store,
+    board: stores[store.id]?.[month] ?? emptyBoard(month, store.id === "pullman" ? 1800 : HOURS_GOAL),
+  }));
+  return {
+    stores: slices,
+    combined: compileBoards(
+      month,
+      slices.map((slice) => ({ label: slice.short, board: slice.board })),
+    ),
+  };
+}
+
+export function ownerYearBoards(stores: Record<StoreId, Record<string, MonthBoard>>, through: string): MonthBoard[] {
+  const year = through.slice(0, 4);
+  const keys = new Set<string>([...Object.keys(stores["grand-coulee"] ?? {}), ...Object.keys(stores.pullman ?? {})]);
+  return [...keys]
+    .filter((key) => key.startsWith(`${year}-`) && key <= through)
+    .sort()
+    .map((key) => ownerMonth(stores, key).combined);
+}
+
 export type Pace = {
   status: Status;
   elapsed: number;

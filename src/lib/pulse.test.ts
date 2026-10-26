@@ -27,6 +27,10 @@ describe("Pulse follows the active store", () => {
     assert.match(coulee, /Marcus Hale/);
     assert.equal(coulee.includes("Nate Briggs"), false);
     assert.equal(coulee.includes("Pullman"), false);
+    assert.match(coulee, /aria-label="Pulse scope"/);
+    assert.match(coulee, /aria-label="Scorecard scope"/);
+    assert.equal(coulee.includes("By store"), false);
+    assert.equal(coulee.includes("data-scope=\"owner\""), false);
   });
 });
 
