@@ -1,5 +1,5 @@
 import { addDays, daysBetween, now } from "./clock";
-import type { Appointment, SchedulingSettings, WeekdayIndex } from "./types";
+import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } from "./types";
 
 /**
  * A slot is open only when the job's labor hours fit the technician's
@@ -157,10 +157,35 @@ export function assessAppointment(input: {
   });
 }
 
-/** Sentence for the advisor form. Saving stays allowed; the override log is later. */
+/** Sentence for the advisor form. Saving stays allowed and records an override. */
 export function advisorBookingNote(result: CapacityResult): string | null {
   if (!result.warning) return null;
   return `${result.warning} You can still book it. Online customers will not see this time.`;
+}
+
+export function overrideReason(result: CapacityResult): OverrideReason | null {
+  if (result.open || !result.warning) return null;
+  if (result.warning.startsWith("The store is closed")) return "closed";
+  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return "unknown-staff";
+  if (result.tech.overloaded && result.advisor.overloaded) return "both";
+  if (result.tech.overloaded) return "tech-hours";
+  if (result.advisor.overloaded) return "advisor";
+  return null;
+}
+
+export function overrideReasonLabel(reason: OverrideReason): string {
+  switch (reason) {
+    case "tech-hours":
+      return "Technician hours";
+    case "advisor":
+      return "Advisor capacity";
+    case "both":
+      return "Technician hours and advisor capacity";
+    case "closed":
+      return "Store closed";
+    case "unknown-staff":
+      return "Staff not on this store";
+  }
 }
 
 export function onlineSlots(input: {

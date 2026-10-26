@@ -101,7 +101,7 @@ function SchedulePage() {
             <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
-            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it.
+            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -213,7 +213,7 @@ function SchedulePage() {
           capacityNote={(draft) => capacityNote(draft)}
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value) => {
-            shop.addAppointment(value);
+            shop.saveAdvisorAppointment(value);
             setConcern("");
             setBooking(false);
           }}
@@ -235,7 +235,7 @@ function SchedulePage() {
             capacityNote={(draft) => capacityNote(draft, editing.id)}
             initial={editing}
             onSubmit={(value) => {
-              shop.updateAppointment(editing.id, value);
+              shop.saveAdvisorAppointment(value, editing.id);
               setEditingId(null);
             }}
           />

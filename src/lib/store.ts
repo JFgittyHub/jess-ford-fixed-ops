@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { assessAppointment, overrideReason } from "./capacity";
+import { now } from "./clock";
 import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
 import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
@@ -12,7 +14,7 @@ import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
 import { bookRepairOrder, dropClosedHistory, invoiceRepairOrder, reopenRepairOrder, unbookRepairOrder } from "./ro";
 import { closedRecord } from "./metrics";
-import type { Advisor, Appointment, BookingWindow, Campaign, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, StoreId, Tech, TechBoard, WeekdayIndex } from "./types";
+import type { Advisor, Appointment, BookingWindow, Campaign, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, StoreId, Tech, TechBoard, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -93,7 +95,10 @@ interface ShopActions {
   setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => void;
   moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>) => void;
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>) => void;
-  addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">) => void;
+  addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string) => string;
+  /** Advisor book or edit. Records an override only when the capacity check is not open. */
+  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string) => { appointmentId: string; overrideId: string | null };
+  setWorkingAs: (id: string) => void;
   linkAppointment: (id: string, orderId: string) => void;
   setOnHand: (partId: string, onHand: number) => void;
   addSku: (sku: Omit<PartSku, "id">) => void;
@@ -140,6 +145,15 @@ export function sampleLoadAllowed(state: ShopData, confirmReplace = false): bool
 
 function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function actingStaff(state: ShopData): { id: string; name: string } {
+  const picked = state.advisors.find((advisor) => advisor.id === state.workingAsId)
+    ?? state.techs.find((tech) => tech.id === state.workingAsId)
+    ?? state.advisors[0]
+    ?? state.techs[0];
+  if (!picked) return { id: "", name: "Desk" };
+  return { id: picked.id, name: picked.name };
 }
 
 function demoVin() {
@@ -330,6 +344,8 @@ const dataKeys: (keyof ShopData)[] = [
   "budgets",
   "overhead",
   "campaigns",
+  "workingAsId",
+  "overrides",
 ];
 
 /** Persisted-shop load path. Staff passwords and the old admin password are removed on every branch, including a saved blob with no repair-order list. */
@@ -490,7 +506,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
   const active = desk.stores[desk.activeStoreId];
   return create<ShopState>()(
     persist(
-      (rawSet) => {
+      (rawSet, get) => {
         const set: typeof rawSet = (partial, replace) => {
           rawSet((state) => {
             const patch = typeof partial === "function" ? partial(state) : partial;
@@ -1123,7 +1139,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             })
             .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
         })),
-      addAppointment: (input) =>
+      addAppointment: (input, id) => {
+        const appointmentId = id ?? uid("ap");
         set((state) => {
           const raw = input.lines?.length ? input.lines : [{ id: "", code: "A", concern: input.concern }];
           const lines = raw
@@ -1142,7 +1159,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             vin,
             laborOpIds: input.laborOpIds ?? [],
             lane: normalizeLane(input.lane, state.settings.scheduling.transportOptions),
-            id: uid("ap"),
+            id: appointmentId,
             status: "scheduled",
             orderId: null,
           };
@@ -1150,6 +1167,76 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             vehicles: state.vehicles.map((vehicle) => (vehicle.id === row.vehicleId && vin ? { ...vehicle, vin } : vehicle)),
             appointments: [...state.appointments, row].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
           };
+        });
+        return appointmentId;
+      },
+      saveAdvisorAppointment: (input, existingId) => {
+        const state = get();
+        if (existingId && !state.appointments.some((row) => row.id === existingId)) {
+          return { appointmentId: existingId, overrideId: null };
+        }
+        const appointmentId = existingId ?? uid("ap");
+        const result = assessAppointment({
+          scheduling: state.settings.scheduling,
+          advisors: state.advisors,
+          techs: state.techs,
+          appointments: state.appointments,
+          laborOps: state.laborOps,
+          proposal: {
+            date: input.date,
+            time: input.time,
+            minutes: input.minutes,
+            advisorId: input.advisorId,
+            techId: input.techId,
+            laborOpIds: input.laborOpIds ?? [],
+            ignoreId: existingId,
+          },
+        });
+        if (existingId) get().updateAppointment(existingId, input);
+        else {
+          get().addAppointment({
+            date: input.date,
+            time: input.time,
+            minutes: input.minutes,
+            customerId: input.customerId,
+            vehicleId: input.vehicleId,
+            advisorId: input.advisorId,
+            concern: input.concern,
+            lines: input.lines,
+            vin: input.vin,
+            laborOpIds: input.laborOpIds,
+            techId: input.techId,
+            lane: input.lane,
+          }, appointmentId);
+        }
+        const reason = overrideReason(result);
+        if (!reason) return { appointmentId, overrideId: null };
+        const saved = get();
+        const row = saved.appointments.find((item) => item.id === appointmentId);
+        const actor = actingStaff(saved);
+        const overrideId = uid("ov");
+        const record: OverrideRecord = {
+          id: overrideId,
+          at: now().toISOString(),
+          who: actor.name,
+          whoId: actor.id,
+          storeId: saved.activeStoreId,
+          appointmentId,
+          customerName: saved.customers.find((customer) => customer.id === (row?.customerId ?? input.customerId))?.name ?? "Customer",
+          date: row?.date ?? input.date,
+          time: row?.time ?? input.time,
+          techName: saved.techs.find((tech) => tech.id === (row?.techId ?? input.techId))?.name ?? "No technician",
+          advisorName: saved.advisors.find((advisor) => advisor.id === (row?.advisorId ?? input.advisorId))?.name ?? "No advisor",
+          reason,
+        };
+        set((current) => ({ overrides: [...(current.overrides ?? []), record] }));
+        return { appointmentId, overrideId };
+      },
+      setWorkingAs: (id) =>
+        set((state) => {
+          const known = state.advisors.some((advisor) => advisor.id === id) || state.techs.some((tech) => tech.id === id);
+          if (!known) return state;
+          return { workingAsId: id };
         }),
       linkAppointment: (id, orderId) =>
         set((state) => ({

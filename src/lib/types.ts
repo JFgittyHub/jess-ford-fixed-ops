@@ -279,6 +279,26 @@ export interface Campaign {
   recipientIds: string[];
 }
 
+/** Why an advisor kept a booking the capacity check would not offer online. */
+export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff";
+
+export interface OverrideRecord {
+  id: string;
+  /** Shop instant, ISO. */
+  at: string;
+  /** Staff name chosen in Working as. */
+  who: string;
+  whoId: string;
+  storeId: StoreId;
+  appointmentId: string;
+  customerName: string;
+  date: string;
+  time: string;
+  techName: string;
+  advisorName: string;
+  reason: OverrideReason;
+}
+
 /** `sample` is the demo month. Anything else is a real shop and must not open the staff picker. */
 export type ShopDataset = "sample" | "shop";
 
@@ -300,4 +320,7 @@ export interface ShopData {
   budgets: BudgetLine[];
   overhead: OverheadLine[];
   campaigns: Campaign[];
+  /** Demo staff name for this store. No password. */
+  workingAsId: string;
+  overrides: OverrideRecord[];
 }

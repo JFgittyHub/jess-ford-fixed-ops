@@ -299,6 +299,13 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
       laborOpIds: row.laborOpIds.map((id) => p(id)),
       lines: row.lines.map((line) => ({ ...line, id: p(line.id) })),
     })),
+    workingAsId: p(shop.workingAsId),
+    overrides: shop.overrides.map((row) => ({
+      ...row,
+      id: p(row.id),
+      whoId: p(row.whoId),
+      appointmentId: p(row.appointmentId),
+    })),
   };
 }
 
@@ -396,6 +403,8 @@ export function createEmptyShop(): ShopData {
     budgets: budgets.map((row) => ({ ...row, monthly: 0 })),
     overhead: overhead.map((row) => ({ ...row, monthly: 0 })),
     campaigns: [],
+    workingAsId: "",
+    overrides: [],
   };
 }
 
@@ -851,5 +860,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     budgets,
     overhead,
     campaigns: [],
+    workingAsId: advisors[0]?.id ?? "",
+    overrides: [],
   }, pullman ? "pl-" : "");
 }

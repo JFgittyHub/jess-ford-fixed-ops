@@ -5,6 +5,7 @@ import {
   ClipboardList,
   FileText,
   ListChecks,
+  NotebookPen,
   ScrollText,
   Settings,
   Users,
@@ -34,6 +35,7 @@ const STORES: { id: StoreId; label: string }[] = [
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
   { to: "/schedule", label: "Appointments", icon: CalendarClock },
+  { to: "/overrides", label: "Overrides", icon: NotebookPen },
   { to: "/orders", label: "Repair orders", icon: ClipboardList },
   { to: "/estimates", label: "Repair estimates", icon: FileText },
   { to: "/dispatch", label: "Technicians", icon: Wrench },
@@ -96,6 +98,13 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const settings = useShop((state) => state.settings);
   const activeStoreId = useShop((state) => state.activeStoreId);
   const switchStore = useShop((state) => state.switchStore);
+  const advisors = useShop((state) => state.advisors);
+  const techs = useShop((state) => state.techs);
+  const workingAsId = useShop((state) => state.workingAsId);
+  const setWorkingAs = useShop((state) => state.setWorkingAs);
+  const staffId = advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
+    ? workingAsId
+    : advisors[0]?.id ?? techs[0]?.id ?? "";
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
   const clearShop = useShop((state) => state.clearShop);
@@ -157,6 +166,24 @@ function OpenDesk({ children }: { children: ReactNode }) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {staffId ? (
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  Working as
+                  <select
+                    aria-label="Working as"
+                    className="field h-8 max-w-48"
+                    value={staffId}
+                    onChange={(event) => setWorkingAs(event.target.value)}
+                  >
+                    <optgroup label="Advisors">
+                      {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
+                    </optgroup>
+                    <optgroup label="Technicians">
+                      {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} {tech.name}</option>)}
+                    </optgroup>
+                  </select>
+                </label>
+              ) : null}
               <div role="group" aria-label="Active store" className="flex gap-1">
                 {STORES.map((store) => (
                   <Button

@@ -18,6 +18,7 @@ import { Route as ExpensesRouteImport } from './routes/expenses'
 import { Route as FeesRouteImport } from './routes/fees'
 import { Route as LaborOpsRouteImport } from './routes/labor-ops'
 import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as OverridesRouteImport } from './routes/overrides'
 import { Route as PartsRouteImport } from './routes/parts'
 import { Route as PayTypesRouteImport } from './routes/pay-types'
 import { Route as ReportsRouteImport } from './routes/reports'
@@ -69,6 +70,11 @@ const OrdersRoute = OrdersRouteImport.update({
   path: '/orders',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OverridesRoute = OverridesRouteImport.update({
+  id: '/overrides',
+  path: '/overrides',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PartsRoute = PartsRouteImport.update({
   id: '/parts',
   path: '/parts',
@@ -105,6 +111,7 @@ export interface FileRoutesByFullPath {
   '/fees': typeof FeesRoute
   '/labor-ops': typeof LaborOpsRoute
   '/orders': typeof OrdersRoute
+  '/overrides': typeof OverridesRoute
   '/parts': typeof PartsRoute
   '/pay-types': typeof PayTypesRoute
   '/reports': typeof ReportsRoute
@@ -121,6 +128,7 @@ export interface FileRoutesByTo {
   '/fees': typeof FeesRoute
   '/labor-ops': typeof LaborOpsRoute
   '/orders': typeof OrdersRoute
+  '/overrides': typeof OverridesRoute
   '/parts': typeof PartsRoute
   '/pay-types': typeof PayTypesRoute
   '/reports': typeof ReportsRoute
@@ -138,6 +146,7 @@ export interface FileRoutesById {
   '/fees': typeof FeesRoute
   '/labor-ops': typeof LaborOpsRoute
   '/orders': typeof OrdersRoute
+  '/overrides': typeof OverridesRoute
   '/parts': typeof PartsRoute
   '/pay-types': typeof PayTypesRoute
   '/reports': typeof ReportsRoute
@@ -156,6 +165,7 @@ export interface FileRouteTypes {
     | '/fees'
     | '/labor-ops'
     | '/orders'
+    | '/overrides'
     | '/parts'
     | '/pay-types'
     | '/reports'
@@ -172,6 +182,7 @@ export interface FileRouteTypes {
     | '/fees'
     | '/labor-ops'
     | '/orders'
+    | '/overrides'
     | '/parts'
     | '/pay-types'
     | '/reports'
@@ -188,6 +199,7 @@ export interface FileRouteTypes {
     | '/fees'
     | '/labor-ops'
     | '/orders'
+    | '/overrides'
     | '/parts'
     | '/pay-types'
     | '/reports'
@@ -205,6 +217,7 @@ export interface RootRouteChildren {
   FeesRoute: typeof FeesRoute
   LaborOpsRoute: typeof LaborOpsRoute
   OrdersRoute: typeof OrdersRoute
+  OverridesRoute: typeof OverridesRoute
   PartsRoute: typeof PartsRoute
   PayTypesRoute: typeof PayTypesRoute
   ReportsRoute: typeof ReportsRoute
@@ -277,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/overrides': {
+      id: '/overrides'
+      path: '/overrides'
+      fullPath: '/overrides'
+      preLoaderRoute: typeof OverridesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/parts': {
       id: '/parts'
       path: '/parts'
@@ -325,6 +345,7 @@ const rootRouteChildren: RootRouteChildren = {
   FeesRoute: FeesRoute,
   LaborOpsRoute: LaborOpsRoute,
   OrdersRoute: OrdersRoute,
+  OverridesRoute: OverridesRoute,
   PartsRoute: PartsRoute,
   PayTypesRoute: PayTypesRoute,
   ReportsRoute: ReportsRoute,
