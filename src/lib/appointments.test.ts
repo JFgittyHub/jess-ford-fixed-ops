@@ -5,11 +5,11 @@ import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
 
 /**
- * Two bookings on the same tech and time both stick.
- * A capacity engine (tech hours and advisor load) is a later piece.
+ * Two bookings on the same tech and time both save.
+ * Capacity warns and hides an overloaded time online; it does not block this save.
  */
 describe("appointment actions", () => {
-  it("books, moves, updates, and links an appointment without capacity checks", () => {
+  it("books, moves, updates, and links an appointment", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const before = shop.getState().appointments.map((row) => row.id);
     const customer = shop.getState().customers[0];
