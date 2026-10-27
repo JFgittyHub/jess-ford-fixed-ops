@@ -2,7 +2,9 @@ import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeft,
   CalendarClock,
+  CalendarPlus,
   ClipboardList,
+  Inbox,
   FileText,
   ListChecks,
   NotebookPen,
@@ -35,6 +37,8 @@ const STORES: { id: StoreId; label: string }[] = [
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
   { to: "/schedule", label: "Appointments", icon: CalendarClock },
+  { to: "/request", label: "Request a visit", icon: CalendarPlus },
+  { to: "/online-requests", label: "Online requests", icon: Inbox },
   { to: "/overrides", label: "Overrides", icon: NotebookPen },
   { to: "/orders", label: "Repair orders", icon: ClipboardList },
   { to: "/estimates", label: "Repair estimates", icon: FileText },
@@ -52,6 +56,7 @@ const NAV = [
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pending = useShop((state) => (state.onlineRequests ?? []).filter((row) => row.status === "pending").length);
   const items = NAV;
   return (
     <>
@@ -61,7 +66,10 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
         return (
           <Link key={item.to} to={item.to} onClick={onNavigate} className={cn("nav-link", active && "is-active")}>
             <Icon className="size-4 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {item.label}
+              {item.to === "/online-requests" && pending > 0 ? ` (${pending})` : ""}
+            </span>
             {"gear" in item && item.gear ? <Settings className="size-3.5 shrink-0" aria-hidden /> : null}
           </Link>
         );

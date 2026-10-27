@@ -279,6 +279,43 @@ export interface Campaign {
   recipientIds: string[];
 }
 
+/** A one-time code for a returning online customer. Demo only; nothing is texted. */
+export interface OnlineChallenge {
+  customerId: string;
+  code: string;
+  issuedAt: string;
+}
+
+/** An online visit request. It is not a confirmed appointment. */
+export interface OnlineRequest {
+  id: string;
+  storeId: StoreId;
+  status: "pending";
+  createdAt: string;
+  serviceId: string;
+  serviceName: string;
+  laborHours: number;
+  date: string;
+  time: string;
+  advisorId: string;
+  advisorName: string;
+  techId: string;
+  techName: string;
+  transportId: string;
+  transportName: string;
+  verified: boolean;
+  customerId: string | null;
+  customerName: string;
+  phone: string;
+  email: string;
+  vehicleId: string | null;
+  year: number;
+  make: string;
+  model: string;
+  vin: string;
+  plate: string;
+}
+
 /** Why an advisor kept a booking the capacity check would not offer online. */
 export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff";
 
@@ -323,4 +360,6 @@ export interface ShopData {
   /** Demo staff name for this store. No password. */
   workingAsId: string;
   overrides: OverrideRecord[];
+  onlineRequests: OnlineRequest[];
+  onlineChallenges: OnlineChallenge[];
 }

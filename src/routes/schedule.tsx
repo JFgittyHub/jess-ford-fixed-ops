@@ -9,6 +9,7 @@ import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
 import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
+import { requestHolds } from "@/lib/online-request";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
 import { useShop } from "@/lib/store";
 import type { Appointment, TransportOption } from "@/lib/types";
@@ -73,6 +74,7 @@ function SchedulePage() {
         advisors: shop.advisors,
         techs: shop.techs,
         loads: appointmentLoads(shop.appointments, shop.laborOps),
+        holds: requestHolds(shop.onlineRequests),
         serviceId,
         from: day,
         through: day,
@@ -87,6 +89,7 @@ function SchedulePage() {
       techs: shop.techs,
       appointments: shop.appointments,
       laborOps: shop.laborOps,
+      holds: requestHolds(shop.onlineRequests),
       proposal: { ...draft, ignoreId },
     }));
   }
@@ -101,7 +104,7 @@ function SchedulePage() {
             <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
-            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store.
+            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests hold the same hours and are listed under Online requests.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

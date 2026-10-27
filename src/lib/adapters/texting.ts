@@ -1,12 +1,9 @@
 /**
  * Outbound texts sit behind this adapter. The default is off and delivers
- * nothing: no carrier, no simulated send. A later online check will ask this
- * adapter to carry a one-time code, and will show that code on screen only
- * when a demo adapter is switched on. That flow is not built yet.
+ * nothing: no carrier, no simulated send.
  *
- * The later check also needs an expiry, a small attempt cap, and must not
- * reveal whether a lookup matched before the code step. Those rules belong
- * to that flow, not to this adapter.
+ * The online request screen shows a one-time code on screen in the demo and
+ * does not call this adapter. Shop notices are not sent from here.
  */
 
 export type TextPurpose = "one-time-code" | "notice" | "reminder";

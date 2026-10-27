@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { assessAppointment, overrideReason } from "./capacity";
 import { now } from "./clock";
+import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
 import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
@@ -99,6 +100,8 @@ interface ShopActions {
   /** Advisor book or edit. Records an override only when the capacity check is not open. */
   saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string) => { appointmentId: string; overrideId: string | null };
   setWorkingAs: (id: string) => void;
+  issueOnlineChallenge: (customerId: string) => { ok: true; code: string; mobileLast4: string } | { ok: false; reason: "unknown" | "no-mobile" };
+  addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string };
   linkAppointment: (id: string, orderId: string) => void;
   setOnHand: (partId: string, onHand: number) => void;
   addSku: (sku: Omit<PartSku, "id">) => void;
@@ -346,6 +349,8 @@ const dataKeys: (keyof ShopData)[] = [
   "campaigns",
   "workingAsId",
   "overrides",
+  "onlineRequests",
+  "onlineChallenges",
 ];
 
 /** Persisted-shop load path. Staff passwords and the old admin password are removed on every branch, including a saved blob with no repair-order list. */
@@ -1238,6 +1243,33 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (!known) return state;
           return { workingAsId: id };
         }),
+      issueOnlineChallenge: (customerId) => {
+        const customer = get().customers.find((row) => row.id === customerId);
+        if (!customer) return { ok: false, reason: "unknown" };
+        if (!customer.mobile.trim()) return { ok: false, reason: "no-mobile" };
+        const code = makeOnlineCode();
+        const issuedAt = now().toISOString();
+        set((state) => ({
+          onlineChallenges: [
+            ...(state.onlineChallenges ?? []).filter((row) => row.customerId !== customerId),
+            { customerId, code, issuedAt },
+          ],
+        }));
+        return { ok: true, code, mobileLast4: customer.mobile.replace(/\D/g, "").slice(-4) };
+      },
+      addOnlineRequest: (input) => {
+        const id = uid("rq");
+        const at = now().toISOString();
+        const result = submitOnlineRequest(get(), input, id, at);
+        if (!result.ok) return result;
+        set((state) => ({
+          onlineRequests: [...(state.onlineRequests ?? []), result.request],
+          onlineChallenges: result.request.verified
+            ? (state.onlineChallenges ?? []).filter((row) => row.customerId !== result.request.customerId)
+            : state.onlineChallenges,
+        }));
+        return { ok: true, id };
+      },
       linkAppointment: (id, orderId) =>
         set((state) => ({
           appointments: state.appointments.map((row) =>
