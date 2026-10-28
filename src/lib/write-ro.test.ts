@@ -5,13 +5,14 @@ import { createRoot } from "react-dom/client";
 import { act } from "react";
 import { createEmptyShop } from "./seed.ts";
 import { useShop } from "./store.ts";
-import type { Appointment } from "./types.ts";
+import type { Appointment, Tech } from "./types.ts";
 
 type Preset = {
   customerId?: string;
   vehicleId?: string;
   advisorId?: string;
   concern?: string;
+  laborOpIds?: string[];
   appointmentId?: string;
 };
 
@@ -366,9 +367,9 @@ function loadShop() {
     ...empty,
     focusOrderId: null,
     customers: [
-      { id: "helen", name: "Helen Cho", phone: "(555) 010-0001" },
-      { id: "glenn", name: "Glenn Ortiz", phone: "(555) 010-0002" },
-      { id: "mina", name: "Mina Patel", phone: "(555) 010-0003" },
+      { id: "helen", name: "Helen Cho", phone: "(555) 010-0001", mobile: "", email: "", noShows: 0 },
+      { id: "glenn", name: "Glenn Ortiz", phone: "(555) 010-0002", mobile: "", email: "", noShows: 0 },
+      { id: "mina", name: "Mina Patel", phone: "(555) 010-0003", mobile: "", email: "", noShows: 0 },
     ],
     vehicles: [
       { id: "helen-truck", customerId: "helen", year: 2024, model: "F-150", vin: "1FTH" },
@@ -566,4 +567,95 @@ describe("Write RO", () => {
     }
     view.root.unmount();
   });
+
+  it("puts carried labor on the appointment's tech when that tech is not first on the list", async () => {
+    loadShop();
+    const marcus = tech("marcus", "41", "Marcus Hale");
+    const andre = tech("andre", "7", "Andre Brooks");
+    useShop.setState({
+      techs: [marcus, andre],
+      laborOps: [
+        { id: "op-dsl", opcode: "DSL", description: "Diesel fuel filters and oil", hours: 2.4, payType: "cp" },
+        { id: "op-diag", opcode: "DIAG", description: "Drivability diagnosis", hours: 1.1, payType: "cp" },
+      ],
+      appointments: useShop.getState().appointments.map((row) =>
+        row.id === "appt-glenn" ? { ...row, techId: andre.id, lane: "drop" as const, laborOpIds: ["op-dsl", "op-diag"] } : row,
+      ),
+    });
+    assert.equal(useShop.getState().techs[0]?.id, marcus.id);
+    assert.notEqual(andre.id, marcus.id);
+
+    const view = await renderWriteRo();
+    await view.set({
+      open: true,
+      onClose() {},
+      preset: {
+        customerId: "glenn",
+        vehicleId: "glenn-car",
+        advisorId: "advisor-glenn",
+        concern: "Diesel service",
+        laborOpIds: ["op-dsl", "op-diag"],
+        appointmentId: "appt-glenn",
+      },
+    });
+    await view.submit();
+
+    const order = useShop.getState().orders[0];
+    assert.ok(order);
+    assert.deepEqual(order.labor.map((line) => line.opcode), ["DSL", "DIAG"]);
+    assert.equal(order.labor.every((line) => line.techId === andre.id), true);
+    view.root.unmount();
+  });
+
+  it("leaves carried labor unassigned when the appointment has no tech", async () => {
+    loadShop();
+    const marcus = tech("marcus", "41", "Marcus Hale");
+    useShop.setState({
+      techs: [marcus, tech("andre", "7", "Andre Brooks")],
+      laborOps: [
+        { id: "op-dsl", opcode: "DSL", description: "Diesel fuel filters and oil", hours: 2.4, payType: "cp" },
+      ],
+      appointments: useShop.getState().appointments.map((row) =>
+        row.id === "appt-glenn" ? { ...row, techId: "", laborOpIds: ["op-dsl"] } : row,
+      ),
+    });
+    assert.equal(useShop.getState().techs[0]?.id, marcus.id);
+
+    const view = await renderWriteRo();
+    await view.set({
+      open: true,
+      onClose() {},
+      preset: {
+        customerId: "glenn",
+        vehicleId: "glenn-car",
+        advisorId: "advisor-glenn",
+        concern: "Diesel service",
+        laborOpIds: ["op-dsl"],
+        appointmentId: "appt-glenn",
+      },
+    });
+    await view.submit();
+
+    const order = useShop.getState().orders[0];
+    assert.ok(order);
+    assert.deepEqual(order.labor.map((line) => line.opcode), ["DSL"]);
+    assert.equal(order.labor.every((line) => line.techId === ""), true);
+    view.root.unmount();
+  });
 });
+
+function tech(id: string, number: string, name: string): Tech {
+  return {
+    id,
+    number,
+    name,
+    skill: "a",
+    board: "main",
+    payStyle: "flat",
+    flagRate: 30,
+    hourlyRate: 30,
+    availableHoursMonth: 100,
+    clockedHoursMonth: 0,
+    clockedToday: 0,
+  };
+}

@@ -3,6 +3,8 @@ import { addDays, bayFromStatus, daysBetween, dayOfMonth, DEFAULT_FEES, DEFAULT_
 import { concernFromJobs, concernFromLines, jobLine, lineLetter } from "./jobs";
 import { demoSheet } from "./mpi";
 import { defaultPayTypes } from "./pay";
+import { defaultScheduling } from "./scheduling";
+import { fullVin } from "./vin";
 import type {
   Appointment,
   ExpenseTxn,
@@ -13,6 +15,7 @@ import type {
   PayType,
   RepairOrder,
   ShopData,
+  StoreId,
   Tech,
   Advisor,
   LaborOp,
@@ -28,6 +31,49 @@ function mulberry32(seed: number) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+const PULLMAN_NAMES = [
+  "Marisol Vega",
+  "Bennett Shaw",
+  "Leela Nair",
+  "Oscar Lind",
+  "Camille Frost",
+  "Hector Molina",
+  "April Park",
+  "Wesley Grant",
+  "Fatima Diallo",
+  "Colin Briggs",
+  "Nadine Kruger",
+  "Emilio Vargas",
+  "Sasha Petrov",
+  "Graham Ellison",
+  "Lucia Ferrer",
+  "Todd Kimball",
+  "Aisha Rahman",
+  "Blake Sutton",
+  "Miriam Estes",
+  "Joel Hart",
+  "Keiko Mori",
+  "Damon Crowe",
+  "Paige Olsson",
+  "Ruben Castillo",
+  "Ellen Brooks",
+  "Simon Adeyemi",
+  "Nina Calder",
+  "Hugh Dalton",
+  "Rosa Melendez",
+  "Ian Cho",
+  "Beatrice Lang",
+  "Omar Farouk",
+  "Yara Haddad",
+  "Felix Navarro",
+  "Gwen Porter",
+  "Louis Meyer",
+  "Celeste Bowen",
+  "Harvey Dunn",
+  "Ingrid Solberg",
+  "Wyatt Chen",
+];
 
 const NAMES = [
   "Helen Cho",
@@ -192,20 +238,90 @@ function expenseOn(iso: string) {
   return padDay(day);
 }
 
-function baseSettings() {
+function baseSettings(storeId?: StoreId) {
+  const pullman = storeId === "pullman";
+  const named = pullman
+    ? { storeName: "Jess Ford Pullman", city: "Pullman, WA", phone: "(555) 332-2100", address: "Pullman service drive" }
+    : storeId === "grand-coulee"
+      ? { storeName: "Jess Ford Grand Coulee", city: "Grand Coulee, WA", phone: "(555) 633-1400", address: "Grand Coulee service drive" }
+      : { storeName: "Jess Ford", city: "Washington", phone: "", address: "" };
   return {
-    storeName: "Jess Ford",
-    city: "Washington",
-    phone: "",
-    address: "",
-    cpRate: 189,
-    warrantyRate: 168,
-    internalRate: 140,
+    ...named,
+    cpRate: pullman ? 175 : 189,
+    warrantyRate: pullman ? 155 : 168,
+    internalRate: pullman ? 130 : 140,
     targetAbsorption: 1,
-    targetElr: 176,
+    targetElr: pullman ? 165 : 176,
     policyGuide: 0.02,
     fees: DEFAULT_FEES.map((line) => ({ ...line })),
     taxRate: DEFAULT_TAX_RATE,
+    scheduling: defaultScheduling(storeId ?? "grand-coulee"),
+  };
+}
+
+function emailFor(name: string) {
+  const slug = name.toLowerCase().replace(/[^a-z]+/g, ".").replace(/^\.|\.$/g, "");
+  return `${slug}@example.com`;
+}
+
+function scopeShop(shop: ShopData, prefix: string): ShopData {
+  if (!prefix) return shop;
+  const p = (id: string) => (id ? `${prefix}${id}` : id);
+  return {
+    ...shop,
+    advisors: shop.advisors.map((row) => ({ ...row, id: p(row.id) })),
+    techs: shop.techs.map((row) => ({ ...row, id: p(row.id) })),
+    customers: shop.customers.map((row) => ({ ...row, id: p(row.id) })),
+    vehicles: shop.vehicles.map((row) => ({ ...row, id: p(row.id), customerId: p(row.customerId) })),
+    parts: shop.parts.map((row) => ({ ...row, id: p(row.id) })),
+    laborOps: shop.laborOps.map((row) => ({ ...row, id: p(row.id) })),
+    orders: shop.orders.map((order) => ({
+      ...order,
+      id: p(order.id),
+      advisorId: p(order.advisorId),
+      customerId: p(order.customerId),
+      vehicleId: p(order.vehicleId),
+      jobs: order.jobs.map((job) => ({ ...job, id: p(job.id) })),
+      labor: order.labor.map((line) => ({ ...line, id: p(line.id), techId: p(line.techId) })),
+      parts: order.parts.map((line) => ({ ...line, id: p(line.id), partId: line.partId ? p(line.partId) : null })),
+      inspection: order.inspection ? { ...order.inspection, techId: p(order.inspection.techId) } : null,
+    })),
+    closedHistory: shop.closedHistory.map((row) => ({ ...row, id: p(row.id), orderId: p(row.orderId) })),
+    timeLogs: shop.timeLogs.map((row) => ({ ...row, id: p(row.id), techId: p(row.techId), orderId: p(row.orderId) })),
+    appointments: shop.appointments.map((row) => ({
+      ...row,
+      id: p(row.id),
+      customerId: p(row.customerId),
+      vehicleId: p(row.vehicleId),
+      advisorId: p(row.advisorId),
+      techId: p(row.techId),
+      orderId: row.orderId ? p(row.orderId) : null,
+      laborOpIds: row.laborOpIds.map((id) => p(id)),
+      lines: row.lines.map((line) => ({ ...line, id: p(line.id) })),
+    })),
+    workingAsId: p(shop.workingAsId),
+    overrides: shop.overrides.map((row) => ({
+      ...row,
+      id: p(row.id),
+      whoId: p(row.whoId),
+      appointmentId: p(row.appointmentId),
+    })),
+    onlineRequests: shop.onlineRequests.map((row) => ({
+      ...row,
+      id: p(row.id),
+      advisorId: p(row.advisorId),
+      techId: p(row.techId),
+      customerId: row.customerId ? p(row.customerId) : null,
+      vehicleId: row.vehicleId ? p(row.vehicleId) : null,
+      appointmentId: row.appointmentId ? p(row.appointmentId) : null,
+    })),
+    onlineChallenges: shop.onlineChallenges.map((row) => ({ ...row, customerId: p(row.customerId) })),
+    notices: shop.notices.map((row) => ({
+      ...row,
+      id: p(row.id),
+      requestId: row.requestId ? p(row.requestId) : null,
+      appointmentId: row.appointmentId ? p(row.appointmentId) : null,
+    })),
   };
 }
 
@@ -303,54 +419,90 @@ export function createEmptyShop(): ShopData {
     budgets: budgets.map((row) => ({ ...row, monthly: 0 })),
     overhead: overhead.map((row) => ({ ...row, monthly: 0 })),
     campaigns: [],
+    workingAsId: "",
+    overrides: [],
+    onlineRequests: [],
+    onlineChallenges: [],
+    notices: [],
   };
 }
 
-export function createSeed(): ShopData {
-  const settings = baseSettings();
+export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
+  const pullman = storeId === "pullman";
+  const settings = baseSettings(storeId);
+  const names = pullman ? PULLMAN_NAMES : NAMES;
+  const noMobile = new Set(pullman ? [0, 4, 15] : [2, 11, 29]);
 
-  const advisors: Advisor[] = [
-    { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3 },
-    { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2 },
-    { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2 },
-    { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2 },
-  ];
+  const advisors: Advisor[] = pullman
+    ? [
+        { id: "jordan", number: "12", name: "Riley Chen", base: 4600, laborPercent: 5.5, partsPercent: 2.5 },
+        { id: "megan", number: "19", name: "Noah Briggs", base: 4400, laborPercent: 5, partsPercent: 2 },
+        { id: "derek", number: "27", name: "Tara Singh", base: 4300, laborPercent: 5, partsPercent: 2 },
+        { id: "alicia", number: "33", name: "Evan Cho", base: 4100, laborPercent: 4.5, partsPercent: 2 },
+      ]
+    : [
+        { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3 },
+        { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2 },
+        { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2 },
+        { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2 },
+      ];
 
-  const techs: Tech[] = [
-    { id: "marcus", number: "41", name: "Marcus Hale", skill: "master", board: "main", payStyle: "flat", flagRate: 36, hourlyRate: 36, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
-    { id: "elena", number: "18", name: "Elena Voss", skill: "a", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4 },
-    { id: "andre", number: "7", name: "Andre Brooks", skill: "diesel", board: "main", payStyle: "flat", flagRate: 33, hourlyRate: 33, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 3 },
-    { id: "chris", number: "23", name: "Chris Dalton", skill: "b", board: "main", payStyle: "flat", flagRate: 27, hourlyRate: 27, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4.5 },
-    { id: "dana", number: "15", name: "Dana Whitfield", skill: "b", board: "none", payStyle: "hourly", flagRate: 26, hourlyRate: 29, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 4 },
-    { id: "priya", number: "33", name: "Priya Shah", skill: "a", board: "internal", payStyle: "flat", flagRate: 28, hourlyRate: 28, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 2.5 },
-    { id: "luis", number: "4", name: "Luis Ortega", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4 },
-    { id: "sam", number: "11", name: "Sam Okonkwo", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
-  ];
+  const techs: Tech[] = pullman
+    ? [
+        { id: "marcus", number: "52", name: "Holly Grant", skill: "master", board: "main", payStyle: "flat", flagRate: 34, hourlyRate: 34, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 2.5 },
+        { id: "elena", number: "16", name: "Mina Park", skill: "a", board: "main", payStyle: "flat", flagRate: 31, hourlyRate: 31, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3 },
+        { id: "andre", number: "9", name: "Cole Jensen", skill: "diesel", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 4 },
+        { id: "chris", number: "28", name: "Wes Alvarez", skill: "b", board: "main", payStyle: "flat", flagRate: 26, hourlyRate: 26, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
+        { id: "dana", number: "44", name: "Ivy Nguyen", skill: "b", board: "none", payStyle: "hourly", flagRate: 25, hourlyRate: 28, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 2 },
+        { id: "priya", number: "21", name: "Omar Haddad", skill: "a", board: "internal", payStyle: "flat", flagRate: 29, hourlyRate: 29, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 3 },
+        { id: "luis", number: "6", name: "Bea Collins", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4.5 },
+        { id: "sam", number: "13", name: "Nate Fuller", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3 },
+      ]
+    : [
+        { id: "marcus", number: "41", name: "Marcus Hale", skill: "master", board: "main", payStyle: "flat", flagRate: 36, hourlyRate: 36, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
+        { id: "elena", number: "18", name: "Elena Voss", skill: "a", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4 },
+        { id: "andre", number: "7", name: "Andre Brooks", skill: "diesel", board: "main", payStyle: "flat", flagRate: 33, hourlyRate: 33, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 3 },
+        { id: "chris", number: "23", name: "Chris Dalton", skill: "b", board: "main", payStyle: "flat", flagRate: 27, hourlyRate: 27, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4.5 },
+        { id: "dana", number: "15", name: "Dana Whitfield", skill: "b", board: "none", payStyle: "hourly", flagRate: 26, hourlyRate: 29, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 4 },
+        { id: "priya", number: "33", name: "Priya Shah", skill: "a", board: "internal", payStyle: "flat", flagRate: 28, hourlyRate: 28, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 2.5 },
+        { id: "luis", number: "4", name: "Luis Ortega", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4 },
+        { id: "sam", number: "11", name: "Sam Okonkwo", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
+      ];
 
-  const customers = NAMES.map((name, i) => ({
-    id: `c${i + 1}`,
-    name,
-    phone: `(555) 201-${String(1400 + i).slice(-4)}`,
-  }));
+  const customers = names.map((name, i) => {
+    const phone = `(555) ${pullman ? "332" : "201"}-${String((pullman ? 2200 : 1400) + i).slice(-4)}`;
+    return {
+      id: `c${i + 1}`,
+      name,
+      phone,
+      mobile: noMobile.has(i) ? "" : phone,
+      email: emailFor(name),
+      noShows: 0,
+    };
+  });
 
-  const vehicles = NAMES.map((_, i) => {
-    const model = MODELS[i % MODELS.length];
-    const serial = String(i + 1).padStart(8, "0");
+  const vehicles = names.map((_, i) => {
+    const model = MODELS[(i + (pullman ? 3 : 0)) % MODELS.length];
     return {
       id: `v${i + 1}`,
       customerId: `c${i + 1}`,
       year: model.year,
       model: model.model,
-      vin: `1FTDEMO${serial}AA`.slice(0, 17),
+      vin: fullVin({
+        prefix: pullman ? "1FTPULMN" : "1FTAB12C",
+        year: model.year,
+        plant: pullman ? "P" : "G",
+        serial: i + 1,
+      }),
     };
   });
 
   const parts = buildParts();
   const sku = new Map(parts.map((part) => [part.id, part]));
-  const rng = mulberry32(20261019);
+  const rng = mulberry32(pullman ? 20261027 : 20261019);
   const advisorIds = advisors.map((a) => a.id);
   const orders: Array<Omit<RepairOrder, "bay" | "mileageOut" | "fees" | "taxRate">> = [];
-  let seq = 241200;
+  let seq = pullman ? 318000 : 241200;
 
   for (const day of workingDaysBeforeToday()) {
     const [year, month] = today().split("-").map(Number);
@@ -637,16 +789,16 @@ export function createSeed(): ShopData {
   }
 
   const appointments: Appointment[] = [
-    appt("a1", "07:20", 30, "c20", "v20", "megan", ["Oil change"], "express", "no_show", null, "luis", ["LOF"]),
+    appt("a1", "07:20", 30, "c20", "v20", "megan", ["Oil change"], "waiter", "no_show", null, "luis", ["LOF"]),
     appt("a2", "07:30", 150, "c1", "v1", "megan", ["Brake pulsation at highway speed"], "drop", "in_shop", "open-helen", "chris", ["BRKF"]),
     appt("a3", "07:45", 90, "c9", "v9", "alicia", ["30,000-mile service"], "waiter", "in_shop", "open-pat", "priya", ["LOF", "CABIN"]),
-    appt("a4", "08:15", 60, "c16", "v16", "derek", ["Service campaign update"], "express", "in_shop", "open-carl", "sam", ["CAMP"]),
+    appt("a4", "08:15", 60, "c16", "v16", "derek", ["Service campaign update"], "waiter", "in_shop", "open-carl", "sam", ["CAMP"]),
     appt("a5", "08:40", 120, "c7", "v7", "jordan", ["Rattle over bumps", "Check the front alignment"], "drop", "in_shop", "open-sandra", "elena", ["WNOI", "ALIGN"]),
-    appt("a6", "09:10", 60, "c12", "v12", "megan", ["Oil and rotation"], "express", "scheduled", null, "marcus", ["LOF", "ROT"], shopDate("2026-10-19")),
+    appt("a6", "09:10", 60, "c12", "v12", "megan", ["Oil and rotation"], "waiter", "scheduled", null, "marcus", ["LOF", "ROT"], shopDate("2026-10-19")),
     appt("a7", "09:40", 150, "c13", "v13", "jordan", ["Diesel service", "DEF light on"], "drop", "scheduled", null, "andre", ["DSL"], shopDate("2026-10-20")),
     appt("a8", "10:30", 120, "c6", "v6", "derek", ["Clunk from the front end"], "drop", "scheduled", null, "marcus", ["DIAG"], shopDate("2026-10-20")),
     appt("a9", "11:00", 90, "c15", "v15", "alicia", ["Oil change, waiter"], "waiter", "scheduled", null, "luis", ["LOF"], shopDate("2026-10-21")),
-    appt("a10", "13:00", 180, "c23", "v23", "jordan", ["AC blows warm", "Check the cabin filter"], "loaner", "scheduled", null, "chris", ["WHVAC", "CABIN"], shopDate("2026-10-22")),
+    appt("a10", "13:00", 180, "c23", "v23", "jordan", ["AC blows warm", "Check the cabin filter"], "drop", "scheduled", null, "chris", ["WHVAC", "CABIN"], shopDate("2026-10-22")),
   ];
 
   const budgets = [
@@ -698,12 +850,15 @@ export function createSeed(): ShopData {
     taxRate: settings.taxRate,
   }));
 
-  return {
+  return scopeShop({
     dataset: "sample",
     settings,
     advisors,
     techs,
-    customers,
+    customers: customers.map((customer) => ({
+      ...customer,
+      noShows: appointments.filter((row) => row.customerId === customer.id && row.status === "no_show").length,
+    })),
     vehicles,
     parts,
     laborOps: laborCatalog(),
@@ -728,5 +883,10 @@ export function createSeed(): ShopData {
     budgets,
     overhead,
     campaigns: [],
-  };
+    workingAsId: advisors[0]?.id ?? "",
+    overrides: [],
+    onlineRequests: [],
+    onlineChallenges: [],
+    notices: [],
+  }, pullman ? "pl-" : "");
 }

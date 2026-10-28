@@ -146,13 +146,6 @@ export function bayFromStatus(status: string) {
   return "dispatch" as const;
 }
 
-export const LANE_LABEL = {
-  waiter: "Waiter",
-  drop: "Drop-off",
-  express: "Express",
-  loaner: "Loaner",
-} as const;
-
 export const SKILL_LABEL = {
   master: "Master",
   a: "A tech",

@@ -138,7 +138,7 @@ describe("shop store", () => {
         cpRate: 210,
         targetElr: 190,
       },
-      customers: [{ id: "c", name: "Helen", phone: "5095550100" }],
+      customers: [{ id: "c", name: "Helen", phone: "5095550100", mobile: "", email: "helen@example.com", noShows: 0 }],
       orders: [bookedOrder()],
     });
     useShop.getState().clearShop();
@@ -204,7 +204,7 @@ describe("shop store", () => {
     const empty = createEmptyShop();
     const withCustomer = {
       ...empty,
-      customers: [{ id: "c", name: "Helen", phone: "5095550100" }],
+      customers: [{ id: "c", name: "Helen", phone: "5095550100", mobile: "", email: "helen@example.com", noShows: 0 }],
     };
     assert.equal(sampleLoadAllowed(withCustomer, false), false);
     assert.equal(sampleLoadAllowed(withCustomer, true), true);

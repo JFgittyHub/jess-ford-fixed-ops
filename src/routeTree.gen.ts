@@ -17,10 +17,13 @@ import { Route as EstimatesRouteImport } from './routes/estimates'
 import { Route as ExpensesRouteImport } from './routes/expenses'
 import { Route as FeesRouteImport } from './routes/fees'
 import { Route as LaborOpsRouteImport } from './routes/labor-ops'
+import { Route as OnlineRequestsRouteImport } from './routes/online-requests'
 import { Route as OrdersRouteImport } from './routes/orders'
+import { Route as OverridesRouteImport } from './routes/overrides'
 import { Route as PartsRouteImport } from './routes/parts'
 import { Route as PayTypesRouteImport } from './routes/pay-types'
 import { Route as ReportsRouteImport } from './routes/reports'
+import { Route as RequestRouteImport } from './routes/request'
 import { Route as ScheduleRouteImport } from './routes/schedule'
 import { Route as TechBoardRouteImport } from './routes/tech-board'
 
@@ -64,9 +67,19 @@ const LaborOpsRoute = LaborOpsRouteImport.update({
   path: '/labor-ops',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OnlineRequestsRoute = OnlineRequestsRouteImport.update({
+  id: '/online-requests',
+  path: '/online-requests',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const OrdersRoute = OrdersRouteImport.update({
   id: '/orders',
   path: '/orders',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OverridesRoute = OverridesRouteImport.update({
+  id: '/overrides',
+  path: '/overrides',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PartsRoute = PartsRouteImport.update({
@@ -82,6 +95,11 @@ const PayTypesRoute = PayTypesRouteImport.update({
 const ReportsRoute = ReportsRouteImport.update({
   id: '/reports',
   path: '/reports',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RequestRoute = RequestRouteImport.update({
+  id: '/request',
+  path: '/request',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ScheduleRoute = ScheduleRouteImport.update({
@@ -104,10 +122,13 @@ export interface FileRoutesByFullPath {
   '/expenses': typeof ExpensesRoute
   '/fees': typeof FeesRoute
   '/labor-ops': typeof LaborOpsRoute
+  '/online-requests': typeof OnlineRequestsRoute
   '/orders': typeof OrdersRoute
+  '/overrides': typeof OverridesRoute
   '/parts': typeof PartsRoute
   '/pay-types': typeof PayTypesRoute
   '/reports': typeof ReportsRoute
+  '/request': typeof RequestRoute
   '/schedule': typeof ScheduleRoute
   '/tech-board': typeof TechBoardRoute
 }
@@ -120,10 +141,13 @@ export interface FileRoutesByTo {
   '/expenses': typeof ExpensesRoute
   '/fees': typeof FeesRoute
   '/labor-ops': typeof LaborOpsRoute
+  '/online-requests': typeof OnlineRequestsRoute
   '/orders': typeof OrdersRoute
+  '/overrides': typeof OverridesRoute
   '/parts': typeof PartsRoute
   '/pay-types': typeof PayTypesRoute
   '/reports': typeof ReportsRoute
+  '/request': typeof RequestRoute
   '/schedule': typeof ScheduleRoute
   '/tech-board': typeof TechBoardRoute
 }
@@ -137,10 +161,13 @@ export interface FileRoutesById {
   '/expenses': typeof ExpensesRoute
   '/fees': typeof FeesRoute
   '/labor-ops': typeof LaborOpsRoute
+  '/online-requests': typeof OnlineRequestsRoute
   '/orders': typeof OrdersRoute
+  '/overrides': typeof OverridesRoute
   '/parts': typeof PartsRoute
   '/pay-types': typeof PayTypesRoute
   '/reports': typeof ReportsRoute
+  '/request': typeof RequestRoute
   '/schedule': typeof ScheduleRoute
   '/tech-board': typeof TechBoardRoute
 }
@@ -155,10 +182,13 @@ export interface FileRouteTypes {
     | '/expenses'
     | '/fees'
     | '/labor-ops'
+    | '/online-requests'
     | '/orders'
+    | '/overrides'
     | '/parts'
     | '/pay-types'
     | '/reports'
+    | '/request'
     | '/schedule'
     | '/tech-board'
   fileRoutesByTo: FileRoutesByTo
@@ -171,10 +201,13 @@ export interface FileRouteTypes {
     | '/expenses'
     | '/fees'
     | '/labor-ops'
+    | '/online-requests'
     | '/orders'
+    | '/overrides'
     | '/parts'
     | '/pay-types'
     | '/reports'
+    | '/request'
     | '/schedule'
     | '/tech-board'
   id:
@@ -187,10 +220,13 @@ export interface FileRouteTypes {
     | '/expenses'
     | '/fees'
     | '/labor-ops'
+    | '/online-requests'
     | '/orders'
+    | '/overrides'
     | '/parts'
     | '/pay-types'
     | '/reports'
+    | '/request'
     | '/schedule'
     | '/tech-board'
   fileRoutesById: FileRoutesById
@@ -204,10 +240,13 @@ export interface RootRouteChildren {
   ExpensesRoute: typeof ExpensesRoute
   FeesRoute: typeof FeesRoute
   LaborOpsRoute: typeof LaborOpsRoute
+  OnlineRequestsRoute: typeof OnlineRequestsRoute
   OrdersRoute: typeof OrdersRoute
+  OverridesRoute: typeof OverridesRoute
   PartsRoute: typeof PartsRoute
   PayTypesRoute: typeof PayTypesRoute
   ReportsRoute: typeof ReportsRoute
+  RequestRoute: typeof RequestRoute
   ScheduleRoute: typeof ScheduleRoute
   TechBoardRoute: typeof TechBoardRoute
 }
@@ -270,11 +309,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LaborOpsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/online-requests': {
+      id: '/online-requests'
+      path: '/online-requests'
+      fullPath: '/online-requests'
+      preLoaderRoute: typeof OnlineRequestsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/orders': {
       id: '/orders'
       path: '/orders'
       fullPath: '/orders'
       preLoaderRoute: typeof OrdersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/overrides': {
+      id: '/overrides'
+      path: '/overrides'
+      fullPath: '/overrides'
+      preLoaderRoute: typeof OverridesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/parts': {
@@ -296,6 +349,13 @@ declare module '@tanstack/react-router' {
       path: '/reports'
       fullPath: '/reports'
       preLoaderRoute: typeof ReportsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/request': {
+      id: '/request'
+      path: '/request'
+      fullPath: '/request'
+      preLoaderRoute: typeof RequestRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/schedule': {
@@ -324,10 +384,13 @@ const rootRouteChildren: RootRouteChildren = {
   ExpensesRoute: ExpensesRoute,
   FeesRoute: FeesRoute,
   LaborOpsRoute: LaborOpsRoute,
+  OnlineRequestsRoute: OnlineRequestsRoute,
   OrdersRoute: OrdersRoute,
+  OverridesRoute: OverridesRoute,
   PartsRoute: PartsRoute,
   PayTypesRoute: PayTypesRoute,
   ReportsRoute: ReportsRoute,
+  RequestRoute: RequestRoute,
   ScheduleRoute: ScheduleRoute,
   TechBoardRoute: TechBoardRoute,
 }

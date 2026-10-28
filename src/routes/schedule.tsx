@@ -3,13 +3,18 @@ import { Calendar } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours } from "@/components/appointment-calendar";
 import { NewOrder } from "@/components/new-order";
+import { NoShowMark } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
-import { LANE_LABEL, snapHalfHour, today } from "@/lib/format";
+import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
+import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
+import { requestHolds } from "@/lib/online-request";
+import { noShowSuffix } from "@/lib/no-show-label";
+import { laneLabel, normalizeLane } from "@/lib/scheduling";
 import { useShop } from "@/lib/store";
-import type { Appointment } from "@/lib/types";
+import type { Appointment, TransportOption } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
 
@@ -36,11 +41,14 @@ function SchedulePage() {
   const [time, setTime] = useState("15:30");
   const [minutes, setMinutes] = useState(60);
   const [concern, setConcern] = useState("");
-  const [lane, setLane] = useState<Appointment["lane"]>("drop");
+  const transports = shop.settings.scheduling.transportOptions;
+  const [lane, setLane] = useState(() => normalizeLane("drop", transports));
   const [day, setDay] = useState(today());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [servicePick, setServicePick] = useState(shop.settings.scheduling.onlineMenu[0]?.id ?? "");
+  const [onlineTechId, setOnlineTechId] = useState(shop.techs.find((tech) => tech.board !== "none")?.id ?? "");
 
   const resolvedVehicle = vehicles.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : vehicles[0]?.id ?? "";
   const selected = shop.appointments.find((row) => row.id === selectedId) ?? null;
@@ -59,6 +67,34 @@ function SchedulePage() {
   const dayHours = shop.appointments
     .filter((row) => row.date === day)
     .reduce((sum, row) => sum + laborHours(row, shop.laborOps), 0);
+  const services = shop.settings.scheduling.onlineMenu;
+  const serviceId = services.some((row) => row.id === servicePick) ? servicePick : services[0]?.id ?? "";
+  const techFilter = board.some((tech) => tech.id === onlineTechId) ? onlineTechId : board[0]?.id ?? "";
+  const onlineTimes = serviceId && techFilter
+    ? [...new Set(onlineSlots({
+        scheduling: shop.settings.scheduling,
+        advisors: shop.advisors,
+        techs: shop.techs,
+        loads: appointmentLoads(shop.appointments, shop.laborOps),
+        holds: requestHolds(shop.onlineRequests),
+        serviceId,
+        from: day,
+        through: day,
+        techId: techFilter,
+      }).map((slot) => slot.time))]
+    : [];
+
+  function capacityNote(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }, ignoreId?: string) {
+    return advisorBookingNote(assessAppointment({
+      scheduling: shop.settings.scheduling,
+      advisors: shop.advisors,
+      techs: shop.techs,
+      appointments: shop.appointments,
+      laborOps: shop.laborOps,
+      holds: requestHolds(shop.onlineRequests),
+      proposal: { ...draft, ignoreId },
+    }));
+  }
 
   return (
     <Shell>
@@ -70,7 +106,7 @@ function SchedulePage() {
             <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
-            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it.
+            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests hold the same hours and are listed under Online requests.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -81,6 +117,34 @@ function SchedulePage() {
           <Button small onClick={() => setDay((value) => addDays(value, 1))}>Next</Button>
         </div>
       </div>
+
+      <section className="card mt-4" aria-label="Online times">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-display text-3xl leading-none">Online times</h2>
+            <p className="mt-1 max-w-xl text-sm text-muted">Customers only see a time when the technician still has hours for this service and the advisor is not full. A full time is left off.</p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <Field label="Service">
+              <select className="field" value={serviceId} onChange={(event) => setServicePick(event.target.value)}>
+                {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Technician">
+              <select className="field" value={techFilter} onChange={(event) => setOnlineTechId(event.target.value)}>
+                {board.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
+              </select>
+            </Field>
+          </div>
+        </div>
+        {onlineTimes.length === 0 ? (
+          <p className="mt-3 text-sm text-muted">No online openings for this technician on this day.</p>
+        ) : (
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {onlineTimes.map((time) => <li key={time} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(time)}</li>)}
+          </ul>
+        )}
+      </section>
 
       {board.length === 0 ? (
         <p className="card mt-4 text-muted">No technicians are on a board yet. Add someone on the roster and put them on Express, Main shop, or Internals. The day columns show up after that.</p>
@@ -116,7 +180,7 @@ function SchedulePage() {
             advisor: advisor?.name ?? "Advisor",
             tech: look.tech.get(row.techId) ? `#${look.tech.get(row.techId)?.number} ${look.tech.get(row.techId)?.name}` : "No technician",
             when: `${dayLabel(row.date)} · ${clockRange(row.time, row.minutes)}`,
-            lane: LANE_LABEL[row.lane],
+            lane: laneLabel(row.lane, transports),
             concern: row.concern,
             vin: row.vin || look.vehicle.get(row.vehicleId)?.vin || "No VIN",
             ops: row.laborOpIds.length
@@ -133,7 +197,9 @@ function SchedulePage() {
         <Selected
           row={selected}
           name={look.customer.get(selected.customerId)?.name ?? "Customer"}
+          noShows={look.customer.get(selected.customerId)?.noShows ?? 0}
           vehicle={look.vehicle.get(selected.vehicleId)}
+          laneName={laneLabel(selected.lane, transports)}
           onStatus={(status) => shop.setAppointmentStatus(selected.id, status)}
           onWrite={() => setPreset(selected)}
           onEdit={() => openAppointment(selected.id)}
@@ -148,10 +214,12 @@ function SchedulePage() {
           advisors={shop.advisors}
           techs={board}
           laborOps={shop.laborOps}
+          transports={transports}
           submitLabel="Book it"
+          capacityNote={(draft) => capacityNote(draft)}
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value) => {
-            shop.addAppointment(value);
+            shop.saveAdvisorAppointment(value);
             setConcern("");
             setBooking(false);
           }}
@@ -167,11 +235,13 @@ function SchedulePage() {
             advisors={shop.advisors}
             techs={board}
             laborOps={shop.laborOps}
+            transports={transports}
             submitLabel="Save changes"
             showStatus
+            capacityNote={(draft) => capacityNote(draft, editing.id)}
             initial={editing}
             onSubmit={(value) => {
-              shop.updateAppointment(editing.id, value);
+              shop.saveAdvisorAppointment(value, editing.id);
               setEditingId(null);
             }}
           />
@@ -198,14 +268,18 @@ function SchedulePage() {
 function Selected({
   row,
   name,
+  noShows = 0,
   vehicle,
+  laneName,
   onStatus,
   onWrite,
   onEdit,
 }: {
   row: Appointment;
   name: string;
+  noShows?: number;
   vehicle?: { year: number; model: string };
+  laneName: string;
   onStatus: (status: Appointment["status"]) => void;
   onWrite: () => void;
   onEdit: () => void;
@@ -213,9 +287,9 @@ function Selected({
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <p className="font-semibold">{name}</p>
+        <p className="flex flex-wrap items-baseline gap-2 font-semibold">{name}<NoShowMark count={noShows} /></p>
         <p className="text-sm text-muted">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : ""} · {row.concern}</p>
-        <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {LANE_LABEL[row.lane]}</p>
+        <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {laneName}</p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Pill tone={row.status === "no_show" ? "bad" : row.status === "in_shop" ? "good" : undefined}>
@@ -238,18 +312,22 @@ function AppointmentFields({
   advisors,
   techs,
   laborOps,
+  transports,
   submitLabel,
   showStatus,
+  capacityNote,
   onSubmit,
 }: {
   initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">;
-  customers: { id: string; name: string }[];
+  customers: { id: string; name: string; noShows?: number }[];
   vehicles: { id: string; customerId: string; year: number; model: string; vin: string }[];
   advisors: { id: string; number: string; name: string }[];
   techs: { id: string; number: string; name: string }[];
   laborOps: { id: string; opcode: string; description: string; hours: number }[];
+  transports: TransportOption[];
   submitLabel: string;
   showStatus?: boolean;
+  capacityNote?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => string | null;
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">) => void;
 }) {
   const [date, setDate] = useState(initial.date);
@@ -262,11 +340,12 @@ function AppointmentFields({
   const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern }]);
   const [vin, setVin] = useState(initial.vin);
   const [laborOpIds, setLaborOpIds] = useState(initial.laborOpIds ?? []);
-  const [lane, setLane] = useState(initial.lane);
+  const [lane, setLane] = useState(() => normalizeLane(initial.lane, transports));
   const [status, setStatus] = useState(initial.status);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
+  const capacityWarning = capacityNote?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? null;
 
   return (
     <form
@@ -291,8 +370,8 @@ function AppointmentFields({
           </select>
         </Field>
         <Field label="Lane">
-          <select className="field" value={lane} onChange={(event) => setLane(event.target.value as Appointment["lane"])}>
-            {(Object.keys(LANE_LABEL) as Appointment["lane"][]).map((item) => <option key={item} value={item}>{LANE_LABEL[item]}</option>)}
+          <select className="field" value={lane} onChange={(event) => setLane(event.target.value)}>
+            {transports.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
           </select>
         </Field>
       </div>
@@ -304,7 +383,7 @@ function AppointmentFields({
           setVehicleId(first?.id ?? "");
           setVin(first?.vin ?? "");
         }}>
-          {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+          {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows ?? 0)}</option>)}
         </select>
       </Field>
       <Field label="Vehicle">
@@ -382,6 +461,9 @@ function AppointmentFields({
             <option value="no_show">No-show</option>
           </select>
         </Field>
+      ) : null}
+      {capacityWarning ? (
+        <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{capacityWarning}</p>
       ) : null}
       <Button tone="primary" type="submit">{submitLabel}</Button>
     </form>

@@ -1,3 +1,6 @@
+import type { StoreId } from "../types";
+
+export type { StoreId };
 export type Status = "good" | "watch" | "bad" | "empty";
 export type Commitment = "Green" | "Yellow" | "Red";
 export type CvpStanding = "Above Group" | "At Group" | "Below Group";
@@ -52,7 +55,6 @@ export type MonthBoard = {
   period2: Tech[];
 };
 
-export type StoreId = "grand-coulee" | "pullman";
 export type ViewId = StoreId | "group";
 
 export type AppState = {
@@ -258,6 +260,42 @@ export function compileBoards(month: string, sources: { label: string; board: Mo
     period1: live.flatMap((source) => tag(source.board.period1, source.label)),
     period2: live.flatMap((source) => tag(source.board.period2, source.label)),
   };
+}
+
+const OWNER_STORES: { id: StoreId; name: string; short: string }[] = [
+  { id: "grand-coulee", name: "Grand Coulee", short: "Coulee" },
+  { id: "pullman", name: "Pullman", short: "Pullman" },
+];
+
+export type OwnerStoreSlice = {
+  id: StoreId;
+  name: string;
+  short: string;
+  board: MonthBoard;
+};
+
+/** Read-only combined month for both stores, plus each store's own board. */
+export function ownerMonth(stores: Record<StoreId, Record<string, MonthBoard>>, month: string): { combined: MonthBoard; stores: OwnerStoreSlice[] } {
+  const slices = OWNER_STORES.map((store) => ({
+    ...store,
+    board: stores[store.id]?.[month] ?? emptyBoard(month, store.id === "pullman" ? 1800 : HOURS_GOAL),
+  }));
+  return {
+    stores: slices,
+    combined: compileBoards(
+      month,
+      slices.map((slice) => ({ label: slice.short, board: slice.board })),
+    ),
+  };
+}
+
+export function ownerYearBoards(stores: Record<StoreId, Record<string, MonthBoard>>, through: string): MonthBoard[] {
+  const year = through.slice(0, 4);
+  const keys = new Set<string>([...Object.keys(stores["grand-coulee"] ?? {}), ...Object.keys(stores.pullman ?? {})]);
+  return [...keys]
+    .filter((key) => key.startsWith(`${year}-`) && key <= through)
+    .sort()
+    .map((key) => ownerMonth(stores, key).combined);
 }
 
 export type Pace = {

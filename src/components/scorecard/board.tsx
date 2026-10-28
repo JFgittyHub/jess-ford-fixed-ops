@@ -11,7 +11,6 @@ import {
   SERVICE_GP_STANDARD,
   attentionItems,
   availableHours,
-  compileBoards,
   countsTowardShopEff,
   effStatus,
   emptyBoard,
@@ -20,6 +19,8 @@ import {
   formatPct,
   monthKey,
   monthLabel,
+  ownerMonth,
+  ownerYearBoards,
   paceFor,
   yearToDate,
   partsRows,
@@ -32,29 +33,24 @@ import {
   type AppState,
   type MetricRow,
   type MonthBoard,
+  type OwnerStoreSlice,
   type Pace,
   type Status,
   type StoreId,
   type Tech,
-  type ViewId,
   type YearTotals,
 } from "@/lib/scorecard/model";
 import { Button, Field } from "@/components/ui";
+import { useShop } from "@/lib/store";
 
 const STORAGE_KEY = SCORECARD_STORAGE_KEY;
-
-const VIEWS: { id: ViewId; label: string }[] = [
-  { id: "group", label: "Group" },
-  { id: "grand-coulee", label: "Grand Coulee" },
-  { id: "pullman", label: "Pullman" },
-];
 
 function seed(source: Record<string, MonthBoard>): Record<string, MonthBoard> {
   return Object.fromEntries(Object.entries(source).map(([key, board]) => [key, structuredClone(board)]));
 }
 
-function withPullmanSamples(months: Record<string, MonthBoard>): Record<string, MonthBoard> {
-  if (!isDemoMode()) return months;
+function withPullmanSamples(months: Record<string, MonthBoard>, demo: boolean): Record<string, MonthBoard> {
+  if (!demo) return months;
   const next = { ...months };
   for (const [key, board] of Object.entries(PULLMAN_SAMPLE_MONTHS)) {
     if (!next[key]?.recorded) next[key] = structuredClone(board);
@@ -62,15 +58,15 @@ function withPullmanSamples(months: Record<string, MonthBoard>): Record<string, 
   return next;
 }
 
-function buildInitial(): AppState {
+function buildInitial(demo: boolean): AppState {
   const todayKey = monthKey(shopTodayDate());
-  if (!isDemoMode()) {
+  if (!demo) {
     return {
       activeStore: "grand-coulee",
       activeMonth: todayKey,
       stores: {
         "grand-coulee": { [todayKey]: emptyBoard(todayKey) },
-        pullman: { [todayKey]: emptyBoard(todayKey, 1800) },
+        pullman: withPullmanSamples({ [todayKey]: emptyBoard(todayKey, 1800) }, false),
       },
     };
   }
@@ -80,7 +76,7 @@ function buildInitial(): AppState {
   return {
     activeStore: "grand-coulee",
     activeMonth: coulee[todayKey]?.recorded ? todayKey : (seeded.at(-1) ?? todayKey),
-    stores: { "grand-coulee": coulee, pullman: withPullmanSamples({}) },
+    stores: { "grand-coulee": coulee, pullman: withPullmanSamples({}, true) },
   };
 }
 
@@ -90,8 +86,8 @@ function readStored(): AppState | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AppState;
     if (!parsed?.stores?.["grand-coulee"] || !parsed.stores.pullman || typeof parsed.activeMonth !== "string") return null;
-    const activeStore: ViewId = parsed.activeStore === "pullman" || parsed.activeStore === "group" ? parsed.activeStore : "grand-coulee";
-    return { ...parsed, activeStore, stores: { ...parsed.stores, pullman: withPullmanSamples(parsed.stores.pullman) } };
+    const activeStore: StoreId = parsed.activeStore === "pullman" ? "pullman" : "grand-coulee";
+    return { ...parsed, activeStore, stores: { ...parsed.stores, pullman: withPullmanSamples(parsed.stores.pullman, isDemoMode()) } };
   } catch {
     return null;
   }
@@ -118,10 +114,15 @@ function tonePill(status: Status) {
   return "bg-surface text-muted";
 }
 
-export function ScorecardPulse() {
-  const [state, setState] = useState<AppState>(buildInitial);
+export function ScorecardPulse({ initialOwnerView = false }: { initialOwnerView?: boolean }) {
+  useShop((shop) => shop.activeStoreId);
+  useShop((shop) => shop.dataset);
+  const storeId = useShop.getState().activeStoreId;
+  const demo = isDemoMode() || useShop.getState().dataset === "sample";
+  const [state, setState] = useState<AppState>(() => buildInitial(demo));
   const [ready, setReady] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [ownerView, setOwnerView] = useState(initialOwnerView);
 
   useEffect(() => {
     if (isDemoMode()) {
@@ -149,15 +150,8 @@ export function ScorecardPulse() {
 
   const today = shopTodayDate();
   const todayKey = monthKey(today);
-  const coulee = state.stores["grand-coulee"][state.activeMonth] ?? emptyBoard(state.activeMonth);
-  const pullman = state.stores.pullman[state.activeMonth] ?? emptyBoard(state.activeMonth);
-  const board =
-    state.activeStore === "group"
-      ? compileBoards(state.activeMonth, [
-          { label: "Coulee", board: coulee },
-          { label: "Pullman", board: pullman },
-        ])
-      : (state.stores[state.activeStore][state.activeMonth] ?? emptyBoard(state.activeMonth));
+  const owner = ownerView ? ownerMonth(state.stores, state.activeMonth) : null;
+  const board = owner?.combined ?? state.stores[storeId][state.activeMonth] ?? emptyBoard(state.activeMonth, storeId === "pullman" ? 1800 : 900);
   const pace = paceFor(board, today);
   const service = serviceRows(board);
   const parts = partsRows(board);
@@ -169,29 +163,32 @@ export function ScorecardPulse() {
     return row ? [row] : [];
   });
   const serviceLines = service.filter((row) => !fordIds.includes(row.id));
-  const ytd = yearToDate(yearBoards(state, state.activeMonth), state.activeMonth);
+  const ytd = yearToDate(owner ? ownerYearBoards(state.stores, state.activeMonth) : yearBoards(state, state.activeMonth, storeId), state.activeMonth);
   const asOf = today.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const storeLine = storeId === "pullman" ? (demo ? "Pullman. Sample numbers until the feed is connected." : "Pullman. Hand entry for now.") : "Grand Coulee. Hand entry for now.";
+
+  function setScope(next: boolean) {
+    setOwnerView(next);
+    if (next) setEditing(false);
+  }
 
   function replaceBoard(next: MonthBoard) {
-    setState((prev) => {
-      if (prev.activeStore === "group") return prev;
-      const store: StoreId = prev.activeStore;
-      return {
-        ...prev,
-        stores: { ...prev.stores, [store]: { ...prev.stores[store], [prev.activeMonth]: { ...next, month: prev.activeMonth, recorded: true } } },
-      };
-    });
+    if (ownerView) return;
+    setState((prev) => ({
+      ...prev,
+      activeStore: storeId,
+      stores: { ...prev.stores, [storeId]: { ...prev.stores[storeId], [prev.activeMonth]: { ...next, month: prev.activeMonth, recorded: true } } },
+    }));
   }
 
   function go(delta: number) {
     setState((prev) => {
       const nextKey = shiftMonth(prev.activeMonth, delta);
       if (nextKey < MIN_MONTH || nextKey > todayKey) return prev;
-      if (prev.activeStore === "group") return { ...prev, activeMonth: nextKey };
-      const store: StoreId = prev.activeStore;
-      const months = { ...prev.stores[store] };
-      if (!months[nextKey]) months[nextKey] = emptyBoard(nextKey, store === "pullman" ? 1800 : 900);
-      return { ...prev, activeMonth: nextKey, stores: { ...prev.stores, [store]: months } };
+      if (ownerView) return { ...prev, activeMonth: nextKey };
+      const months = { ...prev.stores[storeId] };
+      if (!months[nextKey]) months[nextKey] = emptyBoard(nextKey, storeId === "pullman" ? 1800 : 900);
+      return { ...prev, activeStore: storeId, activeMonth: nextKey, stores: { ...prev.stores, [storeId]: months } };
     });
   }
 
@@ -202,14 +199,19 @@ export function ScorecardPulse() {
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Pulse</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Fixed Ops Pulse</h1>
           <p className="mt-2 max-w-xl text-muted">
-            As of {asOf}. {state.activeStore === "group" ? "Group total of Grand Coulee and Pullman." : state.activeStore === "pullman" ? (isDemoMode() ? "Pullman. Sample numbers until the feed is connected." : "Pullman. Hand entry for now.") : "Grand Coulee. Hand entry for now."}
+            As of {asOf}. {ownerView ? "Owner view. Read-only totals for both stores." : storeLine}
           </p>
         </div>
         <Button
           small
           tone={editing ? "primary" : "ghost"}
-          disabled={state.activeStore === "group"}
-          onClick={() => setEditing((value) => !value)}
+          className="disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={ownerView}
+          title={ownerView ? "Owner view is read-only" : undefined}
+          onClick={() => {
+            if (ownerView) return;
+            setEditing((value) => !value);
+          }}
         >
           Operating metrics
         </Button>
@@ -225,65 +227,51 @@ export function ScorecardPulse() {
             <ChevronRight className="size-5" />
           </button>
         </div>
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Store">
-          {VIEWS.map((view) => (
-            <Button
-              key={view.id}
-              small
-              tone={state.activeStore === view.id ? "primary" : "ghost"}
-              role="tab"
-              aria-selected={state.activeStore === view.id}
-              onClick={() => {
-                setEditing(false);
-                setState((prev) => ({ ...prev, activeStore: view.id }));
-              }}
-            >
-              {view.label}
-            </Button>
-          ))}
-        </div>
+        <ScopeControl ownerView={ownerView} onChange={setScope} label="Pulse scope" />
       </div>
 
-      <div className="mt-4">
-        {editing && state.activeStore !== "group" ? (
+      <div className="mt-4" data-scope={ownerView ? "owner" : "store"}>
+        {editing && !ownerView ? (
           <Editor
             board={board}
             onChange={replaceBoard}
             onClose={() => setEditing(false)}
             onRestore={() => {
-              if (state.activeStore === "group") return;
-              const sample = sampleFor(state.activeMonth, state.activeStore);
+              const sample = sampleFor(state.activeMonth, storeId);
               if (sample) replaceBoard(sample);
             }}
           />
         ) : (
-          <Board board={board} pace={pace} ytd={ytd} service={serviceLines} parts={parts} ford={ford} health={health} attention={attention} today={today} />
+          <Board board={board} pace={pace} ytd={ytd} service={serviceLines} parts={parts} ford={ford} health={health} attention={attention} today={today} ownerView={ownerView} onScope={setScope} breakdown={owner?.stores ?? null} />
         )}
       </div>
     </>
   );
 }
 
-function yearBoards(state: AppState, through: string): MonthBoard[] {
+function yearBoards(state: AppState, through: string, storeId: StoreId): MonthBoard[] {
   const year = through.slice(0, 4);
-  const keys = new Set<string>();
-  for (const store of ["grand-coulee", "pullman"] as const) {
-    for (const key of Object.keys(state.stores[store])) {
-      if (key.startsWith(`${year}-`) && key <= through) keys.add(key);
-    }
-  }
-  return [...keys].sort().map((key) => {
-    if (state.activeStore === "group") {
-      return compileBoards(key, [
-        { label: "Coulee", board: state.stores["grand-coulee"][key] ?? emptyBoard(key) },
-        { label: "Pullman", board: state.stores.pullman[key] ?? emptyBoard(key) },
-      ]);
-    }
-    return state.stores[state.activeStore][key] ?? emptyBoard(key);
-  });
+  return Object.keys(state.stores[storeId])
+    .filter((key) => key.startsWith(`${year}-`) && key <= through)
+    .sort()
+    .map((key) => state.stores[storeId][key] ?? emptyBoard(key, storeId === "pullman" ? 1800 : 900));
 }
 
-function Board({ board, pace, ytd, service, parts, ford, health, attention, today }: { board: MonthBoard; pace: Pace; ytd: YearTotals; service: MetricRow[]; parts: MetricRow[]; ford: MetricRow[]; health: ReturnType<typeof tally>; attention: { id: string; status: "bad" | "watch"; text: string }[]; today: Date }) {
+function ScopeControl({ ownerView, onChange, label }: { ownerView: boolean; onChange: (owner: boolean) => void; label: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2" role="group" aria-label={label}>
+      <Button small tone={ownerView ? "ghost" : "primary"} aria-pressed={!ownerView} onClick={() => onChange(false)}>
+        This store
+      </Button>
+      <Button small tone={ownerView ? "primary" : "ghost"} aria-pressed={ownerView} onClick={() => onChange(true)}>
+        Owner view
+        <span className="font-normal"> · All stores</span>
+      </Button>
+    </div>
+  );
+}
+
+function Board({ board, pace, ytd, service, parts, ford, health, attention, today, ownerView, onScope, breakdown }: { board: MonthBoard; pace: Pace; ytd: YearTotals; service: MetricRow[]; parts: MetricRow[]; ford: MetricRow[]; health: ReturnType<typeof tally>; attention: { id: string; status: "bad" | "watch"; text: string }[]; today: Date; ownerView: boolean; onScope: (owner: boolean) => void; breakdown: OwnerStoreSlice[] | null }) {
   const partsGp = board.parts.sales > 0 ? board.parts.gross / board.parts.sales : null;
   const available = board.recorded ? availableHours(board, pace) : null;
   const bar = available && pace.projected !== null ? Math.min(1, pace.projected / available) : board.recorded ? 0 : undefined;
@@ -323,19 +311,77 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
           </ul>
         )}
       </section>
-      <div className="grid gap-3 xl:grid-cols-2">
-        <MetricTable id="service" title="Service" rows={service} />
-        <MetricTable id="parts" title="Parts" rows={parts} />
-      </div>
-      <MetricTable id="ford-metrics" title="Ford metrics" rows={ford} />
-      <section id="technicians">
-        <h2 className="mb-3 font-display text-3xl leading-none">Technicians</h2>
-        <div className="grid gap-3 xl:grid-cols-2">
-          <TechPeriod title="1st–15th" techs={board.period1} />
-          <TechPeriod title="16th–end of month" techs={board.period2} month={board.month} today={today} />
+      {breakdown ? <StoreBreakdown slices={breakdown} combined={board} /> : null}
+      <section id="scorecard" className="grid gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 className="font-display text-3xl leading-none">Scorecard</h2>
+          <ScopeControl ownerView={ownerView} onChange={onScope} label="Scorecard scope" />
         </div>
+        <div className="grid gap-3 xl:grid-cols-2">
+          <MetricTable id="service" title="Service" rows={service} />
+          <MetricTable id="parts" title="Parts" rows={parts} />
+        </div>
+        <MetricTable id="ford-metrics" title="Ford metrics" rows={ford} />
+        <section id="technicians">
+          <h2 className="mb-3 font-display text-3xl leading-none">Technicians</h2>
+          <div className="grid gap-3 xl:grid-cols-2">
+            <TechPeriod title="1st–15th" techs={board.period1} />
+            <TechPeriod title="16th–end of month" techs={board.period2} month={board.month} today={today} />
+          </div>
+        </section>
       </section>
     </div>
+  );
+}
+
+function moneyOrDash(value: number | null) {
+  return value === null ? "—" : formatMoney(value);
+}
+
+function hoursOrDash(value: number | null) {
+  return value === null ? "—" : formatHours(value);
+}
+
+function StoreBreakdown({ slices, combined }: { slices: OwnerStoreSlice[]; combined: MonthBoard }) {
+  const rows = [
+    ...slices.map((slice) => ({
+      id: slice.id,
+      name: slice.name,
+      hours: slice.board.recorded ? slice.board.service.totalHours : null,
+      service: slice.board.recorded ? slice.board.service.sales : null,
+      parts: slice.board.recorded ? slice.board.parts.sales : null,
+    })),
+    {
+      id: "both",
+      name: "Both stores",
+      hours: combined.recorded ? combined.service.totalHours : null,
+      service: combined.recorded ? combined.service.sales : null,
+      parts: combined.recorded ? combined.parts.sales : null,
+    },
+  ];
+  return (
+    <section aria-label="Per-store breakdown" className="card p-0">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="font-display text-3xl leading-none">By store</h2>
+        <p className="mt-1 text-sm text-muted">Read-only. Sold hours and sales add across Grand Coulee and Pullman. Rates stay weighted.</p>
+      </div>
+      <div className="hidden grid-cols-4 gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted sm:grid">
+        <span>Store</span>
+        <span>Sold hours</span>
+        <span>Service sales</span>
+        <span>Parts sales</span>
+      </div>
+      <ul>
+        {rows.map((row) => (
+          <li key={row.id} className="grid gap-1 border-t border-line px-4 py-3 sm:grid-cols-4 sm:items-baseline sm:gap-2">
+            <p className={cn("text-sm font-semibold", row.id === "both" && "font-display text-xl leading-none")}>{row.name}</p>
+            <p className="text-sm tabular-nums"><span className="text-muted sm:hidden">Sold hours </span>{hoursOrDash(row.hours)}</p>
+            <p className="text-sm tabular-nums"><span className="text-muted sm:hidden">Service sales </span>{moneyOrDash(row.service)}</p>
+            <p className="text-sm tabular-nums"><span className="text-muted sm:hidden">Parts sales </span>{moneyOrDash(row.parts)}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 

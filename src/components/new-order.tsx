@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { rateFor } from "@/lib/pay";
+import { noShowSuffix } from "@/lib/no-show-label";
 import { useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
@@ -104,6 +105,11 @@ function NewOrderForm({
             nextVehicle = created.vehicleId;
           }
           if (!nextCustomer || !nextVehicle || written.length === 0) return;
+          const booked = preset?.appointmentId
+            ? shop.appointments.find((row) => row.id === preset.appointmentId)
+            : undefined;
+          // An appointment with no tech stays unassigned. Invoice already requires a technician number on every labor line.
+          const carriedTech = booked ? (booked.techId ?? "").trim() : (shop.techs[0]?.id ?? "");
           const id = shop.createOrder({
             customerId: nextCustomer,
             vehicleId: nextVehicle,
@@ -121,7 +127,7 @@ function NewOrderForm({
                 hours: op.hours,
                 rate: rateFor(op.payType, shop.payTypes),
                 payType: op.payType,
-                techId: shop.techs[0]?.id ?? "",
+                techId: carriedTech,
               }];
             }),
           });
@@ -141,7 +147,7 @@ function NewOrderForm({
                   setVehicleId(first?.id ?? "");
                 }}
               >
-                {shop.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                {shop.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows)}</option>)}
               </select>
             </Field>
             <Field label="Vehicle">
