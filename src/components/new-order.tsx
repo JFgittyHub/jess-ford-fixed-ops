@@ -3,7 +3,6 @@ import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { rateFor } from "@/lib/pay";
 import { useShop } from "@/lib/store";
-import { useSession } from "@/lib/session";
 import { Button, Field, Modal } from "./ui";
 
 type DraftLine = { id: string; concern: string };
@@ -14,19 +13,49 @@ function draftLine(concern = ""): DraftLine {
   return { id: `d${draftSeq}`, concern };
 }
 
-export function NewOrder({
+type NewOrderPreset = {
+  customerId?: string;
+  vehicleId?: string;
+  advisorId?: string;
+  concern?: string;
+  lines?: { concern: string }[];
+  laborOpIds?: string[];
+  appointmentId?: string;
+};
+
+function presetIdentity(preset?: NewOrderPreset) {
+  return [
+    preset?.appointmentId ?? "",
+    preset?.customerId ?? "",
+    preset?.vehicleId ?? "",
+    preset?.advisorId ?? "",
+    preset?.concern ?? "",
+    (preset?.lines ?? []).map((line) => line.concern).join("\n"),
+    (preset?.laborOpIds ?? []).join(","),
+  ].join("\u001f");
+}
+
+export function NewOrder(props: {
+  open: boolean;
+  onClose: () => void;
+  preset?: NewOrderPreset;
+}) {
+  // The dialog stays mounted on the schedule and marketing pages. A fresh key
+  // re-reads the appointment or customer that was just passed in.
+  return <NewOrderForm key={props.open ? presetIdentity(props.preset) : "closed"} {...props} />;
+}
+
+function NewOrderForm({
   open,
   onClose,
   preset,
 }: {
   open: boolean;
   onClose: () => void;
-  preset?: { customerId?: string; vehicleId?: string; advisorId?: string; concern?: string; lines?: { concern: string }[]; laborOpIds?: string[]; appointmentId?: string };
+  preset?: NewOrderPreset;
 }) {
   const shop = useShop();
-  const { session } = useSession();
-  const lockedAdvisor = session?.role === "advisor" ? session.id : "";
-  const [mode, setMode] = useState<"existing" | "new">(preset?.customerId ? "existing" : "existing");
+  const [mode, setMode] = useState<"existing" | "new">("existing");
   const [customerId, setCustomerId] = useState(preset?.customerId ?? shop.customers[0]?.id ?? "");
   const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const [vehicleId, setVehicleId] = useState(preset?.vehicleId ?? vehicles[0]?.id ?? "");
@@ -78,7 +107,7 @@ export function NewOrder({
           const id = shop.createOrder({
             customerId: nextCustomer,
             vehicleId: nextVehicle,
-            advisorId: lockedAdvisor || advisorId,
+            advisorId,
             lines: written.map((concern) => ({ concern })),
             mileage: Number(mileage) || 0,
             mileageOut: mileageOut.trim() === "" ? null : Math.max(0, Number(mileageOut) || 0),
@@ -132,7 +161,7 @@ export function NewOrder({
           </>
         )}
         <Field label="Advisor">
-          <select className="field" value={lockedAdvisor || advisorId} disabled={Boolean(lockedAdvisor)} onChange={(event) => setAdvisorId(event.target.value)}>
+          <select className="field" value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
             {shop.advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
           </select>
         </Field>

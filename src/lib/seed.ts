@@ -1,5 +1,5 @@
 import { closedRecord } from "./metrics";
-import { bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, money2, padDay, snapHalfHour } from "./format";
+import { addDays, bayFromStatus, daysBetween, dayOfMonth, DEFAULT_FEES, DEFAULT_TAX_RATE, money2, monthKey, padDay, snapHalfHour, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter } from "./jobs";
 import { demoSheet } from "./mpi";
 import { defaultPayTypes } from "./pay";
@@ -171,36 +171,75 @@ function pickJob(rng: () => number) {
   return JOBS[0];
 }
 
-function workingDaysThroughSaturday() {
+/** The original sample month was anchored on Monday, October 19, 2026. */
+const SAMPLE_ANCHOR = "2026-10-19";
+
+function shopDate(iso: string) {
+  return addDays(today(), daysBetween(SAMPLE_ANCHOR, iso));
+}
+
+function shopStamp(iso: string) {
+  const time = iso.split("T")[1] ?? "00:00:00";
+  return `${shopDate(iso.slice(0, 10))}T${time}`;
+}
+
+/** Keep sample bills inside the current month, and never in the future. */
+function expenseOn(iso: string) {
+  const shifted = shopDate(iso);
+  if (shifted.slice(0, 7) === monthKey() && shifted <= today()) return shifted;
+  const day = Number(iso.slice(8, 10));
+  if (!Number.isFinite(day) || day > dayOfMonth()) return null;
+  return padDay(day);
+}
+
+function baseSettings() {
+  return {
+    storeName: "Jess Ford",
+    city: "Washington",
+    phone: "",
+    address: "",
+    cpRate: 189,
+    warrantyRate: 168,
+    internalRate: 140,
+    targetAbsorption: 1,
+    targetElr: 176,
+    policyGuide: 0.02,
+    fees: DEFAULT_FEES.map((line) => ({ ...line })),
+    taxRate: DEFAULT_TAX_RATE,
+  };
+}
+
+function workingDaysBeforeToday() {
+  const [year, month, day] = today().split("-").map(Number);
   const days: number[] = [];
-  for (let day = 1; day <= 17; day += 1) {
-    const wd = new Date(Date.UTC(2026, 9, day)).getUTCDay();
-    if (wd !== 0) days.push(day);
+  for (let cursor = 1; cursor < day; cursor += 1) {
+    const weekday = new Date(Date.UTC(year, month - 1, cursor)).getUTCDay();
+    if (weekday !== 0) days.push(cursor);
   }
   return days;
 }
 
 function buildParts(): PartSku[] {
   return [
-    { id: "oil", number: "BL-5W30-5", description: "Synthetic blend 5W-30, 5 qt", bin: "A-12", onHand: 84, onOrder: 24, cost: 22.4, list: 41.95, lastSale: "2026-10-17", source: "Motorcraft-type" },
-    { id: "filter", number: "BL-FIL-500", description: "Spin-on oil filter", bin: "A-14", onHand: 110, onOrder: 36, cost: 4.15, list: 11.49, lastSale: "2026-10-17", source: "Motorcraft-type" },
-    { id: "air", number: "BL-AIR-216", description: "Engine air filter, truck", bin: "A-18", onHand: 28, onOrder: 12, cost: 11.2, list: 28.95, lastSale: "2026-10-16", source: "Motorcraft-type" },
-    { id: "cabin", number: "BL-CAB-79", description: "Cabin air filter", bin: "A-19", onHand: 34, onOrder: 12, cost: 8.4, list: 24.5, lastSale: "2026-10-17", source: "Motorcraft-type" },
-    { id: "pads", number: "BL-BRK-F15", description: "Front brake pad set, F-150", bin: "B-04", onHand: 11, onOrder: 4, cost: 46, list: 118, lastSale: "2026-10-15", source: "Factory" },
-    { id: "pads-r", number: "BL-BRK-R15", description: "Rear brake pad set, F-150", bin: "B-05", onHand: 9, onOrder: 4, cost: 38, list: 96, lastSale: "2026-10-14", source: "Factory" },
-    { id: "rotors", number: "BL-ROT-340", description: "Front brake rotor", bin: "B-08", onHand: 14, onOrder: 8, cost: 58, list: 142, lastSale: "2026-10-15", source: "Factory" },
-    { id: "plugs", number: "BL-SP-515", description: "Spark plug, each", bin: "C-02", onHand: 72, onOrder: 24, cost: 6.8, list: 16.25, lastSale: "2026-10-11", source: "Motorcraft-type" },
-    { id: "def", number: "BL-DEF-2", description: "Diesel exhaust fluid, 2.5 gal", bin: "BULK", onHand: 16, onOrder: 8, cost: 11, list: 24.95, lastSale: "2026-10-17", source: "Motorcraft-type" },
-    { id: "fuel", number: "BL-FUEL-67", description: "Diesel fuel filter kit", bin: "C-11", onHand: 6, onOrder: 2, cost: 42, list: 98, lastSale: "2026-10-09", source: "Factory" },
-    { id: "coolant", number: "BL-CLN-Y", description: "Yellow predilute coolant, gal", bin: "BULK", onHand: 22, onOrder: 12, cost: 14, list: 29.5, lastSale: "2026-10-12", source: "Motorcraft-type" },
-    { id: "battery", number: "BL-BAT-H7", description: "H7 battery, truck", bin: "D-01", onHand: 7, onOrder: 4, cost: 112, list: 229, lastSale: "2026-10-10", source: "Motorcraft-type" },
-    { id: "wiper", number: "BL-WIP-22", description: "Beam wiper blade", bin: "A-03", onHand: 30, onOrder: 12, cost: 7.5, list: 19.95, lastSale: "2026-10-16", source: "Other" },
-    { id: "fluid", number: "BL-ATF-LV", description: "LV transmission fluid, qt", bin: "BULK", onHand: 40, onOrder: 12, cost: 8.9, list: 18.5, lastSale: "2026-10-08", source: "Motorcraft-type" },
-    { id: "purge", number: "BL-PUR-88", description: "Purge valve", bin: "SPORD", onHand: 0, onOrder: 1, cost: 64, list: 148, lastSale: "2026-09-02", source: "Factory" },
-    { id: "trans", number: "BL-10R80", description: "10-speed transmission assembly", bin: "CAGE-1", onHand: 1, onOrder: 0, cost: 3180, list: 4680, lastSale: "2026-04-12", source: "Factory" },
-    { id: "hose", number: "BL-HSE-TR", description: "Transmission cooler hose kit", bin: "C-22", onHand: 6, onOrder: 0, cost: 74, list: 168, lastSale: "2025-12-02", source: "Factory" },
-    { id: "cooler", number: "BL-CLR-41", description: "Transmission cooler", bin: "CAGE-2", onHand: 2, onOrder: 0, cost: 410, list: 720, lastSale: "2026-02-01", source: "Factory" },
-    { id: "clips", number: "BL-CLP-19", description: "Fender liner clip, pack of 10", bin: "Z-04", onHand: 40, onOrder: 0, cost: 9, list: 22, lastSale: "2025-09-18", source: "Other" },
+    { id: "oil", number: "BL-5W30-5", description: "Synthetic blend 5W-30, 5 qt", bin: "A-12", onHand: 84, onOrder: 24, cost: 22.4, list: 41.95, lastSale: shopDate("2026-10-17"), source: "Motorcraft-type" },
+    { id: "filter", number: "BL-FIL-500", description: "Spin-on oil filter", bin: "A-14", onHand: 110, onOrder: 36, cost: 4.15, list: 11.49, lastSale: shopDate("2026-10-17"), source: "Motorcraft-type" },
+    { id: "air", number: "BL-AIR-216", description: "Engine air filter, truck", bin: "A-18", onHand: 28, onOrder: 12, cost: 11.2, list: 28.95, lastSale: shopDate("2026-10-16"), source: "Motorcraft-type" },
+    { id: "cabin", number: "BL-CAB-79", description: "Cabin air filter", bin: "A-19", onHand: 34, onOrder: 12, cost: 8.4, list: 24.5, lastSale: shopDate("2026-10-17"), source: "Motorcraft-type" },
+    { id: "pads", number: "BL-BRK-F15", description: "Front brake pad set, F-150", bin: "B-04", onHand: 11, onOrder: 4, cost: 46, list: 118, lastSale: shopDate("2026-10-15"), source: "Factory" },
+    { id: "pads-r", number: "BL-BRK-R15", description: "Rear brake pad set, F-150", bin: "B-05", onHand: 9, onOrder: 4, cost: 38, list: 96, lastSale: shopDate("2026-10-14"), source: "Factory" },
+    { id: "rotors", number: "BL-ROT-340", description: "Front brake rotor", bin: "B-08", onHand: 14, onOrder: 8, cost: 58, list: 142, lastSale: shopDate("2026-10-15"), source: "Factory" },
+    { id: "plugs", number: "BL-SP-515", description: "Spark plug, each", bin: "C-02", onHand: 72, onOrder: 24, cost: 6.8, list: 16.25, lastSale: shopDate("2026-10-11"), source: "Motorcraft-type" },
+    { id: "def", number: "BL-DEF-2", description: "Diesel exhaust fluid, 2.5 gal", bin: "BULK", onHand: 16, onOrder: 8, cost: 11, list: 24.95, lastSale: shopDate("2026-10-17"), source: "Motorcraft-type" },
+    { id: "fuel", number: "BL-FUEL-67", description: "Diesel fuel filter kit", bin: "C-11", onHand: 6, onOrder: 2, cost: 42, list: 98, lastSale: shopDate("2026-10-09"), source: "Factory" },
+    { id: "coolant", number: "BL-CLN-Y", description: "Yellow predilute coolant, gal", bin: "BULK", onHand: 22, onOrder: 12, cost: 14, list: 29.5, lastSale: shopDate("2026-10-12"), source: "Motorcraft-type" },
+    { id: "battery", number: "BL-BAT-H7", description: "H7 battery, truck", bin: "D-01", onHand: 7, onOrder: 4, cost: 112, list: 229, lastSale: shopDate("2026-10-10"), source: "Motorcraft-type" },
+    { id: "wiper", number: "BL-WIP-22", description: "Beam wiper blade", bin: "A-03", onHand: 30, onOrder: 12, cost: 7.5, list: 19.95, lastSale: shopDate("2026-10-16"), source: "Other" },
+    { id: "fluid", number: "BL-ATF-LV", description: "LV transmission fluid, qt", bin: "BULK", onHand: 40, onOrder: 12, cost: 8.9, list: 18.5, lastSale: shopDate("2026-10-08"), source: "Motorcraft-type" },
+    { id: "purge", number: "BL-PUR-88", description: "Purge valve", bin: "SPORD", onHand: 0, onOrder: 1, cost: 64, list: 148, lastSale: shopDate("2026-09-02"), source: "Factory" },
+    { id: "trans", number: "BL-10R80", description: "10-speed transmission assembly", bin: "CAGE-1", onHand: 1, onOrder: 0, cost: 3180, list: 4680, lastSale: shopDate("2026-04-12"), source: "Factory" },
+    { id: "hose", number: "BL-HSE-TR", description: "Transmission cooler hose kit", bin: "C-22", onHand: 6, onOrder: 0, cost: 74, list: 168, lastSale: shopDate("2025-12-02"), source: "Factory" },
+    { id: "cooler", number: "BL-CLR-41", description: "Transmission cooler", bin: "CAGE-2", onHand: 2, onOrder: 0, cost: 410, list: 720, lastSale: shopDate("2026-02-01"), source: "Factory" },
+    { id: "clips", number: "BL-CLP-19", description: "Fender liner clip, pack of 10", bin: "Z-04", onHand: 40, onOrder: 0, cost: 9, list: 22, lastSale: shopDate("2025-09-18"), source: "Other" },
   ];
 }
 
@@ -223,39 +262,69 @@ function lineParts(job: Job, sku: Map<string, PartSku>, pay: PayType, roKey: str
   return lines;
 }
 
-export function createSeed(): ShopData {
-  const settings = {
-    storeName: "Jess Ford",
-    city: "Washington",
-    phone: "",
-    address: "",
-    cpRate: 189,
-    warrantyRate: 168,
-    internalRate: 140,
-    targetAbsorption: 1,
-    targetElr: 176,
-    policyGuide: 0.02,
-    fees: DEFAULT_FEES.map((line) => ({ ...line })),
-    taxRate: DEFAULT_TAX_RATE,
-    adminPassword: "admin",
+export function createEmptyShop(): ShopData {
+  const settings = baseSettings();
+  const budgets = [
+    { id: "pol", department: "service" as const, category: "Policy adjustments" },
+    { id: "sup", department: "service" as const, category: "Shop supplies unrecovered" },
+    { id: "lau", department: "service" as const, category: "Laundry and uniforms" },
+    { id: "tool", department: "service" as const, category: "Small tools" },
+    { id: "train", department: "service" as const, category: "Training" },
+    { id: "ads", department: "service" as const, category: "Clinics and advertising" },
+    { id: "equip", department: "service" as const, category: "Equipment repair" },
+    { id: "misc", department: "service" as const, category: "Miscellaneous service" },
+    { id: "obs", department: "parts" as const, category: "Obsolescence write-down" },
+    { id: "frt", department: "parts" as const, category: "Freight unrecovered" },
+    { id: "psup", department: "parts" as const, category: "Parts counter supplies" },
+    { id: "ppol", department: "parts" as const, category: "Parts policy" },
+  ];
+  const overhead = [
+    { id: "oh-adv", name: "Advisors and service office" },
+    { id: "oh-pts", name: "Parts salaries" },
+    { id: "oh-occ", name: "Occupancy charged to fixed ops" },
+    { id: "oh-ins", name: "Insurance and admin benefits" },
+    { id: "oh-utl", name: "Utilities" },
+  ];
+  return {
+    dataset: "shop",
+    settings,
+    advisors: [],
+    techs: [],
+    customers: [],
+    vehicles: [],
+    parts: [],
+    laborOps: [],
+    payTypes: defaultPayTypes(settings),
+    orders: [],
+    closedHistory: [],
+    timeLogs: [],
+    appointments: [],
+    expenses: [],
+    budgets: budgets.map((row) => ({ ...row, monthly: 0 })),
+    overhead: overhead.map((row) => ({ ...row, monthly: 0 })),
+    campaigns: [],
   };
+}
+
+export function createSeed(): ShopData {
+  const settings = baseSettings();
 
   const advisors: Advisor[] = [
-    { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3, password: "21" },
-    { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2, password: "14" },
-    { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2, password: "8" },
-    { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2, password: "30" },
+    { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3 },
+    { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2 },
+    { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2 },
+    { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2 },
   ];
 
   const techs: Tech[] = [
-    { id: "marcus", number: "41", name: "Marcus Hale", skill: "master", board: "main", payStyle: "flat", flagRate: 36, hourlyRate: 36, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5, password: "41" },
-    { id: "elena", number: "18", name: "Elena Voss", skill: "a", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4, password: "18" },
-    { id: "andre", number: "7", name: "Andre Brooks", skill: "diesel", board: "main", payStyle: "flat", flagRate: 33, hourlyRate: 33, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 3, password: "7" },
-    { id: "chris", number: "23", name: "Chris Dalton", skill: "b", board: "main", payStyle: "flat", flagRate: 27, hourlyRate: 27, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4.5, password: "23" },
-    { id: "dana", number: "15", name: "Dana Whitfield", skill: "b", board: "none", payStyle: "hourly", flagRate: 26, hourlyRate: 29, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 4, password: "15" },
-    { id: "priya", number: "33", name: "Priya Shah", skill: "a", board: "internal", payStyle: "flat", flagRate: 28, hourlyRate: 28, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 2.5, password: "33" },
-    { id: "luis", number: "4", name: "Luis Ortega", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4, password: "4" },
-    { id: "sam", number: "11", name: "Sam Okonkwo", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5, password: "11" },
+    { id: "marcus", number: "41", name: "Marcus Hale", skill: "master", board: "main", payStyle: "flat", flagRate: 36, hourlyRate: 36, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
+    { id: "elena", number: "18", name: "Elena Voss", skill: "a", board: "main", payStyle: "flat", flagRate: 32, hourlyRate: 32, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4 },
+    { id: "andre", number: "7", name: "Andre Brooks", skill: "diesel", board: "main", payStyle: "flat", flagRate: 33, hourlyRate: 33, availableHoursMonth: 110, clockedHoursMonth: 0, clockedToday: 3 },
+    { id: "chris", number: "23", name: "Chris Dalton", skill: "b", board: "main", payStyle: "flat", flagRate: 27, hourlyRate: 27, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 4.5 },
+    { id: "dana", number: "15", name: "Dana Whitfield", skill: "b", board: "none", payStyle: "hourly", flagRate: 26, hourlyRate: 29, availableHoursMonth: 96, clockedHoursMonth: 0, clockedToday: 4 },
+    { id: "priya", number: "33", name: "Priya Shah", skill: "a", board: "internal", payStyle: "flat", flagRate: 28, hourlyRate: 28, availableHoursMonth: 112, clockedHoursMonth: 0, clockedToday: 2.5 },
+    { id: "luis", number: "4", name: "Luis Ortega", skill: "express", board: "express", payStyle: "hourly", flagRate: 22, hourlyRate: 24, availableHoursMonth: 122, clockedHoursMonth: 0, clockedToday: 4 },
+    { id: "sam", number: "11", name: "Sam Okonkwo", skill: "quick", board: "express", payStyle: "hourly", flagRate: 20, hourlyRate: 22, availableHoursMonth: 118, clockedHoursMonth: 0, clockedToday: 3.5 },
   ];
 
   const customers = NAMES.map((name, i) => ({
@@ -283,8 +352,9 @@ export function createSeed(): ShopData {
   const orders: Array<Omit<RepairOrder, "bay" | "mileageOut" | "fees" | "taxRate">> = [];
   let seq = 241200;
 
-  for (const day of workingDaysThroughSaturday()) {
-    const wd = new Date(Date.UTC(2026, 9, day)).getUTCDay();
+  for (const day of workingDaysBeforeToday()) {
+    const [year, month] = today().split("-").map(Number);
+    const wd = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
     const count = wd === 6 ? 16 + Math.floor(rng() * 5) : 26 + Math.floor(rng() * 8);
     for (let n = 0; n < count; n += 1) {
       seq += 1;
@@ -369,7 +439,7 @@ export function createSeed(): ShopData {
     {
       id: "open-helen",
       number: seq + 1,
-      openedOn: "2026-10-19",
+      openedOn: shopDate("2026-10-19"),
       promiseTime: "14:00",
       status: "working",
       advisorId: "megan",
@@ -391,7 +461,7 @@ export function createSeed(): ShopData {
     {
       id: "open-pat",
       number: seq + 2,
-      openedOn: "2026-10-19",
+      openedOn: shopDate("2026-10-19"),
       promiseTime: "11:30",
       status: "ready",
       advisorId: "alicia",
@@ -418,7 +488,7 @@ export function createSeed(): ShopData {
     {
       id: "open-carl",
       number: seq + 3,
-      openedOn: "2026-10-19",
+      openedOn: shopDate("2026-10-19"),
       promiseTime: "10:00",
       status: "ready",
       advisorId: "derek",
@@ -437,7 +507,7 @@ export function createSeed(): ShopData {
     {
       id: "open-sandra",
       number: seq + 4,
-      openedOn: "2026-10-19",
+      openedOn: shopDate("2026-10-19"),
       promiseTime: "15:00",
       status: "open",
       advisorId: "jordan",
@@ -454,7 +524,7 @@ export function createSeed(): ShopData {
     {
       id: "open-ruth",
       number: seq + 5,
-      openedOn: "2026-10-17",
+      openedOn: shopDate("2026-10-17"),
       promiseTime: "16:30",
       status: "working",
       advisorId: "jordan",
@@ -479,7 +549,7 @@ export function createSeed(): ShopData {
     {
       id: "open-malik",
       number: seq + 6,
-      openedOn: "2026-10-15",
+      openedOn: shopDate("2026-10-15"),
       promiseTime: "17:00",
       status: "parts",
       advisorId: "megan",
@@ -500,7 +570,7 @@ export function createSeed(): ShopData {
     {
       id: "open-owen",
       number: seq + 7,
-      openedOn: "2026-10-16",
+      openedOn: shopDate("2026-10-16"),
       promiseTime: "",
       status: "working",
       advisorId: "jordan",
@@ -521,7 +591,7 @@ export function createSeed(): ShopData {
     {
       id: "open-frank",
       number: seq + 8,
-      openedOn: "2026-10-13",
+      openedOn: shopDate("2026-10-13"),
       promiseTime: "12:00",
       status: "parts",
       advisorId: "derek",
@@ -554,7 +624,7 @@ export function createSeed(): ShopData {
     orderId: string | null,
     techId: string,
     opcodes: string[] = [],
-    date = "2026-10-19",
+    date = shopDate("2026-10-19"),
   ): Appointment {
     const lines = concerns.map((concern, index) => ({ id: `${id}-${lineLetter(index).toLowerCase()}`, code: lineLetter(index), concern }));
     return {
@@ -572,11 +642,11 @@ export function createSeed(): ShopData {
     appt("a3", "07:45", 90, "c9", "v9", "alicia", ["30,000-mile service"], "waiter", "in_shop", "open-pat", "priya", ["LOF", "CABIN"]),
     appt("a4", "08:15", 60, "c16", "v16", "derek", ["Service campaign update"], "express", "in_shop", "open-carl", "sam", ["CAMP"]),
     appt("a5", "08:40", 120, "c7", "v7", "jordan", ["Rattle over bumps", "Check the front alignment"], "drop", "in_shop", "open-sandra", "elena", ["WNOI", "ALIGN"]),
-    appt("a6", "09:10", 60, "c12", "v12", "megan", ["Oil and rotation"], "express", "scheduled", null, "marcus", ["LOF", "ROT"], "2026-10-19"),
-    appt("a7", "09:40", 150, "c13", "v13", "jordan", ["Diesel service", "DEF light on"], "drop", "scheduled", null, "andre", ["DSL"], "2026-10-20"),
-    appt("a8", "10:30", 120, "c6", "v6", "derek", ["Clunk from the front end"], "drop", "scheduled", null, "marcus", ["DIAG"], "2026-10-20"),
-    appt("a9", "11:00", 90, "c15", "v15", "alicia", ["Oil change, waiter"], "waiter", "scheduled", null, "luis", ["LOF"], "2026-10-21"),
-    appt("a10", "13:00", 180, "c23", "v23", "jordan", ["AC blows warm", "Check the cabin filter"], "loaner", "scheduled", null, "chris", ["WHVAC", "CABIN"], "2026-10-22"),
+    appt("a6", "09:10", 60, "c12", "v12", "megan", ["Oil and rotation"], "express", "scheduled", null, "marcus", ["LOF", "ROT"], shopDate("2026-10-19")),
+    appt("a7", "09:40", 150, "c13", "v13", "jordan", ["Diesel service", "DEF light on"], "drop", "scheduled", null, "andre", ["DSL"], shopDate("2026-10-20")),
+    appt("a8", "10:30", 120, "c6", "v6", "derek", ["Clunk from the front end"], "drop", "scheduled", null, "marcus", ["DIAG"], shopDate("2026-10-20")),
+    appt("a9", "11:00", 90, "c15", "v15", "alicia", ["Oil change, waiter"], "waiter", "scheduled", null, "luis", ["LOF"], shopDate("2026-10-21")),
+    appt("a10", "13:00", 180, "c23", "v23", "jordan", ["AC blows warm", "Check the cabin filter"], "loaner", "scheduled", null, "chris", ["WHVAC", "CABIN"], shopDate("2026-10-22")),
   ];
 
   const budgets = [
@@ -595,22 +665,22 @@ export function createSeed(): ShopData {
   ];
 
   const expenses: ExpenseTxn[] = [
-    { id: "e1", budgetId: "pol", date: "2026-10-03", vendor: "Customer goodwill", amount: 1850, note: "Repeat brake visit written off" },
-    { id: "e2", budgetId: "pol", date: "2026-10-08", vendor: "Customer goodwill", amount: 960, note: "Comeback alignment, no charge" },
-    { id: "e3", budgetId: "pol", date: "2026-10-14", vendor: "Enterprise", amount: 1420, note: "Rental while waiting on a part" },
-    { id: "e4", budgetId: "pol", date: "2026-10-16", vendor: "Customer goodwill", amount: 780, note: "Deductible assistance" },
-    { id: "e5", budgetId: "sup", date: "2026-10-02", vendor: "Shop supply house", amount: 640, note: "Brake clean, gloves, nuts" },
-    { id: "e6", budgetId: "sup", date: "2026-10-10", vendor: "Cintas", amount: 410, note: "Shop towels" },
-    { id: "e7", budgetId: "lau", date: "2026-10-06", vendor: "Cintas", amount: 480, note: "Uniform service" },
-    { id: "e8", budgetId: "lau", date: "2026-10-17", vendor: "Cintas", amount: 420, note: "Uniform service" },
-    { id: "e9", budgetId: "tool", date: "2026-10-09", vendor: "Snap-on", amount: 860, note: "Torque wrench set for the diesel bay" },
-    { id: "e10", budgetId: "ads", date: "2026-10-04", vendor: "Local radio", amount: 600, note: "Service clinic deposit" },
-    { id: "e11", budgetId: "equip", date: "2026-10-11", vendor: "Hunter Engineering", amount: 2450, note: "Alignment rack sensor" },
-    { id: "e12", budgetId: "misc", date: "2026-10-07", vendor: "Petty cash", amount: 80, note: "Keys and a lock cylinder" },
-    { id: "e13", budgetId: "obs", date: "2026-10-15", vendor: "Inventory", amount: 3900, note: "Write-down on the 10-speed and cooler stock" },
-    { id: "e14", budgetId: "frt", date: "2026-10-07", vendor: "Dealer special order", amount: 540, note: "Freight not billed on the RO" },
-    { id: "e15", budgetId: "psup", date: "2026-10-05", vendor: "Office supply", amount: 210, note: "Counter forms and labels" },
-  ];
+    { id: "e1", budgetId: "pol", date: expenseOn("2026-10-03") ?? "", vendor: "Customer goodwill", amount: 1850, note: "Repeat brake visit written off" },
+    { id: "e2", budgetId: "pol", date: expenseOn("2026-10-08") ?? "", vendor: "Customer goodwill", amount: 960, note: "Comeback alignment, no charge" },
+    { id: "e3", budgetId: "pol", date: expenseOn("2026-10-14") ?? "", vendor: "Enterprise", amount: 1420, note: "Rental while waiting on a part" },
+    { id: "e4", budgetId: "pol", date: expenseOn("2026-10-16") ?? "", vendor: "Customer goodwill", amount: 780, note: "Deductible assistance" },
+    { id: "e5", budgetId: "sup", date: expenseOn("2026-10-02") ?? "", vendor: "Shop supply house", amount: 640, note: "Brake clean, gloves, nuts" },
+    { id: "e6", budgetId: "sup", date: expenseOn("2026-10-10") ?? "", vendor: "Cintas", amount: 410, note: "Shop towels" },
+    { id: "e7", budgetId: "lau", date: expenseOn("2026-10-06") ?? "", vendor: "Cintas", amount: 480, note: "Uniform service" },
+    { id: "e8", budgetId: "lau", date: expenseOn("2026-10-17") ?? "", vendor: "Cintas", amount: 420, note: "Uniform service" },
+    { id: "e9", budgetId: "tool", date: expenseOn("2026-10-09") ?? "", vendor: "Snap-on", amount: 860, note: "Torque wrench set for the diesel bay" },
+    { id: "e10", budgetId: "ads", date: expenseOn("2026-10-04") ?? "", vendor: "Local radio", amount: 600, note: "Service clinic deposit" },
+    { id: "e11", budgetId: "equip", date: expenseOn("2026-10-11") ?? "", vendor: "Hunter Engineering", amount: 2450, note: "Alignment rack sensor" },
+    { id: "e12", budgetId: "misc", date: expenseOn("2026-10-07") ?? "", vendor: "Petty cash", amount: 80, note: "Keys and a lock cylinder" },
+    { id: "e13", budgetId: "obs", date: expenseOn("2026-10-15") ?? "", vendor: "Inventory", amount: 3900, note: "Write-down on the 10-speed and cooler stock" },
+    { id: "e14", budgetId: "frt", date: expenseOn("2026-10-07") ?? "", vendor: "Dealer special order", amount: 540, note: "Freight not billed on the RO" },
+    { id: "e15", budgetId: "psup", date: expenseOn("2026-10-05") ?? "", vendor: "Office supply", amount: 210, note: "Counter forms and labels" },
+  ].filter((row) => row.date);
 
   const overhead = [
     { id: "oh-adv", name: "Advisors and service office", monthly: 62000 },
@@ -629,6 +699,7 @@ export function createSeed(): ShopData {
   }));
 
   return {
+    dataset: "sample",
     settings,
     advisors,
     techs,
@@ -644,10 +715,10 @@ export function createSeed(): ShopData {
       vehicles.find((row) => row.id === order.vehicleId),
     )),
     timeLogs: [
-      { id: "clk-luis-1", techId: "luis", orderId: "open-carl", startedAt: "2026-10-19T07:12:00", endedAt: "2026-10-19T08:05:00" },
-      { id: "clk-luis-2", techId: "luis", orderId: "open-pat", startedAt: "2026-10-19T08:10:00", endedAt: null },
-      { id: "clk-andre", techId: "andre", orderId: "open-ruth", startedAt: "2026-10-19T07:40:00", endedAt: null },
-      { id: "clk-chris", techId: "chris", orderId: "open-helen", startedAt: "2026-10-19T09:05:00", endedAt: "2026-10-19T10:20:00" },
+      { id: "clk-luis-1", techId: "luis", orderId: "open-carl", startedAt: shopStamp("2026-10-19T07:12:00"), endedAt: shopStamp("2026-10-19T08:05:00") },
+      { id: "clk-luis-2", techId: "luis", orderId: "open-pat", startedAt: shopStamp("2026-10-19T08:10:00"), endedAt: null },
+      { id: "clk-andre", techId: "andre", orderId: "open-ruth", startedAt: shopStamp("2026-10-19T07:40:00"), endedAt: null },
+      { id: "clk-chris", techId: "chris", orderId: "open-helen", startedAt: shopStamp("2026-10-19T09:05:00"), endedAt: shopStamp("2026-10-19T10:20:00") },
     ] satisfies TimeLog[],
     appointments: appointments.map((row) => ({
       ...row,

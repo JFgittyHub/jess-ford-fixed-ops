@@ -1,4 +1,4 @@
-import { daySpan, feeTotal, MONTH_KEY, paceRatio, punchHours, salesTax, SKILL_LABEL, usd } from "./format";
+import { daySpan, feeTotal, monthKey, paceRatio, punchHours, salesTax, SKILL_LABEL, usd } from "./format";
 import { doorRate, payKindOf } from "./pay";
 import type { Advisor, ClosedRecord, Customer, PayKind, RepairOrder, ShopData, Tech, TimeLog, Vehicle } from "./types";
 import { normalizeWa } from "./wa";
@@ -106,7 +106,7 @@ export interface Digest {
 }
 
 export function isSold(order: RepairOrder) {
-  return order.status === "invoiced" && (order.invoicedOn ?? "").startsWith(MONTH_KEY);
+  return order.status === "invoiced" && (order.invoicedOn ?? "").startsWith(monthKey());
 }
 
 export function isOpen(order: RepairOrder) {
@@ -254,7 +254,7 @@ export function digest(data: ShopData): Digest {
 
   const actualByBudget = new Map<string, number>();
   for (const txn of data.expenses) {
-    if (!txn.date.startsWith(MONTH_KEY)) continue;
+    if (!txn.date.startsWith(monthKey())) continue;
     actualByBudget.set(txn.budgetId, (actualByBudget.get(txn.budgetId) ?? 0) + txn.amount);
   }
   const budgetRows: BudgetRow[] = data.budgets.map((budget) => {

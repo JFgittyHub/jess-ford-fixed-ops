@@ -1,4 +1,7 @@
+import { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, ordinal, paceRatio, todayIso, todayLabel } from "./clock";
 import type { FeeLine } from "./types";
+
+export { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, ordinal, paceRatio, todayIso as today, todayLabel };
 
 export const DEFAULT_FEES: FeeLine[] = [
   { id: "shop", name: "Misc Shop Fee", amount: 8, basis: "percent", cap: 35 },
@@ -27,13 +30,6 @@ export function feeTotal(fees?: FeeLine[] | null, repair = 0) {
   return Math.round(fees.reduce((sum, line) => sum + feeCharge(line, repair), 0) * 100) / 100;
 }
 
-export const TODAY = "2026-10-19";
-export const MONTH_KEY = "2026-10";
-export const DAY_OF_MONTH = 19;
-export const DAYS_IN_MONTH = 31;
-export const DAY_LABEL = "Monday, October 19";
-export const MONTH_LABEL = "October 2026";
-
 export function snapHalfHour(time: string) {
   const [h, m] = time.split(":").map(Number);
   const total = Math.round(((h || 0) * 60 + (m || 0)) / 30) * 30;
@@ -56,10 +52,6 @@ export const PROMISE_TIMES = Array.from({ length: 24 }, (_, index) => {
   const mins = 7 * 60 + index * 30;
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 });
-
-export function paceRatio() {
-  return DAY_OF_MONTH / DAYS_IN_MONTH;
-}
 
 export function usd(n: number, cents = false) {
   const sign = n < 0 ? "-" : "";
@@ -84,10 +76,9 @@ export function money2(n: number) {
   return Math.round(n * 100) / 100;
 }
 
-export function daySpan(iso: string) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const [Y, M, D] = TODAY.split("-").map(Number);
-  return Math.round((Date.UTC(Y, M - 1, D) - Date.UTC(y, m - 1, d)) / 86400000);
+export function daySpan(iso: string, from = todayIso()) {
+  if (!iso) return 0;
+  return daysBetween(iso, from);
 }
 
 export function shortDate(iso: string) {
@@ -115,8 +106,11 @@ export function localStamp(date = new Date()) {
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
 }
 
-export function padDay(day: number) {
-  return `${MONTH_KEY}-${String(day).padStart(2, "0")}`;
+export function padDay(day: number, month = monthKey()) {
+  const [year, monthNum] = month.split("-").map(Number);
+  const dim = new Date(Date.UTC(year, monthNum, 0)).getUTCDate();
+  const clamped = Math.min(dim, Math.max(1, Math.trunc(day) || 1));
+  return `${month}-${String(clamped).padStart(2, "0")}`;
 }
 
 export const PAY_LABEL = {

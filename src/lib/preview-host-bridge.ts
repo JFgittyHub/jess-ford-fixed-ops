@@ -6,8 +6,10 @@
  */
 
 import { z } from "zod";
-import { CONNECTOR_TOKEN_READY_EVENT } from "./app-data/types";
 import { resolveParentEmbedderOrigin } from "./preview-embedder-origin";
+
+/** Kept so the preview bridge still announces connector readiness. No app page listens. */
+const CONNECTOR_TOKEN_READY_EVENT = "grok:connector-token-ready";
 
 export {
   isGrokEmbedderOrigin,

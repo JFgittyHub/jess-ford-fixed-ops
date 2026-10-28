@@ -1,12 +1,15 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
-import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, feeTotal, localStamp, TODAY } from "./format";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
-import { blankWa, normalizeWa, waLimit, type ExtraAuth, type WaRecord } from "./wa";
+import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
-import { laborCatalog, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
-import { closedRecord, closeGaps } from "./metrics";
+import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
+import { isDemoMode } from "./demo";
+import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
+import { bookRepairOrder, dropClosedHistory, invoiceRepairOrder, reopenRepairOrder, unbookRepairOrder } from "./ro";
+import { closedRecord } from "./metrics";
 import type { Advisor, Appointment, Campaign, ExpenseTxn, FeeLine, LaborLine, LaborOp, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, Tech, TechBoard } from "./types";
 
 export interface NewOrderInput {
@@ -32,11 +35,11 @@ interface ShopActions {
   setFocus: (id: string | null) => void;
   updateSettings: (patch: Partial<ShopData["settings"]>) => void;
   clockTech: (techId: string, hours: number) => void;
-  addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board" | "password">) => boolean;
-  updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board" | "password">>) => boolean;
+  addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">) => boolean;
+  updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">>) => boolean;
   removeTech: (id: string) => "ok" | "used";
-  addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "password">) => boolean;
-  updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "password">>) => boolean;
+  addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent">) => boolean;
+  updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent">>) => boolean;
   removeAdvisor: (id: string) => "ok" | "used";
   updateOrder: (orderId: string, patch: Partial<Pick<RepairOrder, "concern" | "mileage" | "mileageOut" | "promiseTime" | "advisorId" | "status" | "bay">>) => void;
   updateJob: (orderId: string, jobId: string, patch: Partial<Pick<JobLine, "concern" | "cause" | "correction">>) => void;
@@ -82,10 +85,41 @@ interface ShopActions {
   setBudget: (id: string, monthly: number) => void;
   setOverhead: (id: string, monthly: number) => void;
   sendCampaign: (input: Omit<Campaign, "id" | "sentOn">) => void;
-  resetDemo: () => void;
+  resetDemo: (confirmReplace?: boolean) => void;
+  clearShop: () => void;
 }
 
 export type ShopState = ShopData & ShopActions;
+
+const OPERATIONAL_KEYS = [
+  "advisors",
+  "techs",
+  "customers",
+  "vehicles",
+  "parts",
+  "laborOps",
+  "orders",
+  "closedHistory",
+  "timeLogs",
+  "appointments",
+  "expenses",
+  "campaigns",
+] as const satisfies readonly (keyof ShopData)[];
+
+/** Customers, roster, tickets, or other shop work. Empty budgets and pay types do not count. */
+export function shopHasOperationalData(state: ShopData): boolean {
+  return OPERATIONAL_KEYS.some((key) => state[key].length > 0);
+}
+
+/**
+ * The sample month may replace an empty shop, or reload data that is already
+ * the sample. A shop with real work stays put unless the caller confirms.
+ */
+export function sampleLoadAllowed(state: ShopData, confirmReplace = false): boolean {
+  if (state.dataset === "sample") return true;
+  if (!shopHasOperationalData(state)) return true;
+  return confirmReplace === true;
+}
 
 function uid(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -102,13 +136,6 @@ function isHeld(status: RoStatus) {
 
 function mapOrder(orders: RepairOrder[], orderId: string, edit: (order: RepairOrder) => RepairOrder) {
   return orders.map((order) => (order.id === orderId ? edit(order) : order));
-}
-
-function ticketOf(order: Pick<RepairOrder, "labor" | "parts" | "fees">) {
-  const labor = order.labor.reduce((sum, line) => sum + line.hours * line.rate, 0);
-  const parts = order.parts.reduce((sum, line) => sum + line.qty * line.price, 0);
-  const repair = labor + parts;
-  return repair + feeTotal(order.fees, repair);
 }
 
 function normalizeFees(value: unknown, keepShopFlat = false): FeeLine[] {
@@ -145,24 +172,78 @@ function normalizeFees(value: unknown, keepShopFlat = false): FeeLine[] {
   return DEFAULT_FEES.map((line) => ({ ...line }));
 }
 
-function fitsWa(order: RepairOrder, next: number) {
-  const limit = waLimit(normalizeWa(order.wa));
-  return limit !== null && next <= limit + 0.009;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function applyStock(parts: PartSku[], order: RepairOrder, direction: 1 | -1) {
-  return parts.map((part) => {
-    const qty = order.parts.filter((line) => line.partId === part.id).reduce((sum, line) => sum + line.qty, 0);
-    if (!qty) return part;
-    return {
-      ...part,
-      onHand: Math.max(0, part.onHand + direction * qty),
-      lastSale: direction === -1 ? TODAY : part.lastSale,
-    };
-  });
+/** Drop `password` and `adminPassword` anywhere in a saved blob. Nulls stay null. */
+export function stripPasswordKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((item) => stripPasswordKeys(item));
+  if (!isRecord(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "password" || key === "adminPassword") continue;
+    out[key] = stripPasswordKeys(child);
+  }
+  return out;
+}
+
+function containsPasswordKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some((item) => containsPasswordKey(item));
+  if (!isRecord(value)) return false;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "password" || key === "adminPassword" || containsPasswordKey(child)) return true;
+  }
+  return false;
+}
+
+function dropStaffPassword<T>(row: T): T {
+  if (!isRecord(row)) return row;
+  const { password: _password, ...rest } = row as T & { password?: string };
+  return rest as T;
+}
+
+function withoutSavedPasswords(saved: Partial<ShopData>): Partial<ShopData> {
+  return stripPasswordKeys(saved) as Partial<ShopData>;
+}
+
+function rewriteWithoutPasswords(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!containsPasswordKey(parsed)) return raw;
+    return JSON.stringify(stripPasswordKeys(parsed));
+  } catch {
+    return raw;
+  }
+}
+
+/** Every read and write drops leftover passwords, including a blob already marked version 28. */
+function passwordStrippingStorage(backing: ShopStorage): ShopStorage {
+  return {
+    getItem(key) {
+      const raw = backing.getItem(key);
+      if (key !== SHOP_STORAGE_KEY || raw == null) return raw;
+      const cleaned = rewriteWithoutPasswords(raw);
+      if (cleaned !== raw) {
+        try {
+          backing.setItem(key, cleaned);
+        } catch {
+          /* storage unavailable */
+        }
+      }
+      return cleaned;
+    },
+    setItem(key, value) {
+      backing.setItem(key, key === SHOP_STORAGE_KEY ? rewriteWithoutPasswords(value) : value);
+    },
+    removeItem(key) {
+      backing.removeItem(key);
+    },
+  };
 }
 
 const dataKeys: (keyof ShopData)[] = [
+  "dataset",
   "settings",
   "advisors",
   "techs",
@@ -181,10 +262,135 @@ const dataKeys: (keyof ShopData)[] = [
   "campaigns",
 ];
 
-export const useShop = create<ShopState>()(
-  persist(
-    (set) => ({
-      ...createSeed(),
+/** Persisted-shop load path. Staff passwords and the old admin password are removed on every branch, including a saved blob with no repair-order list. */
+export function migrateSavedShop(persisted: unknown): ShopState {
+  if (!persisted || typeof persisted !== "object") return persisted as ShopState;
+  const saved = withoutSavedPasswords(persisted as Partial<ShopData>);
+  if (!Array.isArray(saved.orders)) {
+    return {
+      ...saved,
+      dataset: saved.dataset === "sample" ? "sample" : "shop",
+    } as ShopState;
+  }
+  const techList = Array.isArray(saved.techs) ? saved.techs : [];
+  const vehicleList = Array.isArray(saved.vehicles) ? saved.vehicles : [];
+  return {
+    ...saved,
+    orders: saved.orders.filter((order) => order && typeof order === "object").map((order) => {
+      const prior = order as RepairOrder & { cause?: string; correction?: string; jobs?: JobLine[] };
+      const labor = Array.isArray(prior.labor) ? prior.labor : [];
+      const parts = Array.isArray(prior.parts) ? prior.parts.filter((line) => line && typeof line === "object") : [];
+      const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
+        ? prior.jobs
+        : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
+      const total = labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
+        + parts.reduce((sum, line) => sum + line.qty * line.price, 0);
+      const wa = normalizeWa(prior.wa);
+      const stamped = wa.choice
+        ? wa
+        : total > 0
+          ? { ...blankWa(), choice: "written" as const, initials: "on file", date: prior.openedOn, time: "08:00", estimate: money2(total) }
+          : wa;
+      return {
+        ...prior,
+        jobs,
+        concern: concernFromJobs(jobs) || prior.concern,
+        bay: prior.bay ?? bayFromStatus(prior.status),
+        mileageOut: prior.mileageOut ?? null,
+        fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, prior.status === "invoiced"),
+        taxRate: typeof prior.taxRate === "number" ? prior.taxRate : (typeof saved.settings?.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE),
+        inspection: prior.inspection ?? demoSheet(prior.id),
+        labor,
+        parts: parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
+        wa: stamped,
+      };
+    }),
+    laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
+    payTypes: Array.isArray(saved.payTypes) && saved.payTypes.length > 0 ? saved.payTypes : defaultPayTypes(saved.settings),
+    campaigns: Array.isArray(saved.campaigns) ? saved.campaigns : [],
+    dataset: saved.dataset === "sample" ? "sample" : "shop",
+    appointments: Array.isArray(saved.appointments)
+      ? saved.appointments.filter((row) => row && typeof row === "object").map((row) => {
+          const vehicle = vehicleList.find((item) => item.id === row.vehicleId);
+          const lines = Array.isArray(row.lines) && row.lines.length > 0
+            ? row.lines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
+            : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
+          const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
+          const known = techList.some((tech) => tech.id === row.techId) ? row.techId : "";
+          return {
+            ...row,
+            date: row.date ?? today(),
+            time: snapHalfHour(row.time ?? "07:00"),
+            minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : row.lane === "loaner" ? 180 : row.lane === "drop" ? 120 : row.lane === "waiter" ? 90 : 60,
+            lines,
+            concern: concernFromLines(lines) || row.concern,
+            vin: row.vin || vehicle?.vin || "",
+            laborOpIds: Array.isArray(row.laborOpIds) ? row.laborOpIds : [],
+            techId: known || fallback[row.id] || techList[0]?.id || "",
+          };
+        })
+      : saved.appointments,
+    settings: saved.settings
+      ? { ...saved.settings, phone: saved.settings.phone ?? "", address: saved.settings.address ?? "", fees: normalizeFees(saved.settings.fees), taxRate: typeof saved.settings.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE }
+      : saved.settings,
+    timeLogs: Array.isArray(saved.timeLogs) ? saved.timeLogs : [],
+    closedHistory: Array.isArray(saved.closedHistory)
+      ? saved.closedHistory
+      : (saved.orders ?? []).filter((order) => order && order.status === "invoiced").map((order) => closedRecord(
+          order,
+          saved.customers?.find((row) => row.id === order.customerId),
+          saved.vehicles?.find((row) => row.id === order.vehicleId),
+        )),
+    advisors: Array.isArray(saved.advisors)
+      ? saved.advisors.filter((advisor) => advisor && typeof advisor === "object").map((advisor, index) => {
+          const row = dropStaffPassword(advisor);
+          return {
+            ...row,
+            number: row.number || ADVISOR_NUMBERS[row.id] || String(index + 1),
+            base: typeof row.base === "number" ? row.base : 4200,
+            laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 5,
+            partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 2,
+          };
+        })
+      : saved.advisors,
+    techs: Array.isArray(saved.techs)
+      ? saved.techs.filter((tech) => tech && typeof tech === "object").map((tech, index) => {
+          const row = dropStaffPassword(tech);
+          return {
+            ...row,
+            number: row.number || TECH_NUMBERS[row.id] || String(index + 1),
+            board: row.board || ({ luis: "express", sam: "express", marcus: "main", elena: "main", andre: "main", chris: "main", priya: "internal", dana: "none" } satisfies Record<string, TechBoard>)[tech.id] || "main",
+          };
+        })
+      : saved.techs,
+  } as ShopState;
+}
+
+/** Rehydrate path. Strips passwords even when the blob is already version 28. */
+export function mergeSavedShop(persisted: unknown, current: ShopState): ShopState {
+  if (!persisted || typeof persisted !== "object") return current;
+  const saved = migrateSavedShop(persisted);
+  if (!saved || typeof saved !== "object") return current;
+  const data: Partial<ShopData> = {};
+  for (const key of dataKeys) {
+    if (key in saved) data[key] = saved[key] as never;
+  }
+  return { ...current, ...data };
+}
+
+export interface ShopStoreOptions {
+  /** Explicit demo flag. Defaults to `VITE_DEMO_MODE`. A development server is not demo mode. */
+  demoMode?: boolean;
+  /** Backing store. Demo mode never writes through it. */
+  storage?: ShopStorage;
+}
+
+export function createShopStore(options: ShopStoreOptions = {}) {
+  const demoMode = options.demoMode ?? isDemoMode();
+  return create<ShopState>()(
+    persist(
+      (set) => ({
+        ...(demoMode ? createSeed() : createEmptyShop()),
       focusOrderId: null,
       setFocus: (id) => set({ focusOrderId: id }),
       updateSettings: (patch) =>
@@ -215,8 +421,7 @@ export const useShop = create<ShopState>()(
       addTech: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
-        const password = input.password.trim();
-        if (!name || !number || !password) return false;
+        if (!name || !number) return false;
         let added = false;
         set((state) => {
           if (state.techs.some((tech) => tech.number === number)) return state;
@@ -233,7 +438,6 @@ export const useShop = create<ShopState>()(
             availableHoursMonth: 118,
             clockedHoursMonth: 0,
             clockedToday: 0,
-            password,
           };
           return { techs: [...state.techs, tech].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })) };
         });
@@ -246,19 +450,17 @@ export const useShop = create<ShopState>()(
           if (!current) return state;
           const number = patch.number === undefined ? current.number : patch.number.trim();
           const name = patch.name === undefined ? current.name : patch.name.trim();
-          const password = patch.password === undefined ? current.password : patch.password.trim();
-          if (!number || !name || !password) return state;
+          if (!number || !name) return state;
           if (state.techs.some((tech) => tech.id !== id && tech.number === number)) return state;
           updated = true;
           return {
             techs: state.techs.map((tech) =>
               tech.id === id
                 ? {
-                    ...tech,
+                    ...dropStaffPassword(tech),
                     ...patch,
                     number,
                     name,
-                    password,
                     flagRate: patch.flagRate === undefined ? tech.flagRate : money2(Math.max(0, patch.flagRate)),
                     hourlyRate: patch.hourlyRate === undefined ? tech.hourlyRate : money2(Math.max(0, patch.hourlyRate)),
                   }
@@ -282,8 +484,7 @@ export const useShop = create<ShopState>()(
       addAdvisor: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
-        const password = input.password.trim();
-        if (!name || !number || !password) return false;
+        if (!name || !number) return false;
         let added = false;
         set((state) => {
           if (state.advisors.some((advisor) => advisor.number === number)) return state;
@@ -295,7 +496,6 @@ export const useShop = create<ShopState>()(
             base: money2(Math.max(0, input.base)),
             laborPercent: Math.max(0, input.laborPercent),
             partsPercent: Math.max(0, input.partsPercent),
-            password,
           };
           return { advisors: [...state.advisors, advisor].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })) };
         });
@@ -308,19 +508,17 @@ export const useShop = create<ShopState>()(
           if (!current) return state;
           const number = patch.number === undefined ? current.number : patch.number.trim();
           const name = patch.name === undefined ? current.name : patch.name.trim();
-          const password = patch.password === undefined ? current.password : patch.password.trim();
-          if (!number || !name || !password) return state;
+          if (!number || !name) return state;
           if (state.advisors.some((advisor) => advisor.id !== id && advisor.number === number)) return state;
           updated = true;
           return {
             advisors: state.advisors.map((advisor) =>
               advisor.id === id
                 ? {
-                    ...advisor,
+                    ...dropStaffPassword(advisor),
                     ...patch,
                     number,
                     name,
-                    password,
                     base: patch.base === undefined ? advisor.base : money2(Math.max(0, patch.base)),
                     laborPercent: patch.laborPercent === undefined ? advisor.laborPercent : Math.max(0, patch.laborPercent),
                     partsPercent: patch.partsPercent === undefined ? advisor.partsPercent : Math.max(0, patch.partsPercent),
@@ -406,50 +604,47 @@ export const useShop = create<ShopState>()(
       invoiceOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status !== "booked" || !fitsWa(order, ticketOf(order)) || closeGaps(order, state.techs, state.advisors, state.timeLogs).length > 0) return state;
-          const parts = order.stockApplied ? state.parts : applyStock(state.parts, order, -1);
+          if (!order) return state;
+          const result = invoiceRepairOrder(order, state.parts, state.techs, state.advisors, state.timeLogs, today());
+          if (!result) return state;
           const copy = closedRecord(
-            { ...order, status: "invoiced", invoicedOn: TODAY },
+            result.order,
             state.customers.find((row) => row.id === order.customerId),
             state.vehicles.find((row) => row.id === order.vehicleId),
           );
           copy.id = uid("hist");
           return {
-            parts,
+            parts: result.parts,
             closedHistory: [copy, ...state.closedHistory],
-            orders: mapOrder(state.orders, orderId, (row) => ({
-              ...row,
-              status: "invoiced",
-              invoicedOn: TODAY,
-              stockApplied: true,
-            })),
+            orders: mapOrder(state.orders, orderId, () => result.order),
           };
         }),
       bookOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || isHeld(order.status) || !fitsWa(order, ticketOf(order))) return state;
-          return { orders: mapOrder(state.orders, orderId, (row) => ({ ...row, status: "booked" })) };
+          if (!order) return state;
+          const next = bookRepairOrder(order);
+          if (!next) return state;
+          return { orders: mapOrder(state.orders, orderId, () => next) };
         }),
       unbookOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status !== "booked") return state;
-          return { orders: mapOrder(state.orders, orderId, (row) => ({ ...row, status: "ready" })) };
+          if (!order) return state;
+          const next = unbookRepairOrder(order);
+          if (!next) return state;
+          return { orders: mapOrder(state.orders, orderId, () => next) };
         }),
       reopenOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status !== "invoiced") return state;
-          const parts = order.stockApplied ? applyStock(state.parts, order, 1) : state.parts;
+          if (!order) return state;
+          const result = reopenRepairOrder(order, state.parts);
+          if (!result) return state;
           return {
-            parts,
-            orders: mapOrder(state.orders, orderId, (row) => ({
-              ...row,
-              status: "ready",
-              invoicedOn: null,
-              stockApplied: false,
-            })),
+            parts: result.parts,
+            closedHistory: dropClosedHistory(state.closedHistory, orderId),
+            orders: mapOrder(state.orders, orderId, () => result.order),
           };
         }),
       addLabor: (orderId, line) =>
@@ -641,7 +836,7 @@ export const useShop = create<ShopState>()(
           const order: RepairOrder = {
             id,
             number,
-            openedOn: TODAY,
+            openedOn: today(),
             promiseTime: input.promiseTime,
             status: "open",
             bay: "dispatch",
@@ -739,7 +934,7 @@ export const useShop = create<ShopState>()(
           const vin = (input.vin || "").trim().toUpperCase();
           const row: Appointment = {
             ...input,
-            date: input.date || TODAY,
+            date: input.date || today(),
             time: snapHalfHour(input.time || "07:00"),
             minutes: Math.max(30, Math.round((input.minutes || 60) / 30) * 30),
             lines: kept,
@@ -790,112 +985,48 @@ export const useShop = create<ShopState>()(
             name: input.name.trim(),
             message: input.message.trim(),
             audience: input.audience,
-            sentOn: TODAY,
+            sentOn: today(),
             recipientIds: input.recipientIds,
           };
           return { campaigns: [row, ...state.campaigns] };
         }),
-      resetDemo: () => set({ ...createSeed(), focusOrderId: null }),
+      resetDemo: (confirmReplace) =>
+        set((state) => {
+          if (!sampleLoadAllowed(state, confirmReplace)) return state;
+          return {
+            ...createSeed(),
+            settings: state.settings,
+            focusOrderId: null,
+          };
+        }),
+      clearShop: () =>
+        set((state) => ({
+          ...createEmptyShop(),
+          settings: state.settings,
+          focusOrderId: null,
+        })),
     }),
-    {
-      name: "jess-ford-fixed-ops-v1",
-      version: 26,
-      skipHydration: true,
-      migrate: (persisted) => {
-        if (!persisted || typeof persisted !== "object") return persisted as ShopState;
-        const saved = persisted as Partial<ShopData>;
-        if (!Array.isArray(saved.orders)) return persisted as ShopState;
-        return {
-          ...saved,
-          orders: saved.orders.map((order) => {
-            const prior = order as RepairOrder & { cause?: string; correction?: string; jobs?: JobLine[] };
-            const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
-              ? prior.jobs
-              : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
-            const total = prior.labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
-              + prior.parts.reduce((sum, line) => sum + line.qty * line.price, 0);
-            const wa = normalizeWa(prior.wa);
-            const stamped = wa.choice
-              ? wa
-              : total > 0
-                ? { ...blankWa(), choice: "written" as const, initials: "on file", date: prior.openedOn, time: "08:00", estimate: money2(total) }
-                : wa;
-            return {
-              ...prior,
-              jobs,
-              concern: concernFromJobs(jobs) || prior.concern,
-              bay: prior.bay ?? bayFromStatus(prior.status),
-              mileageOut: prior.mileageOut ?? null,
-              fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, prior.status === "invoiced"),
-              taxRate: typeof prior.taxRate === "number" ? prior.taxRate : (typeof saved.settings?.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE),
-              inspection: prior.inspection ?? demoSheet(prior.id),
-              parts: prior.parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
-              wa: stamped,
-            };
-          }),
-          laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
-          payTypes: Array.isArray(saved.payTypes) && saved.payTypes.length > 0 ? saved.payTypes : defaultPayTypes(saved.settings),
-          campaigns: Array.isArray(saved.campaigns) ? saved.campaigns : [],
-          appointments: Array.isArray(saved.appointments)
-            ? saved.appointments.map((row) => {
-                const vehicle = saved.vehicles?.find((item) => item.id === row.vehicleId);
-                const lines = Array.isArray(row.lines) && row.lines.length > 0
-                  ? row.lines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
-                  : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
-                const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
-                const known = saved.techs?.some((tech) => tech.id === row.techId) ? row.techId : "";
-                return {
-                  ...row,
-                  date: row.date ?? "2026-10-19",
-                  time: snapHalfHour(row.time ?? "07:00"),
-                  minutes: typeof row.minutes === "number" && row.minutes >= 30 ? row.minutes : row.lane === "loaner" ? 180 : row.lane === "drop" ? 120 : row.lane === "waiter" ? 90 : 60,
-                  lines,
-                  concern: concernFromLines(lines) || row.concern,
-                  vin: row.vin || vehicle?.vin || "",
-                  laborOpIds: Array.isArray(row.laborOpIds) ? row.laborOpIds : [],
-                  techId: known || fallback[row.id] || saved.techs?.[0]?.id || "",
-                };
-              })
-            : saved.appointments,
-          settings: saved.settings
-            ? { ...saved.settings, phone: saved.settings.phone ?? "", address: saved.settings.address ?? "", fees: normalizeFees(saved.settings.fees), taxRate: typeof saved.settings.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE, adminPassword: saved.settings.adminPassword || "admin" }
-            : saved.settings,
-          timeLogs: Array.isArray(saved.timeLogs) ? saved.timeLogs : [],
-          closedHistory: Array.isArray(saved.closedHistory)
-            ? saved.closedHistory
-            : (saved.orders ?? []).filter((order) => order.status === "invoiced").map((order) => closedRecord(
-                order,
-                saved.customers?.find((row) => row.id === order.customerId),
-                saved.vehicles?.find((row) => row.id === order.vehicleId),
-              )),
-          advisors: Array.isArray(saved.advisors)
-            ? saved.advisors.map((advisor, index) => ({
-                ...advisor,
-                number: advisor.number || ADVISOR_NUMBERS[advisor.id] || String(index + 1),
-                password: advisor.password || advisor.number || ADVISOR_NUMBERS[advisor.id] || String(index + 1),
-                base: typeof advisor.base === "number" ? advisor.base : 4200,
-                laborPercent: typeof advisor.laborPercent === "number" ? advisor.laborPercent : 5,
-                partsPercent: typeof advisor.partsPercent === "number" ? advisor.partsPercent : 2,
-              }))
-            : saved.advisors,
-          techs: Array.isArray(saved.techs)
-            ? saved.techs.map((tech, index) => ({
-                ...tech,
-                number: tech.number || TECH_NUMBERS[tech.id] || String(index + 1),
-                password: tech.password || tech.number || TECH_NUMBERS[tech.id] || String(index + 1),
-                board: tech.board || ({ luis: "express", sam: "express", marcus: "main", elena: "main", andre: "main", chris: "main", priya: "internal", dana: "none" } satisfies Record<string, TechBoard>)[tech.id] || "main",
-              }))
-            : saved.techs,
-        } as ShopState;
+      {
+        name: SHOP_STORAGE_KEY,
+        storage: createJSONStorage(() => {
+          const backing = options.storage ?? browserLocalStorage();
+          return demoMode ? shopPersistStorage(true, backing) : passwordStrippingStorage(backing);
+        }),
+        version: 28,
+        skipHydration: true,
+        migrate: (persisted) => migrateSavedShop(persisted),
+        merge: (persisted, current) => mergeSavedShop(persisted, current as ShopState),
+        partialize: (state) => {
+          const saved: Partial<ShopData> = {};
+          for (const key of dataKeys) saved[key] = state[key] as never;
+          return saved as ShopState;
+        },
       },
-      partialize: (state) => {
-        const saved: Partial<ShopData> = {};
-        for (const key of dataKeys) saved[key] = state[key] as never;
-        return saved as ShopState;
-      },
-    },
-  ),
-);
+    ),
+  );
+}
+
+export const useShop = createShopStore();
 
 export function useShopHydrated() {
   return useShop.persist.hasHydrated();

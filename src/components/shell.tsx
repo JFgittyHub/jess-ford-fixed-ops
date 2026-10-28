@@ -17,12 +17,11 @@ import {
   Package,
   Receipt,
 } from "lucide-react";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import { DAY_LABEL } from "@/lib/format";
-import { homeFor, pathAllowed, useSession, writeSession, type Session } from "@/lib/session";
-import { useShop } from "@/lib/store";
-import type { Advisor, Tech } from "@/lib/types";
+import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
+import { todayLabel } from "@/lib/format";
+import { shopHasOperationalData, useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
 const NAV = [
@@ -42,9 +41,9 @@ const NAV = [
   { to: "/fees", label: "Fees", icon: Receipt, gear: true },
 ] as const;
 
-function NavLinks({ onNavigate, session }: { onNavigate?: () => void; session: Session }) {
+function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const items = NAV.filter((item) => pathAllowed(session, item.to));
+  const items = NAV;
   return (
     <>
       {items.map((item) => {
@@ -68,17 +67,36 @@ function tabLabel(path: string) {
 }
 
 export function Shell({ children }: { children: ReactNode }) {
+  const storeName = useShop((state) => state.settings.storeName);
+  const dataset = useShop((state) => state.dataset);
+  const [hydrated, setHydrated] = useState(() => useShop.persist.hasHydrated());
+
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
+      if (live) setHydrated(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (!hydrated || !confirmedDemoStaffAccess({ dataset })) return <DeskLocked storeName={storeName} />;
+  return <OpenDesk>{children}</OpenDesk>;
+}
+
+function OpenDesk({ children }: { children: ReactNode }) {
   const settings = useShop((state) => state.settings);
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
+  const clearShop = useShop((state) => state.clearShop);
   const [open, setOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
-  const { session, ready } = useSession();
-  const advisors = useShop((state) => state.advisors);
-  const techs = useShop((state) => state.techs);
+  const realShop = useShop((state) => state.dataset !== "sample" && shopHasOperationalData(state));
   const historyRef = useRef<string[]>([]);
   const [backTo, setBackTo] = useState<string | null>(null);
 
@@ -105,20 +123,6 @@ export function Shell({ children }: { children: ReactNode }) {
     void router.navigate({ to: previous });
   }
 
-  useEffect(() => {
-    void useShop.persist.rehydrate();
-  }, []);
-
-  useEffect(() => {
-    if (!ready || !session || pathAllowed(session, pathname)) return;
-    void router.navigate({ to: homeFor(session) });
-  }, [ready, session, pathname, router]);
-
-  if (!ready) return <div className="min-h-screen bg-bg" />;
-  if (!session) return <SignIn advisors={advisors} techs={techs} adminPassword={settings.adminPassword} />;
-
-  const who = session.role === "admin" ? "Admin" : session.role === "advisor" ? `Advisor ${advisors.find((row) => row.id === session.id)?.number ?? ""}` : `Tech ${techs.find((row) => row.id === session.id)?.number ?? ""}`;
-
   return (
     <div className="min-h-screen bg-bg text-ink">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col overflow-y-auto border-r border-line bg-surface px-3 py-4 md:flex">
@@ -127,7 +131,7 @@ export function Shell({ children }: { children: ReactNode }) {
           <p className="mt-2 px-1 text-sm text-muted">Fixed operations</p>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          <NavLinks session={session} />
+          <NavLinks />
         </nav>
         <p className="px-3 pt-4 text-xs leading-relaxed text-muted">
           Jess Ford. Not connected to OASIS, warranty submission, or a DMS.
@@ -140,26 +144,21 @@ export function Shell({ children }: { children: ReactNode }) {
               <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-14 w-auto md:hidden" />
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{settings.storeName}</p>
-                <p className="truncate text-xs text-muted">{settings.city} · {DAY_LABEL}</p>
+                <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
-            {session.role === "admin" ? (
-              <Button tone="ghost" small onClick={() => { setConfirmReset(false); setOpen(true); }} aria-label="Store settings">
-                <Settings className="size-4" aria-hidden />
-                Settings
-              </Button>
-            ) : (
-              <p className="text-sm text-muted">{who}</p>
-            )}
-            <Button tone="ghost" small onClick={() => writeSession(null)}>Sign out</Button>
+            <Button tone="ghost" small onClick={() => { setConfirmReset(false); setConfirmClear(false); setOpen(true); }} aria-label="Store settings">
+              <Settings className="size-4" aria-hidden />
+              Settings
+            </Button>
           </div>
           <nav className="nav-scroll px-3 pb-3 md:hidden">
-            <NavLinks onNavigate={() => undefined} session={session} />
+            <NavLinks onNavigate={() => undefined} />
           </nav>
         </header>
-        <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{pathAllowed(session, pathname) ? children : null}</main>
+        <main className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          Kept in this browser only. Sample October for Jess Ford — rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          This visit is the sample month. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload it, and will ask before replacing shop work. Rename a rooftop in Settings if you need one store on the header. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -194,27 +193,42 @@ export function Shell({ children }: { children: ReactNode }) {
           <Field label="Absorption target %">
             <input className="field tabular-nums" type="number" min={0} step={1} value={Math.round(settings.targetAbsorption * 100)} onChange={(event) => updateSettings({ targetAbsorption: (Number(event.target.value) || 0) / 100 })} />
           </Field>
-          <Field label="Admin password">
-            <input className="field" type="password" autoComplete="new-password" value={settings.adminPassword} onChange={(event) => updateSettings({ adminPassword: event.target.value })} />
-          </Field>
           <Field label="Policy guide % of CP labor">
             <input className="field tabular-nums" type="number" min={0} step={0.1} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
           </Field>
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button tone="primary" type="submit">Done</Button>
+            {isDemoMode() ? (
+              <Button
+                tone={confirmReset ? "accent" : "ghost"}
+                onClick={() => {
+                  if (!confirmReset) {
+                    setConfirmReset(true);
+                    setConfirmClear(false);
+                    return;
+                  }
+                  resetDemo(true);
+                  setConfirmReset(false);
+                  setOpen(false);
+                }}
+              >
+                {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
+              </Button>
+            ) : null}
             <Button
-              tone={confirmReset ? "accent" : "ghost"}
+              tone={confirmClear ? "accent" : "ghost"}
               onClick={() => {
-                if (!confirmReset) {
-                  setConfirmReset(true);
+                if (!confirmClear) {
+                  setConfirmClear(true);
+                  setConfirmReset(false);
                   return;
                 }
-                resetDemo();
-                setConfirmReset(false);
+                clearShop();
+                setConfirmClear(false);
                 setOpen(false);
               }}
             >
-              {confirmReset ? "Restore sample month now" : "Restore sample month"}
+              {confirmClear ? "Clear shop data now" : "Clear shop data"}
             </Button>
           </div>
         </form>
@@ -223,48 +237,13 @@ export function Shell({ children }: { children: ReactNode }) {
   );
 }
 
-function SignIn({ advisors, techs, adminPassword }: { advisors: Advisor[]; techs: Tech[]; adminPassword: string }) {
-  const [number, setNumber] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    const num = number.trim().toLowerCase();
-    const advisor = advisors.find((row) => row.number.trim().toLowerCase() === num);
-    if (advisor && password === advisor.password) {
-      writeSession({ role: "advisor", id: advisor.id });
-      return;
-    }
-    const tech = techs.find((row) => row.number.trim().toLowerCase() === num);
-    if (tech && password === tech.password) {
-      writeSession({ role: "tech", id: tech.id });
-      return;
-    }
-    if ((num === "" || num === "admin") && password === adminPassword) {
-      writeSession({ role: "admin" });
-      return;
-    }
-    setError("Number or password is wrong.");
-  }
-
+function DeskLocked({ storeName }: { storeName: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-md">
+      <div className="w-full max-w-md text-center">
         <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="mx-auto h-auto w-56" />
-        <h1 className="mt-4 text-center font-display text-4xl leading-none">Sign in</h1>
-        <p className="mt-2 text-center text-sm text-muted">Advisors and technicians use their number. Admin leaves the number blank.</p>
-        <form className="card mt-5 grid gap-3" onSubmit={submit}>
-          <Field label="Number">
-            <input className="field tabular-nums" value={number} onChange={(event) => setNumber(event.target.value)} autoComplete="username" />
-          </Field>
-          <Field label="Password">
-            <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
-          </Field>
-          {error ? <p className="text-sm text-primary">{error}</p> : null}
-          <Button tone="primary" type="submit">Sign in</Button>
-          <p className="text-sm text-muted">Demo passwords match the number until an admin changes them. Admin password starts as admin.</p>
-        </form>
+        <h1 className="mt-4 font-display text-4xl leading-none">{storeName}</h1>
+        <p className="mt-3 text-sm text-muted">Sign-in via Azure/Entra coming; demo mode only for now.</p>
       </div>
     </div>
   );

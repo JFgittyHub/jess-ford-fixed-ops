@@ -3,11 +3,10 @@ import { useState } from "react";
 import { printRepairOrder } from "@/components/repair-order-print";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { TODAY, feeCharge, feeTotal, salesTax, usd } from "@/lib/format";
+import { feeCharge, feeTotal, salesTax, today, usd } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { partSell, rateFor } from "@/lib/pay";
 import { useShop } from "@/lib/store";
-import { useSession } from "@/lib/session";
 
 export const Route = createFileRoute("/estimates")({ component: EstimatesPage });
 
@@ -22,8 +21,6 @@ function nextId(prefix: string) {
 
 function EstimatesPage() {
   const shop = useShop();
-  const { session } = useSession();
-  const lockedAdvisor = session?.role === "advisor" ? session.id : "";
   const navigate = useNavigate();
   const [customerId, setCustomerId] = useState(shop.customers[0]?.id ?? "");
   const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId);
@@ -41,7 +38,7 @@ function EstimatesPage() {
   const vehicleOk = vehicles.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : vehicles[0]?.id ?? "";
   const customer = shop.customers.find((row) => row.id === customerId);
   const vehicle = shop.vehicles.find((row) => row.id === vehicleOk);
-  const advisor = shop.advisors.find((row) => row.id === (lockedAdvisor || advisorId));
+  const advisor = shop.advisors.find((row) => row.id === advisorId);
   const laborSales = labor.reduce((sum, line) => sum + line.hours * line.rate, 0);
   const partsSales = parts.reduce((sum, line) => sum + line.qty * line.price, 0);
   const repair = laborSales + partsSales;
@@ -90,7 +87,7 @@ function EstimatesPage() {
     const id = shop.createOrder({
       customerId,
       vehicleId: vehicleOk,
-      advisorId: lockedAdvisor || advisorId,
+      advisorId,
       lines: written.length > 0 ? written.map((concern) => ({ concern })) : [{ concern: "Estimate" }],
       mileage: Number(mileage) || 0,
       promiseTime: "",
@@ -115,7 +112,7 @@ function EstimatesPage() {
         condition: "new",
       });
     }
-    shop.updateWa(id, { choice: "written", estimate: beforeTax, date: TODAY, time: "08:00" });
+    shop.updateWa(id, { choice: "written", estimate: beforeTax, date: today(), time: "08:00" });
     navigate({ to: "/orders" });
   }
 
@@ -141,7 +138,7 @@ function EstimatesPage() {
               </select>
             </Field>
             <Field label="Advisor">
-              <select className="field" value={lockedAdvisor || advisorId} disabled={Boolean(lockedAdvisor)} onChange={(event) => setAdvisorId(event.target.value)}>
+              <select className="field" value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
                 {shop.advisors.map((row) => <option key={row.id} value={row.id}>#{row.number} {row.name}</option>)}
               </select>
             </Field>
@@ -258,7 +255,7 @@ function EstimatesPage() {
         <p className="ro-kicker">{shop.settings.storeName}</p>
         <h1>Repair estimate</h1>
         <p>{customer?.name ?? "Customer"}{vehicle ? ` · ${vehicle.year} Ford ${vehicle.model}` : ""}{mileage ? ` · ${Number(mileage).toLocaleString("en-US")} miles` : ""}</p>
-        <p>Advisor {advisor ? `#${advisor.number} ${advisor.name}` : "—"} · {TODAY}</p>
+        <p>Advisor {advisor ? `#${advisor.number} ${advisor.name}` : "—"} · {today()}</p>
         <h2>Concerns</h2>
         {written.length === 0 ? <p>No concerns written.</p> : written.map((line, index) => <p key={index}>{lineLetter(index)}. {line}</p>)}
         <h2>Labor</h2>

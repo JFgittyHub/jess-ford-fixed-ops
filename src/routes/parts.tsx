@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field, Pill } from "@/components/ui";
-import { daySpan, TODAY, usd } from "@/lib/format";
+import { daySpan, today, usd } from "@/lib/format";
 import { digest } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 
@@ -60,7 +60,7 @@ function PartsPage() {
               onOrder: 0,
               cost: Number(cost) || 0,
               list: Number(list) || 0,
-              lastSale: TODAY,
+              lastSale: today(),
               source: "Other",
             });
             setNumber("");
@@ -114,6 +114,7 @@ function PartsPage() {
                       value={part.onHand}
                       onChange={(event) => shop.setOnHand(part.id, Number(event.target.value) || 0)}
                     />
+                    {part.onHand < 0 ? <Pill tone="bad">Oversold</Pill> : null}
                     {part.onOrder > 0 ? <span className="mt-1 block text-xs text-muted">{part.onOrder} on order</span> : null}
                   </td>
                   <td className="tabular-nums">{usd(part.onHand * part.cost)}</td>

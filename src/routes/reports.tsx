@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Shell } from "@/components/shell";
 import { Button } from "@/components/ui";
-import { MONTH_LABEL, num, pct, usd } from "@/lib/format";
+import { monthLabel, num, ordinal, dayOfMonth, pct, usd } from "@/lib/format";
 import { digest } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 
@@ -23,7 +23,7 @@ function ReportsPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Month close</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">{shop.settings.storeName}</h1>
-          <p className="mt-2 text-muted">{MONTH_LABEL} · through the 19th · fixed operations only</p>
+          <p className="mt-2 text-muted">{monthLabel()} · through the {ordinal(dayOfMonth())} · fixed operations only</p>
         </div>
         <Button className="no-print" onClick={() => window.print()}>Print pack</Button>
       </div>

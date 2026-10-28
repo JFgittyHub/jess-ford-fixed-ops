@@ -40,7 +40,6 @@ function DispatchPage() {
   const [skill, setSkill] = useState<Skill>("b");
   const [payStyle, setPayStyle] = useState<PayStyle>("flat");
   const [rate, setRate] = useState("28");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   return (
@@ -48,7 +47,7 @@ function DispatchPage() {
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Technicians</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The roster</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        Add a technician, or change the name, tech number, skill, and tech-board password. The tech board only shows the repair orders assigned to the person who logs in.
+        Add a technician, or change the name, tech number, and skill. The tech board asks who is working. There is no tech password.
       </p>
 
       <form
@@ -56,8 +55,8 @@ function DispatchPage() {
         onSubmit={(event) => {
           event.preventDefault();
           const parsed = Number(rate);
-          if (!number.trim() || !name.trim() || !password.trim() || !Number.isFinite(parsed)) {
-            setError("Need a tech number, a name, a password, and a rate.");
+          if (!number.trim() || !name.trim() || !Number.isFinite(parsed)) {
+            setError("Need a tech number, a name, and a rate.");
             return;
           }
           const ok = addTech({
@@ -68,7 +67,6 @@ function DispatchPage() {
             flagRate: parsed,
             hourlyRate: parsed,
             board: "none",
-            password: password.trim(),
           });
           if (!ok) {
             setError("That tech number is already on the roster.");
@@ -79,7 +77,6 @@ function DispatchPage() {
           setSkill("b");
           setPayStyle("flat");
           setRate("28");
-          setPassword("");
           setError("");
         }}
       >
@@ -102,8 +99,8 @@ function DispatchPage() {
             <option value="hourly">Hourly</option>
           </select>
         </Field>
-        <Field label="Password">
-          <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
+        <Field label="Rate">
+          <input className="field tabular-nums" type="number" min={0} step={1} value={rate} onChange={(event) => setRate(event.target.value)} />
         </Field>
         <div className="flex items-end">
           <Button tone="primary" type="submit">Add technician</Button>
@@ -121,7 +118,6 @@ function DispatchPage() {
               <th>Schedule</th>
               <th>Pay</th>
               <th>Rate</th>
-              <th>Password</th>
               <th></th>
             </tr>
           </thead>
@@ -163,9 +159,6 @@ function DispatchPage() {
                       updateTech(tech.id, tech.payStyle === "flat" ? { flagRate: next } : { hourlyRate: next });
                     }}
                   />
-                </td>
-                <td>
-                  <PasswordField label={`${tech.name} password`} onCommit={(value) => updateTech(tech.id, { password: value })} />
                 </td>
                 <td>
                   <Button small onClick={() => {
@@ -210,26 +203,6 @@ function DispatchPage() {
         })}
       </div>
     </Shell>
-  );
-}
-
-function PasswordField({ label, onCommit }: { label: string; onCommit: (value: string) => boolean }) {
-  const [draft, setDraft] = useState("");
-  return (
-    <input
-      className="field w-36"
-      aria-label={label}
-      type="password"
-      autoComplete="new-password"
-      placeholder="New password"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={() => {
-        if (!draft.trim()) return;
-        onCommit(draft);
-        setDraft("");
-      }}
-    />
   );
 }
 

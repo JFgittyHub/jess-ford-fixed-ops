@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, punchHours, usd } from "@/lib/format";
+import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, monthName, punchHours, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney, closeGaps } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
 import { normalizeWa, waLimit } from "@/lib/wa";
 import { useShop } from "@/lib/store";
-import { useSession } from "@/lib/session";
 import type { BayStatus, RepairOrder, RoStatus } from "@/lib/types";
 import { RepairOrderPrint, printRepairOrder } from "./repair-order-print";
 import { WaAuth } from "./wa-auth";
@@ -63,7 +62,6 @@ function readyToInvoice(order: RepairOrder) {
 
 export function OrderEditor({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
   const shop = useShop();
-  const { session } = useSession();
   const order = shop.orders.find((row) => row.id === orderId) ?? null;
   const look = lookups(shop);
   const [opcode, setOpcode] = useState("LOF");
@@ -83,11 +81,6 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
 
   if (!order) {
     return <Modal open={orderId !== null} onClose={onClose} title="Repair order">That repair order is not in this month.</Modal>;
-  }
-
-  const mine = session?.role !== "tech" || order.labor.some((line) => line.techId === session.id);
-  if (!mine) {
-    return <Modal open={orderId !== null} onClose={onClose} title="Repair order">That repair order is not assigned to you.</Modal>;
   }
 
   const locked = order.status === "invoiced" || order.status === "booked";
@@ -132,7 +125,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       <>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Advisor">
-          <select className="field" disabled={locked || session?.role === "advisor"} value={order.advisorId} onChange={(event) => shop.updateOrder(order.id, { advisorId: event.target.value })}>
+          <select className="field" disabled={locked} value={order.advisorId} onChange={(event) => shop.updateOrder(order.id, { advisorId: event.target.value })}>
             {shop.advisors.map((row) => <option key={row.id} value={row.id}>#{row.number} {row.name}</option>)}
           </select>
         </Field>
@@ -227,7 +220,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                   </select>
                 </Field>
                 <Field label="Tech">
-                  <select className="field" disabled={locked || session?.role === "tech"} value={line.techId} onChange={(event) => shop.updateLabor(order.id, line.id, { techId: event.target.value })}>
+                  <select className="field" disabled={locked} value={line.techId} onChange={(event) => shop.updateLabor(order.id, line.id, { techId: event.target.value })}>
                     {shop.techs.map((tech) => <option key={tech.id} value={tech.id}>{tech.number} · {tech.name}</option>)}
                   </select>
                 </Field>
@@ -249,7 +242,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                 hours: parsed,
                 rate: rateFor(pay, shop.payTypes),
                 payType: pay,
-                techId: session?.role === "tech" ? session.id : techId,
+                techId,
               });
               if (!opId) setLaborDesc("");
             }}
@@ -290,7 +283,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               </select>
             </Field>
             <Field label="Tech">
-              <select className="field" value={session?.role === "tech" ? session.id : techId} disabled={session?.role === "tech"} onChange={(event) => setTechId(event.target.value)}>
+              <select className="field" value={techId} onChange={(event) => setTechId(event.target.value)}>
                 {shop.techs.map((tech) => <option key={tech.id} value={tech.id}>{tech.number} · {tech.name}</option>)}
               </select>
             </Field>
@@ -406,20 +399,18 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         <div><p className="text-xs uppercase tracking-wide text-muted">Totals</p><p className="font-display text-2xl tabular-nums">{usd(money.total)}</p><p className="text-xs text-muted">Before tax {usd(money.ticket)}</p></div>
       </div>
       <p className="mt-2 text-sm text-muted">Technician pay is counted on the month, not on this ticket. Flat-rate pay hits when you invoice. Hourly pay already hit when they were on the clock.</p>
-      {session?.role === "tech" ? null : (
       <div className="mt-4 flex flex-wrap gap-2">
         {closed ? (
           <Button tone="ghost" onClick={() => shop.reopenOrder(order.id)}>Reopen</Button>
         ) : booked ? (
           <>
             <Button onClick={() => shop.unbookOrder(order.id)}>Unbook</Button>
-            <Button tone="primary" disabled={gaps.length > 0} onClick={() => shop.invoiceOrder(order.id)}>Close — count it in October</Button>
+            <Button tone="primary" disabled={gaps.length > 0} onClick={() => shop.invoiceOrder(order.id)}>Close — count it in {monthName()}</Button>
           </>
         ) : (
           <Button tone="primary" disabled={!readyToInvoice(order)} onClick={() => shop.bookOrder(order.id)}>Book — ready to close</Button>
         )}
       </div>
-      )}
       {!closed && !booked && !readyToInvoice(order) ? (
         <p className="mt-2 text-sm text-muted">You can add labor and parts now. Book stays off until the Washington authorization covers this ticket.</p>
       ) : null}

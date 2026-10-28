@@ -1,11 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { BAY_LABEL, STATUS_LABEL, TODAY, clockTime, formatDuration, punchHours } from "@/lib/format";
+import { BAY_LABEL, STATUS_LABEL, clockTime, formatDuration, punchHours, today as shopToday } from "@/lib/format";
 import { lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
-import { useSession, writeSession } from "@/lib/session";
 import type { BayStatus, RepairOrder, RoStatus, TimeLog } from "@/lib/types";
 
 export const Route = createFileRoute("/tech-board")({ component: TechBoardPage });
@@ -29,80 +28,36 @@ function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, no
     .reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now), 0);
 }
 
-const SESSION_KEY = "jess-ford-tech-session";
-
 function TechBoardPage() {
   const shop = useShop();
-  const { session } = useSession();
   const look = lookups(shop);
   const now = useNow();
   const [techId, setTechId] = useState("");
-  const [ready, setReady] = useState(false);
-  const [number, setNumber] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const tech = shop.techs.find((row) => row.id === (session?.role === "tech" ? session.id : techId));
+  const tech = shop.techs.find((row) => row.id === techId);
+  const roster = [...shop.techs].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
 
-  useEffect(() => {
-    setTechId(sessionStorage.getItem(SESSION_KEY) ?? "");
-    setReady(true);
-  }, []);
-
-  function login(event: FormEvent) {
-    event.preventDefault();
-    const match = shop.techs.find((row) => row.number.trim().toLowerCase() === number.trim().toLowerCase());
-    if (!match || !password || password !== match.password) {
-      setError("Tech number or password is wrong.");
-      return;
-    }
-    sessionStorage.setItem(SESSION_KEY, match.id);
-    setTechId(match.id);
-    setPassword("");
-    setError("");
-  }
-
-  function logout() {
-    sessionStorage.removeItem(SESSION_KEY);
-    setTechId("");
-    setNumber("");
-    setPassword("");
-  }
-
-  if (!ready && session?.role !== "tech") {
-    return (
-      <Shell>
-        <h1 className="font-display text-5xl leading-none">Tech board</h1>
-      </Shell>
-    );
-  }
+  const picker = (
+    <Field label="Technician">
+      <select className="field max-w-md" value={techId} onChange={(event) => setTechId(event.target.value)}>
+        <option value="">Choose who is at the board</option>
+        {roster.map((row) => (
+          <option key={row.id} value={row.id}>#{row.number} {row.name}</option>
+        ))}
+      </select>
+    </Field>
+  );
 
   if (!tech) {
-    if (session?.role === "tech") {
-      return (
-        <Shell>
-          <h1 className="font-display text-5xl leading-none">Tech board</h1>
-          <p className="mt-3 text-muted">This technician is not on the roster.</p>
-        </Shell>
-      );
-    }
     return (
       <Shell>
         <p className="text-sm font-semibold uppercase tracking-wide text-muted">Technicians</p>
         <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Tech board</h1>
-        <p className="mt-3 max-w-xl text-muted">Sign in with your tech number and password. You only see the repair orders assigned to you.</p>
-        <form className="card mt-5 grid max-w-md gap-3" onSubmit={login}>
-          <Field label="Tech number">
-            <input className="field tabular-nums" value={number} onChange={(event) => setNumber(event.target.value)} autoComplete="username" />
-          </Field>
-          <Field label="Password">
-            <input className="field" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
-          </Field>
-          {error ? <p className="text-sm text-primary">{error}</p> : null}
-          <div>
-            <Button tone="primary" type="submit">Sign in</Button>
-          </div>
-          <p className="text-sm text-muted">Until the password is changed on the roster, the demo password is the tech number.</p>
-        </form>
+        <p className="mt-3 max-w-xl text-muted">
+          {roster.length === 0
+            ? "Add a technician on the roster, then pick them here. There is no password."
+            : "Pick a technician. The board shows the open repair orders assigned to that person. There is no password."}
+        </p>
+        <div className="mt-5 max-w-md">{picker}</div>
       </Shell>
     );
   }
@@ -110,7 +65,7 @@ function TechBoardPage() {
   const jobs = assignedOpen(tech.id, shop.orders);
   const open = shop.timeLogs.find((row) => row.techId === tech.id && row.endedAt === null) ?? null;
   const current = open ? shop.orders.find((order) => order.id === open.orderId) : undefined;
-  const todayLogs = shop.timeLogs.filter((row) => row.techId === tech.id && (row.startedAt.startsWith(TODAY) || row.endedAt === null));
+  const todayLogs = shop.timeLogs.filter((row) => row.techId === tech.id && (row.startedAt.startsWith(shopToday()) || row.endedAt === null));
   const today = loggedHours(todayLogs, tech.id, null, now);
   const flagged = jobs.reduce((sum, order) => sum + order.labor.filter((line) => line.techId === tech.id).reduce((hours, line) => hours + line.hours, 0), 0);
   const ordered = [...jobs].sort((a, b) => (a.id === open?.orderId ? -1 : b.id === open?.orderId ? 1 : a.promiseTime.localeCompare(b.promiseTime)));
@@ -121,9 +76,9 @@ function TechBoardPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Tech {tech.number}</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">{tech.name}</h1>
-          <p className="mt-3 max-w-2xl text-muted">These are the open repair orders assigned to you. Clock onto one at a time.</p>
+          <p className="mt-3 max-w-2xl text-muted">These are the open repair orders assigned to this technician. Clock onto one at a time.</p>
         </div>
-        <Button onClick={() => (session?.role === "tech" ? writeSession(null) : logout())}>Sign out</Button>
+        <div className="min-w-56">{picker}</div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">

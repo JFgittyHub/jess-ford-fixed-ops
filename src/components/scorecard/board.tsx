@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { shopTodayDate } from "@/lib/clock";
+import { isDemoMode } from "@/lib/demo";
+import { SCORECARD_STORAGE_KEY, scrubDemoStorage } from "@/lib/shop-storage";
 import { PULLMAN_SAMPLE_MONTHS, SAMPLE_MONTHS, sampleFor } from "@/lib/scorecard/sample";
 import {
   ELR_STANDARD,
@@ -38,7 +41,7 @@ import {
 } from "@/lib/scorecard/model";
 import { Button, Field } from "@/components/ui";
 
-const STORAGE_KEY = "jess-ford-scorecard-v2";
+const STORAGE_KEY = SCORECARD_STORAGE_KEY;
 
 const VIEWS: { id: ViewId; label: string }[] = [
   { id: "group", label: "Group" },
@@ -51,6 +54,7 @@ function seed(source: Record<string, MonthBoard>): Record<string, MonthBoard> {
 }
 
 function withPullmanSamples(months: Record<string, MonthBoard>): Record<string, MonthBoard> {
+  if (!isDemoMode()) return months;
   const next = { ...months };
   for (const [key, board] of Object.entries(PULLMAN_SAMPLE_MONTHS)) {
     if (!next[key]?.recorded) next[key] = structuredClone(board);
@@ -59,7 +63,17 @@ function withPullmanSamples(months: Record<string, MonthBoard>): Record<string, 
 }
 
 function buildInitial(): AppState {
-  const todayKey = monthKey(new Date());
+  const todayKey = monthKey(shopTodayDate());
+  if (!isDemoMode()) {
+    return {
+      activeStore: "grand-coulee",
+      activeMonth: todayKey,
+      stores: {
+        "grand-coulee": { [todayKey]: emptyBoard(todayKey) },
+        pullman: { [todayKey]: emptyBoard(todayKey, 1800) },
+      },
+    };
+  }
   const coulee = seed(SAMPLE_MONTHS);
   if (!coulee[todayKey]) coulee[todayKey] = emptyBoard(todayKey);
   const seeded = Object.keys(SAMPLE_MONTHS).filter((key) => key <= todayKey).sort();
@@ -110,17 +124,30 @@ export function ScorecardPulse() {
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
+    if (isDemoMode()) {
+      try {
+        scrubDemoStorage(window.localStorage);
+      } catch {
+        /* storage unavailable */
+      }
+      setReady(true);
+      return;
+    }
     const stored = readStored();
     if (stored) setState(stored);
     setReady(true);
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (!ready || isDemoMode()) return;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      /* storage unavailable */
+    }
   }, [state, ready]);
 
-  const today = new Date();
+  const today = shopTodayDate();
   const todayKey = monthKey(today);
   const coulee = state.stores["grand-coulee"][state.activeMonth] ?? emptyBoard(state.activeMonth);
   const pullman = state.stores.pullman[state.activeMonth] ?? emptyBoard(state.activeMonth);
@@ -175,7 +202,7 @@ export function ScorecardPulse() {
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Pulse</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Fixed Ops Pulse</h1>
           <p className="mt-2 max-w-xl text-muted">
-            As of {asOf}. {state.activeStore === "group" ? "Group total of Grand Coulee and Pullman." : state.activeStore === "pullman" ? "Pullman. Sample numbers until the feed is connected." : "Grand Coulee. Hand entry for now."}
+            As of {asOf}. {state.activeStore === "group" ? "Group total of Grand Coulee and Pullman." : state.activeStore === "pullman" ? (isDemoMode() ? "Pullman. Sample numbers until the feed is connected." : "Pullman. Hand entry for now.") : "Grand Coulee. Hand entry for now."}
           </p>
         </div>
         <Button

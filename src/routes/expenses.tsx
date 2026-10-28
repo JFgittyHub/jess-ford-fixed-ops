@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field, Meter } from "@/components/ui";
-import { TODAY, pct, usd } from "@/lib/format";
+import { dayOfMonth, daysInMonth, monthName, ordinal, pct, today, usd } from "@/lib/format";
 import { digest, lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { Department } from "@/lib/types";
@@ -15,6 +15,8 @@ function ExpensesPage() {
   const look = lookups(shop);
   const [department, setDepartment] = useState<Department>("service");
   const [budgetId, setBudgetId] = useState("pol");
+  const departmentBudgets = shop.budgets.filter((row) => row.department === department);
+  const activeBudget = departmentBudgets.some((row) => row.id === budgetId) ? budgetId : (departmentBudgets[0]?.id ?? "");
   const [vendor, setVendor] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
@@ -26,7 +28,7 @@ function ExpensesPage() {
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Fixed costs</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">What you can still change</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        Controllable expense against a pace budget — day {19} of {31}, so {pct(view.pace)} of the month. Overhead underneath is mostly salaries and the building. It still decides absorption.
+        Controllable expense against a pace budget — day {dayOfMonth()} of {daysInMonth()}, so {pct(view.pace)} of the month. Overhead underneath is mostly salaries and the building. It still decides absorption.
       </p>
 
       <section className="mt-5 grid gap-3 md:grid-cols-3">
@@ -89,8 +91,8 @@ function ExpensesPage() {
         onSubmit={(event) => {
           event.preventDefault();
           const parsed = Number(amount);
-          if (!vendor.trim() || !parsed) return;
-          shop.addExpense({ budgetId, date: TODAY, vendor: vendor.trim(), amount: parsed, note: note.trim() });
+          if (!vendor.trim() || !parsed || !activeBudget) return;
+          shop.addExpense({ budgetId: activeBudget, date: today(), vendor: vendor.trim(), amount: parsed, note: note.trim() });
           setVendor("");
           setAmount("");
           setNote("");
@@ -98,14 +100,15 @@ function ExpensesPage() {
       >
         <h2 className="font-display text-2xl leading-none md:col-span-4">Enter a bill</h2>
         <Field label="Category">
-          <select className="field" value={budgetId} onChange={(event) => setBudgetId(event.target.value)}>
-            {shop.budgets.filter((row) => row.department === department).map((row) => <option key={row.id} value={row.id}>{row.category}</option>)}
+          <select className="field" value={activeBudget} onChange={(event) => setBudgetId(event.target.value)}>
+            {departmentBudgets.length === 0 ? <option value="">No categories yet</option> : null}
+            {departmentBudgets.map((row) => <option key={row.id} value={row.id}>{row.category}</option>)}
           </select>
         </Field>
         <Field label="Vendor"><input className="field" value={vendor} onChange={(event) => setVendor(event.target.value)} required /></Field>
         <Field label="Amount"><input className="field tabular-nums" type="number" min={0} step={0.01} value={amount} onChange={(event) => setAmount(event.target.value)} required /></Field>
         <Field label="Note"><input className="field" value={note} onChange={(event) => setNote(event.target.value)} /></Field>
-        <div className="md:col-span-4"><Button tone="primary" type="submit">Post to October</Button></div>
+        <div className="md:col-span-4"><Button tone="primary" type="submit" disabled={!activeBudget}>Post to {monthName()}</Button></div>
       </form>
 
       <div className="mt-4 overflow-x-auto card p-0">
@@ -129,7 +132,7 @@ function ExpensesPage() {
 
       <section className="mt-6">
         <h2 className="font-display text-3xl leading-none">Semi-fixed overhead</h2>
-        <p className="mt-2 max-w-2xl text-sm text-muted">Counted at {pct(view.pace)} of the monthly amount so absorption is not punished for a full month of rent on the 19th. Edit the full-month figure.</p>
+        <p className="mt-2 max-w-2xl text-sm text-muted">Counted at {pct(view.pace)} of the monthly amount so absorption is not punished for a full month of rent on the {ordinal(dayOfMonth())}. Edit the full-month figure.</p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           {shop.overhead.map((line) => (
             <article key={line.id} className="card flex items-end justify-between gap-3">

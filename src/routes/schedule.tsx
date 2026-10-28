@@ -5,11 +5,10 @@ import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, day
 import { NewOrder } from "@/components/new-order";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
-import { LANE_LABEL, snapHalfHour, TODAY } from "@/lib/format";
+import { LANE_LABEL, snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
-import { useSession } from "@/lib/session";
 import type { Appointment } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
@@ -26,7 +25,6 @@ const STARTS = Array.from({ length: 22 }, (_, index) => {
 
 function SchedulePage() {
   const shop = useShop();
-  const { session } = useSession();
   const look = lookups(shop);
   const [preset, setPreset] = useState<Appointment | null>(null);
   const [customerId, setCustomerId] = useState(shop.customers[0]?.id ?? "");
@@ -34,12 +32,12 @@ function SchedulePage() {
   const [vehicleId, setVehicleId] = useState(vehicles[0]?.id ?? "");
   const [advisorId, setAdvisorId] = useState(shop.advisors[0]?.id ?? "");
   const [techId, setTechId] = useState(shop.techs[0]?.id ?? "");
-  const [date, setDate] = useState(TODAY);
+  const [date, setDate] = useState(today());
   const [time, setTime] = useState("15:30");
   const [minutes, setMinutes] = useState(60);
   const [concern, setConcern] = useState("");
   const [lane, setLane] = useState<Appointment["lane"]>("drop");
-  const [day, setDay] = useState(TODAY);
+  const [day, setDay] = useState(today());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -52,15 +50,14 @@ function SchedulePage() {
     setSelectedId(id);
     setEditingId(id);
   }
-  const noShows = shop.appointments.filter((row) => row.date === TODAY && row.status === "no_show").length;
-  const inShop = shop.appointments.filter((row) => row.date === TODAY && (row.status === "in_shop" || row.status === "arrived")).length;
-  const lockedTech = session?.role === "tech" ? session.id : "";
+  const noShows = shop.appointments.filter((row) => row.date === today() && row.status === "no_show").length;
+  const inShop = shop.appointments.filter((row) => row.date === today() && (row.status === "in_shop" || row.status === "arrived")).length;
   const rank = { express: 0, main: 1, internal: 2, none: 3 };
   const board = [...shop.techs]
-    .filter((tech) => (lockedTech ? tech.id === lockedTech : tech.board !== "none"))
+    .filter((tech) => tech.board !== "none")
     .sort((a, b) => rank[a.board] - rank[b.board] || a.number.localeCompare(b.number, undefined, { numeric: true }));
   const dayHours = shop.appointments
-    .filter((row) => row.date === day && (!lockedTech || row.techId === lockedTech))
+    .filter((row) => row.date === day)
     .reduce((sum, row) => sum + laborHours(row, shop.laborOps), 0);
 
   return (
@@ -69,7 +66,7 @@ function SchedulePage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Appointments</p>
           <h1 className="mt-1 flex flex-wrap items-baseline gap-3 font-display text-5xl leading-none tracking-tight">
-            {day === TODAY ? "Today" : dayLabel(day)}
+            {day === today() ? "Today" : dayLabel(day)}
             <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
@@ -77,7 +74,7 @@ function SchedulePage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {lockedTech ? null : <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>}
+          <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>
           <Button small onClick={() => setDay((value) => addDays(value, -1))}>Previous</Button>
           <p className="min-w-40 text-center text-sm font-semibold">{dayLabel(day)}</p>
           <DayJump value={day} onChange={setDay} />
@@ -85,6 +82,9 @@ function SchedulePage() {
         </div>
       </div>
 
+      {board.length === 0 ? (
+        <p className="card mt-4 text-muted">No technicians are on a board yet. Add someone on the roster and put them on Express, Main shop, or Internals. The day columns show up after that.</p>
+      ) : (
       <AppointmentCalendar
         appointments={shop.appointments}
         day={day}
@@ -123,10 +123,11 @@ function SchedulePage() {
               ? row.laborOpIds.map((id) => shop.laborOps.find((op) => op.id === id)?.opcode).filter(Boolean).join(", ")
               : "No labor ops",
             status: row.status === "no_show" ? "No-show" : row.status === "in_shop" ? "In shop" : row.status === "arrived" ? "Arrived" : "Scheduled",
-            canWrite: session?.role !== "tech" && !row.orderId && row.status !== "no_show",
+            canWrite: !row.orderId && row.status !== "no_show",
           };
         }}
       />
+      )}
 
       {selected ? (
         <Selected
@@ -209,7 +210,6 @@ function Selected({
   onWrite: () => void;
   onEdit: () => void;
 }) {
-  const { session } = useSession();
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -225,7 +225,7 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <Button small onClick={onEdit}>Edit details</Button>
-        {session?.role === "tech" || row.orderId || row.status === "no_show" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
+        {row.orderId || row.status === "no_show" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>
     </div>
   );
@@ -252,8 +252,6 @@ function AppointmentFields({
   showStatus?: boolean;
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">) => void;
 }) {
-  const { session } = useSession();
-  const lockedAdvisor = session?.role === "advisor" ? session.id : "";
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(snapHalfHour(initial.time));
   const [minutes, setMinutes] = useState(initial.minutes);
@@ -277,7 +275,7 @@ function AppointmentFields({
         event.preventDefault();
         if (!lines.some((line) => line.concern.trim()) || !resolvedVehicle) return;
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
-        onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId: lockedAdvisor || advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status });
+        onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status });
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
@@ -353,7 +351,7 @@ function AppointmentFields({
         </select>
       </Field>
       <Field label="Advisor">
-        <select className="field" value={lockedAdvisor || advisorId} disabled={Boolean(lockedAdvisor)} onChange={(event) => setAdvisorId(event.target.value)}>
+        <select className="field" value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
           {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
         </select>
       </Field>
@@ -442,14 +440,14 @@ function DayJump({ value, onChange }: { value: string; onChange: (iso: string) =
               <button
                 key={iso}
                 type="button"
-                className={`h-8 rounded-md text-sm tabular-nums ${iso === value ? "bg-primary text-primary-fg" : iso === TODAY ? "bg-primary-soft" : "hover:bg-surface"}`}
+                className={`h-8 rounded-md text-sm tabular-nums ${iso === value ? "bg-primary text-primary-fg" : iso === today() ? "bg-primary-soft" : "hover:bg-surface"}`}
                 onClick={() => { onChange(iso); setOpen(false); }}
               >
                 {Number(iso.slice(-2))}
               </button>
             ) : <span key={`pad-${index}`} />)}
           </div>
-          <Button small className="mt-2 w-full" onClick={() => { onChange(TODAY); setOpen(false); }}>Today</Button>
+          <Button small className="mt-2 w-full" onClick={() => { onChange(today()); setOpen(false); }}>Today</Button>
         </div>
       ) : null}
     </div>
