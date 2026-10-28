@@ -3,6 +3,7 @@ import { Calendar } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours } from "@/components/appointment-calendar";
 import { NewOrder } from "@/components/new-order";
+import { NoShowMark, noShowSuffix } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { snapHalfHour, today } from "@/lib/format";
@@ -195,6 +196,7 @@ function SchedulePage() {
         <Selected
           row={selected}
           name={look.customer.get(selected.customerId)?.name ?? "Customer"}
+          noShows={look.customer.get(selected.customerId)?.noShows ?? 0}
           vehicle={look.vehicle.get(selected.vehicleId)}
           laneName={laneLabel(selected.lane, transports)}
           onStatus={(status) => shop.setAppointmentStatus(selected.id, status)}
@@ -265,6 +267,7 @@ function SchedulePage() {
 function Selected({
   row,
   name,
+  noShows = 0,
   vehicle,
   laneName,
   onStatus,
@@ -273,6 +276,7 @@ function Selected({
 }: {
   row: Appointment;
   name: string;
+  noShows?: number;
   vehicle?: { year: number; model: string };
   laneName: string;
   onStatus: (status: Appointment["status"]) => void;
@@ -282,7 +286,7 @@ function Selected({
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
-        <p className="font-semibold">{name}</p>
+        <p className="flex flex-wrap items-baseline gap-2 font-semibold">{name}<NoShowMark count={noShows} /></p>
         <p className="text-sm text-muted">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : ""} · {row.concern}</p>
         <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {laneName}</p>
       </div>
@@ -314,7 +318,7 @@ function AppointmentFields({
   onSubmit,
 }: {
   initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">;
-  customers: { id: string; name: string }[];
+  customers: { id: string; name: string; noShows?: number }[];
   vehicles: { id: string; customerId: string; year: number; model: string; vin: string }[];
   advisors: { id: string; number: string; name: string }[];
   techs: { id: string; number: string; name: string }[];
@@ -378,7 +382,7 @@ function AppointmentFields({
           setVehicleId(first?.id ?? "");
           setVin(first?.vin ?? "");
         }}>
-          {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+          {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows ?? 0)}</option>)}
         </select>
       </Field>
       <Field label="Vehicle">

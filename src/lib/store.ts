@@ -176,14 +176,33 @@ function pickShop(state: ShopData): ShopData {
   return shop;
 }
 
-function withCustomerFields<T extends { phone?: string; mobile?: string; email?: string }>(customers: T[] | undefined) {
+function withCustomerFields<T extends { phone?: string; mobile?: string; email?: string; noShows?: number }>(customers: T[] | undefined) {
   if (!Array.isArray(customers)) return customers;
   return customers.filter((row) => row && typeof row === "object").map((row) => ({
     ...row,
     phone: row.phone ?? "",
     mobile: typeof row.mobile === "string" ? row.mobile : "",
     email: typeof row.email === "string" ? row.email : "",
+    noShows: typeof row.noShows === "number" && row.noShows > 0 ? Math.trunc(row.noShows) : 0,
   }));
+}
+
+function noShowChanges(fromStatus: string, toStatus: string, fromCustomer: string, toCustomer: string) {
+  const changes: { customerId: string; delta: number }[] = [];
+  if (fromStatus === "no_show") changes.push({ customerId: fromCustomer, delta: -1 });
+  if (toStatus === "no_show") changes.push({ customerId: toCustomer, delta: 1 });
+  return changes;
+}
+
+function adjustNoShows<T extends { id: string; noShows?: number }>(customers: T[], changes: { customerId: string; delta: number }[]): T[] {
+  if (changes.length === 0) return customers;
+  const delta = new Map<string, number>();
+  for (const change of changes) delta.set(change.customerId, (delta.get(change.customerId) ?? 0) + change.delta);
+  return customers.map((customer) => {
+    const next = delta.get(customer.id);
+    if (!next) return customer;
+    return { ...customer, noShows: Math.max(0, (customer.noShows ?? 0) + next) };
+  });
 }
 
 function withScheduling(settings: ShopData["settings"] | undefined) {
@@ -1096,7 +1115,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const customerId = uid("c");
         const vehicleId = uid("v");
         set((state) => ({
-          customers: [{ id: customerId, name: input.name.trim(), phone: input.phone.trim(), mobile: input.mobile?.trim() ?? "", email: input.email?.trim() ?? "" }, ...state.customers],
+          customers: [{ id: customerId, name: input.name.trim(), phone: input.phone.trim(), mobile: input.mobile?.trim() ?? "", email: input.email?.trim() ?? "", noShows: 0 }, ...state.customers],
           vehicles: [
             {
               id: vehicleId,
@@ -1111,9 +1130,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return { customerId, vehicleId };
       },
       setAppointmentStatus: (id, status) =>
-        set((state) => ({
-          appointments: state.appointments.map((row) => (row.id === id ? { ...row, status } : row)),
-        })),
+        set((state) => {
+          const current = state.appointments.find((row) => row.id === id);
+          if (!current || current.status === status) return state;
+          return {
+            appointments: state.appointments.map((row) => (row.id === id ? { ...row, status } : row)),
+            customers: adjustNoShows(state.customers, noShowChanges(current.status, status, current.customerId, current.customerId)),
+          };
+        }),
       moveAppointment: (id, patch) =>
         set((state) => ({
           appointments: state.appointments.map((row) => {
@@ -1126,7 +1150,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }),
         })),
       updateAppointment: (id, patch) =>
-        set((state) => ({
+        set((state) => {
+          const current = state.appointments.find((row) => row.id === id);
+          const nextStatus = patch.status ?? current?.status ?? "scheduled";
+          const nextCustomer = patch.customerId || current?.customerId || "";
+          return {
           appointments: state.appointments
             .map((row) => {
               if (row.id !== id) return row;
@@ -1148,7 +1176,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               return { ...row, ...patch, minutes, time, date, lines: kept, concern: concernFromLines(kept) || row.concern, vin, laborOpIds, vehicleId, lane, id: row.id, orderId: row.orderId };
             })
             .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
-        })),
+          customers: current
+            ? adjustNoShows(state.customers, noShowChanges(current.status, nextStatus, current.customerId, nextCustomer))
+            : state.customers,
+        };
+        }),
       addAppointment: (input, id) => {
         const appointmentId = id ?? uid("ap");
         set((state) => {

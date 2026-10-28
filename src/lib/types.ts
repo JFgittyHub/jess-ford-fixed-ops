@@ -111,6 +111,8 @@ export interface Customer {
    */
   mobile: string;
   email: string;
+  /** Appointments an advisor has marked No-show. Stays on the record for the next visit. */
+  noShows: number;
 }
 
 export interface Vehicle {

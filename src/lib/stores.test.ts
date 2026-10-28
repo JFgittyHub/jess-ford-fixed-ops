@@ -156,7 +156,7 @@ describe("sample seeds", () => {
     assert.equal(coulee.settings.storeName, "Jess Ford Grand Coulee");
     assert.equal(pullman.settings.storeName, "Jess Ford Pullman");
     assert.notEqual(coulee.settings.scheduling.bookingWindow.daysAhead, pullman.settings.scheduling.bookingWindow.daysAhead);
-    coulee.customers.push({ id: "extra", name: "Extra", phone: "", mobile: "", email: "extra@example.com" });
+    coulee.customers.push({ id: "extra", name: "Extra", phone: "", mobile: "", email: "extra@example.com", noShows: 0 });
     assert.equal(pullman.customers.some((row) => row.id === "extra"), false);
   });
 });

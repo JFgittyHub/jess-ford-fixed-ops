@@ -477,6 +477,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       phone,
       mobile: noMobile.has(i) ? "" : phone,
       email: emailFor(name),
+      noShows: 0,
     };
   });
 
@@ -854,7 +855,10 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     settings,
     advisors,
     techs,
-    customers,
+    customers: customers.map((customer) => ({
+      ...customer,
+      noShows: appointments.filter((row) => row.customerId === customer.id && row.status === "no_show").length,
+    })),
     vehicles,
     parts,
     laborOps: laborCatalog(),

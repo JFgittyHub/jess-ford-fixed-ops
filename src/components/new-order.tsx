@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { rateFor } from "@/lib/pay";
+import { noShowSuffix } from "@/components/no-show-mark";
 import { useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
@@ -146,7 +147,7 @@ function NewOrderForm({
                   setVehicleId(first?.id ?? "");
                 }}
               >
-                {shop.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}</option>)}
+                {shop.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows)}</option>)}
               </select>
             </Field>
             <Field label="Vehicle">

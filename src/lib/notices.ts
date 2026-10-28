@@ -204,6 +204,7 @@ function freshParty(input: {
     phone: request.phone,
     mobile: request.contactMethod === "text" ? request.phone : "",
     email: request.email,
+    noShows: 0,
   };
   const vehicle = vehicleFromRequest(input.ids.vehicleId, customer.id, request);
   return { customerId: customer.id, vehicleId: vehicle.id, vin: vehicle.vin, newCustomer: customer, newVehicle: vehicle };

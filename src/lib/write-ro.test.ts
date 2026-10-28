@@ -367,9 +367,9 @@ function loadShop() {
     ...empty,
     focusOrderId: null,
     customers: [
-      { id: "helen", name: "Helen Cho", phone: "(555) 010-0001", mobile: "", email: "" },
-      { id: "glenn", name: "Glenn Ortiz", phone: "(555) 010-0002", mobile: "", email: "" },
-      { id: "mina", name: "Mina Patel", phone: "(555) 010-0003", mobile: "", email: "" },
+      { id: "helen", name: "Helen Cho", phone: "(555) 010-0001", mobile: "", email: "", noShows: 0 },
+      { id: "glenn", name: "Glenn Ortiz", phone: "(555) 010-0002", mobile: "", email: "", noShows: 0 },
+      { id: "mina", name: "Mina Patel", phone: "(555) 010-0003", mobile: "", email: "", noShows: 0 },
     ],
     vehicles: [
       { id: "helen-truck", customerId: "helen", year: 2024, model: "F-150", vin: "1FTH" },

@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { NewOrder } from "@/components/new-order";
+import { NoShowMark } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
 import { Button, Field, Pill } from "@/components/ui";
 import { daySpan, today } from "@/lib/format";
@@ -164,7 +165,10 @@ function CustomersPage() {
               return (
               <tr key={row.customer.id}>
                 <td>
-                  <span className="block font-semibold">{row.customer.name}</span>
+                  <span className="flex flex-wrap items-baseline gap-2 font-semibold">
+                    {row.customer.name}
+                    <NoShowMark count={row.customer.noShows} />
+                  </span>
                   <span className="text-sm text-muted">{row.customer.phone}</span>
                   <span className="block text-sm text-muted">{row.customer.email}</span>
                   {row.customer.mobile && row.customer.mobile !== row.customer.phone ? <span className="block text-sm text-muted">{row.customer.mobile}</span> : null}
