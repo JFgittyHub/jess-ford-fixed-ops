@@ -313,8 +313,15 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
       techId: p(row.techId),
       customerId: row.customerId ? p(row.customerId) : null,
       vehicleId: row.vehicleId ? p(row.vehicleId) : null,
+      appointmentId: row.appointmentId ? p(row.appointmentId) : null,
     })),
     onlineChallenges: shop.onlineChallenges.map((row) => ({ ...row, customerId: p(row.customerId) })),
+    notices: shop.notices.map((row) => ({
+      ...row,
+      id: p(row.id),
+      requestId: row.requestId ? p(row.requestId) : null,
+      appointmentId: row.appointmentId ? p(row.appointmentId) : null,
+    })),
   };
 }
 
@@ -416,6 +423,7 @@ export function createEmptyShop(): ShopData {
     overrides: [],
     onlineRequests: [],
     onlineChallenges: [],
+    notices: [],
   };
 }
 
@@ -875,5 +883,6 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     overrides: [],
     onlineRequests: [],
     onlineChallenges: [],
+    notices: [],
   }, pullman ? "pl-" : "");
 }

@@ -38,6 +38,7 @@ function RequestPage() {
   const [serviceId, setServiceId] = useState(shop.settings.scheduling.onlineMenu[0]?.id ?? "");
   const [advisorId, setAdvisorId] = useState(shop.advisors[0]?.id ?? "");
   const [transportId, setTransportId] = useState(shop.settings.scheduling.transportOptions[0]?.id ?? "");
+  const [contactMethod, setContactMethod] = useState<"text" | "email" | "call">("text");
   const [date, setDate] = useState(today());
   const [time, setTime] = useState("");
   const [sentId, setSentId] = useState<string | null>(null);
@@ -119,6 +120,7 @@ function RequestPage() {
       time: pickedTime,
       advisorId: advisor,
       transportId: transport,
+      contactMethod,
       verified,
       code: enteredCode,
       customerId: customerId ?? undefined,
@@ -294,6 +296,13 @@ function RequestPage() {
           <Field label="Advisor">
             <select className="field" value={advisor} onChange={(event) => setAdvisorId(event.target.value)}>
               {shop.advisors.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+            </select>
+          </Field>
+          <Field label="How should the shop reach you">
+            <select className="field" value={contactMethod} onChange={(event) => setContactMethod(event.target.value as "text" | "email" | "call")}>
+              <option value="text">Text</option>
+              <option value="email">Email</option>
+              <option value="call">Call</option>
             </select>
           </Field>
           <Field label="Waiter or drop-off">

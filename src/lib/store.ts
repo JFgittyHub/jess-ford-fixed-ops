@@ -3,13 +3,14 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { assessAppointment, overrideReason } from "./capacity";
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
+import { decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
 import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
 import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
 import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
-import { addClosedDate, addOnlineService, addTransportOption, normalizeLane, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService } from "./scheduling";
+import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normalizeLane, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService } from "./scheduling";
 import { fullVin } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
@@ -102,6 +103,9 @@ interface ShopActions {
   setWorkingAs: (id: string) => void;
   issueOnlineChallenge: (customerId: string) => { ok: true; code: string; mobileLast4: string } | { ok: false; reason: "unknown" | "no-mobile" };
   addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string };
+  approveOnlineRequest: (id: string, linkCustomerId?: string) => { ok: true; appointmentId: string; noticeId: string } | { ok: false; reason: string };
+  declineOnlineRequest: (id: string) => { ok: true; noticeId: string } | { ok: false; reason: string };
+  simulateDayBeforeReminders: () => { created: number };
   linkAppointment: (id: string, orderId: string) => void;
   setOnHand: (partId: string, onHand: number) => void;
   addSku: (sku: Omit<PartSku, "id">) => void;
@@ -351,6 +355,7 @@ const dataKeys: (keyof ShopData)[] = [
   "overrides",
   "onlineRequests",
   "onlineChallenges",
+  "notices",
 ];
 
 /** Persisted-shop load path. Staff passwords and the old admin password are removed on every branch, including a saved blob with no repair-order list. */
@@ -1269,6 +1274,62 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             : state.onlineChallenges,
         }));
         return { ok: true, id };
+      },
+      approveOnlineRequest: (id, linkCustomerId) => {
+        const state = get();
+        const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
+        if (!request) return { ok: false, reason: "missing" };
+        const plan = planApproval({
+          request,
+          customers: state.customers,
+          vehicles: state.vehicles,
+          linkCustomerId,
+          at: now().toISOString(),
+          ids: { appointmentId: uid("ap"), noticeId: uid("nt"), customerId: uid("c"), vehicleId: uid("v") },
+        });
+        if ("ok" in plan) return plan;
+        set((current) => ({
+          customers: plan.newCustomer ? [plan.newCustomer, ...current.customers] : current.customers,
+          vehicles: plan.newVehicle ? [plan.newVehicle, ...current.vehicles] : current.vehicles,
+          appointments: [...current.appointments, plan.appointment].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
+          onlineRequests: current.onlineRequests.map((row) => (row.id === id ? plan.request : row)),
+          notices: [...(current.notices ?? []), plan.notice],
+        }));
+        return { ok: true, appointmentId: plan.appointment.id, noticeId: plan.notice.id };
+      },
+      declineOnlineRequest: (id) => {
+        const state = get();
+        const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
+        if (!request) return { ok: false, reason: "missing" };
+        const notice = decisionNotice({ id: uid("nt"), at: now().toISOString(), request, kind: "decline" });
+        set((current) => ({
+          onlineRequests: current.onlineRequests.map((row) => (row.id === id ? { ...row, status: "declined" as const } : row)),
+          notices: [...(current.notices ?? []), notice],
+        }));
+        return { ok: true, noticeId: notice.id };
+      },
+      simulateDayBeforeReminders: () => {
+        const state = get();
+        const day = tomorrowIso(now());
+        const already = new Set((state.notices ?? []).filter((row) => row.kind === "reminder" && row.appointmentId).map((row) => row.appointmentId));
+        const due = state.appointments.filter((row) => row.date === day && row.status !== "no_show" && !already.has(row.id));
+        const notices = due.map((appointment) => {
+          const request = state.onlineRequests.find((row) => row.appointmentId === appointment.id && row.status === "approved");
+          const customer = state.customers.find((row) => row.id === appointment.customerId);
+          const advisor = state.advisors.find((row) => row.id === appointment.advisorId);
+          return reminderNotice({
+            id: uid("nt"),
+            at: now().toISOString(),
+            appointment,
+            customer,
+            advisorName: advisor?.name ?? "Advisor",
+            transportName: laneLabel(appointment.lane, state.settings.scheduling.transportOptions),
+            method: reminderMethod(request, customer),
+            storeId: state.activeStoreId,
+          });
+        });
+        if (notices.length > 0) set((current) => ({ notices: [...(current.notices ?? []), ...notices] }));
+        return { created: notices.length };
       },
       linkAppointment: (id, orderId) =>
         set((state) => ({

@@ -230,7 +230,7 @@ describe("online requests", () => {
     assert.match(couleeList, /Helen Cho/);
     assert.equal(couleeList.includes("Bennett Shaw"), false);
     assert.equal(shop.getState().stores.pullman.onlineRequests[0].customerName, "Bennett Shaw");
-    assert.equal(renderToString(createElement(OnlineRequestList, { rows: [] })).includes("No online requests on this store."), true);
+    assert.equal(renderToString(createElement(OnlineRequestList, { rows: [] })).includes("No pending requests on this store."), true);
   });
 });
 

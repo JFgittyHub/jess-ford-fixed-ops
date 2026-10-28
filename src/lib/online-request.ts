@@ -1,5 +1,5 @@
 import { appointmentLoads, onlineSlots } from "./capacity";
-import type { Customer, OnlineChallenge, OnlineRequest, SchedulingSettings, StoreId, Vehicle } from "./types";
+import type { ContactMethod, Customer, OnlineChallenge, OnlineRequest, SchedulingSettings, StoreId, Vehicle } from "./types";
 
 const CODE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -21,6 +21,7 @@ export interface OnlineRequestInput {
   model?: string;
   vin?: string;
   plate?: string;
+  contactMethod?: ContactMethod;
 }
 
 export type OnlineLookup =
@@ -105,8 +106,9 @@ export function revealSavedVehicles(input: {
   };
 }
 
+/** Only a pending request holds capacity. Approved time moves to the appointment. Declined time is free. */
 export function requestHolds(requests: OnlineRequest[] | undefined) {
-  return (requests ?? []).map((row) => ({
+  return (requests ?? []).filter((row) => row.status === "pending").map((row) => ({
     id: row.id,
     date: row.date,
     time: row.time,
@@ -115,6 +117,26 @@ export function requestHolds(requests: OnlineRequest[] | undefined) {
     laborHours: row.laborHours,
     status: row.status,
   }));
+}
+
+export function normalizeContactMethod(value: string | undefined, fallback: { phone?: string; email?: string }): ContactMethod {
+  if (value === "text" || value === "email" || value === "call") return value;
+  if ((fallback.phone ?? "").trim()) return "text";
+  if ((fallback.email ?? "").trim()) return "email";
+  return "call";
+}
+
+/** Unique customer for an unverified request, including records with no mobile. */
+export function matchRequestCustomer(
+  customers: Customer[],
+  vehicles: Vehicle[],
+  request: { phone?: string; email?: string; vin?: string },
+): { customerId: string; vehicleId: string | null } | null {
+  const found = matchedCustomers(customers, vehicles, request);
+  if (found.length !== 1) return null;
+  const customer = found[0];
+  const vehicle = vehicleFor(customer.id, vehicles, request.vin ?? "");
+  return { customerId: customer.id, vehicleId: vehicle?.id ?? null };
 }
 
 export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId?: string; date?: string; now?: Date }) {
@@ -200,6 +222,7 @@ export function submitOnlineRequest(
       techName: tech?.name ?? "Technician",
       transportId: transport.id,
       transportName: transport.name,
+      contactMethod: normalizeContactMethod(input.contactMethod, { phone, email }),
       verified,
       customerId,
       customerName,
@@ -211,6 +234,7 @@ export function submitOnlineRequest(
       model,
       vin,
       plate,
+      appointmentId: null,
     },
   };
 }
@@ -232,4 +256,41 @@ function phonesMatch(record: string, queryDigits: string) {
   const stored = digits(record);
   if (stored.length < 7) return false;
   return stored.endsWith(queryDigits) || queryDigits.endsWith(stored);
+}
+
+function matchedCustomers(
+  customers: Customer[],
+  vehicles: Vehicle[],
+  request: { phone?: string; email?: string; vin?: string },
+): Customer[] {
+  const found = new Map<string, Customer>();
+  const email = (request.email ?? "").trim().toLowerCase();
+  if (email.includes("@")) {
+    for (const customer of customers) {
+      if (customer.email.trim().toLowerCase() === email) found.set(customer.id, customer);
+    }
+  }
+  const queryDigits = digits(request.phone ?? "");
+  if (queryDigits.length >= 7) {
+    for (const customer of customers) {
+      if (phonesMatch(customer.phone, queryDigits) || phonesMatch(customer.mobile, queryDigits)) found.set(customer.id, customer);
+    }
+  }
+  const vinKey = (request.vin ?? "").toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "");
+  if (vinKey.length >= 8) {
+    const last8 = vinKey.slice(-8);
+    for (const vehicle of vehicles) {
+      if (vehicle.vin.toUpperCase().slice(-8) !== last8) continue;
+      const customer = customers.find((row) => row.id === vehicle.customerId);
+      if (customer) found.set(customer.id, customer);
+    }
+  }
+  return [...found.values()];
+}
+
+function vehicleFor(customerId: string, vehicles: Vehicle[], vin: string): Vehicle | undefined {
+  const key = vin.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "");
+  if (key.length < 8) return undefined;
+  const last8 = key.slice(-8);
+  return vehicles.find((vehicle) => vehicle.customerId === customerId && (vehicle.vin.toUpperCase() === key || vehicle.vin.toUpperCase().slice(-8) === last8));
 }

@@ -286,11 +286,13 @@ export interface OnlineChallenge {
   issuedAt: string;
 }
 
-/** An online visit request. It is not a confirmed appointment. */
+export type ContactMethod = "text" | "email" | "call";
+
+/** An online visit request. It is not a confirmed appointment until an advisor approves it. */
 export interface OnlineRequest {
   id: string;
   storeId: StoreId;
-  status: "pending";
+  status: "pending" | "approved" | "declined";
   createdAt: string;
   serviceId: string;
   serviceName: string;
@@ -303,6 +305,8 @@ export interface OnlineRequest {
   techName: string;
   transportId: string;
   transportName: string;
+  /** How the customer asked to hear back. */
+  contactMethod: ContactMethod;
   verified: boolean;
   customerId: string | null;
   customerName: string;
@@ -314,6 +318,21 @@ export interface OnlineRequest {
   model: string;
   vin: string;
   plate: string;
+  appointmentId: string | null;
+}
+
+/** Simulated approval, decline, or day-before reminder. Nothing is sent. */
+export interface ShopNotice {
+  id: string;
+  storeId: StoreId;
+  at: string;
+  kind: "approval" | "decline" | "reminder";
+  method: ContactMethod;
+  recipient: string;
+  body: string;
+  requestId: string | null;
+  appointmentId: string | null;
+  customerName: string;
 }
 
 /** Why an advisor kept a booking the capacity check would not offer online. */
@@ -362,4 +381,5 @@ export interface ShopData {
   overrides: OverrideRecord[];
   onlineRequests: OnlineRequest[];
   onlineChallenges: OnlineChallenge[];
+  notices: ShopNotice[];
 }
