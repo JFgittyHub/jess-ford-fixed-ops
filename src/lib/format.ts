@@ -152,5 +152,5 @@ export const SKILL_LABEL = {
   b: "B tech",
   diesel: "Diesel",
   express: "Express",
-  quick: "Quick Lane",
+  quick: "Express",
 } as const;

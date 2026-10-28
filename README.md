@@ -2,6 +2,8 @@
 
 Service desk for Jess Ford in Grand Coulee and Pullman. Advisors write repair orders, techs flag time, parts come off the shelf when a ticket is invoiced, and the office can see the month against Washington’s repair-authorization rules (RCW 46.71).
 
+Module titles stay Scheduling, Customer Messaging, Inspections, and Service Marketing. Do not use third-party Schedule, Engage, Inspect, or Invite product labels.
+
 The shop calendar is Pacific Time. The screen shows today’s date, not a baked-in sample day. There is no in-app password. The desk opens only when demo mode is explicitly on: `VITE_DEMO_MODE` is the exact text `1` or `true`, and the data in memory is the sample month. A fresh start with that flag loads the sample month, and the staff picker, settings, and the rest of the desk are open. Edits during that visit stay in memory. Reloading brings the sample month back, and demo mode writes nothing to the browser’s saved shop. A sample month saved by an older visit is discarded. A real shop saved earlier is left in place and is not opened by the demo. A missing or unreadable flag, any other value, a real shop, or a development server by itself leaves the desk locked. The screen then says sign-in via Azure/Entra is coming, and demo mode is the only way in for now. Settings can reload the sample month, and asks before that replaces customers, tickets, or a roster. Clearing the shop or loading the sample keeps the current store name and labor targets.
 
 This desk is a standalone platform. A DMS adapter is optional, and the shop runs without one. Outside demo mode the shop is saved in this browser. Demo mode is not.
