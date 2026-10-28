@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { rateFor } from "@/lib/pay";
-import { noShowSuffix } from "@/components/no-show-mark";
+import { noShowSuffix } from "@/lib/no-show-label";
 import { useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
