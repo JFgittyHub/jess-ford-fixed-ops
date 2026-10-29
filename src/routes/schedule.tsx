@@ -9,7 +9,7 @@ import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
 import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
-import { activeCancellation, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment } from "@/lib/cancel";
+import { ARRIVED_CANCEL_CONFIRM, RO_CANCEL_BLOCKED, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, openRepairOrderBlocksCancel } from "@/lib/cancel";
 import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
@@ -17,7 +17,7 @@ import { requestHolds } from "@/lib/online-request";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
 import { useShop } from "@/lib/store";
-import type { Appointment, TransportOption } from "@/lib/types";
+import type { Appointment, CancelReason, TransportOption } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
 
@@ -58,6 +58,8 @@ function ScheduleDesk() {
   const [showCancelled, setShowCancelled] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
+  const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   if (liveSeed !== seed) {
     setSeed(liveSeed);
     setSelectedId(null);
@@ -66,6 +68,8 @@ function ScheduleDesk() {
     setPreset(null);
     setCancelId(null);
     setActionError(null);
+    setOverridePrompt(null);
+    setArrivedGate(null);
   }
   const { customerId, vehicleId, advisorId, techId, serviceId: servicePick, onlineTechId } = liveSeed;
   const patchSeed = (patch: Partial<DeskSeed>) => setSeed((current) => ({ ...deskSeedOnStore(current, shop), ...patch }));
@@ -121,22 +125,47 @@ function ScheduleDesk() {
     return { blocked: result.blocked, warning: result.blocked ? null : advisorBookingNote(result) };
   }
 
-  function confirmCancel(input: { reason: Parameters<typeof shop.cancelAppointment>[1]["reason"]; note: string }) {
+  function askCancel(id: string) {
+    const row = shop.appointments.find((item) => item.id === id);
+    const order = row?.orderId ? shop.orders.find((item) => item.id === row.orderId) : undefined;
+    if (openRepairOrderBlocksCancel(order)) {
+      setActionError(RO_CANCEL_BLOCKED);
+      setCancelId(null);
+      return;
+    }
+    setActionError(null);
+    setArrivedGate(null);
+    setCancelId(id);
+  }
+
+  function confirmCancel(input: { reason: CancelReason; note: string }, confirmArrived = false) {
     if (!cancelId) return "That appointment is not on this store.";
-    const result = shop.cancelAppointment(cancelId, input);
+    const result = shop.cancelAppointment(cancelId, input, confirmArrived);
+    if (result.arrivedConfirm) {
+      setArrivedGate(input);
+      return null;
+    }
     if (!result.ok) return result.error;
     setCancelId(null);
     setEditingId(null);
+    setArrivedGate(null);
     setActionError(null);
     return null;
   }
 
-  function reinstate(id: string) {
-    const result = shop.reinstateAppointment(id);
-    if (!result.ok) {
-      setActionError(result.error);
+  function reinstate(id: string, confirmOverride = false) {
+    const result = shop.reinstateAppointment(id, confirmOverride);
+    if (result.warning && !result.ok) {
+      setOverridePrompt({ id, warning: result.warning });
+      setActionError(null);
       return;
     }
+    if (!result.ok) {
+      setActionError(result.error);
+      setOverridePrompt(null);
+      return;
+    }
+    setOverridePrompt(null);
     setActionError(null);
     setSelectedId(id);
   }
@@ -156,7 +185,7 @@ function ScheduleDesk() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>
-          <Button small tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
+          <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
           <Button small onClick={() => setDay((value) => addDays(value, -1))}>Previous</Button>
           <p className="min-w-40 text-center text-sm font-semibold">{dayLabel(day)}</p>
           <DayJump value={day} onChange={setDay} />
@@ -213,7 +242,7 @@ function ScheduleDesk() {
           if (row) setPreset(row);
         }}
         onEdit={(id) => openAppointment(id)}
-        onCancel={canCancel ? (id) => { setActionError(null); setCancelId(id); } : undefined}
+        onCancel={canCancel ? (id) => askCancel(id) : undefined}
         label={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         hoursFor={(row) => laborHours(row, shop.laborOps)}
         summary={(row) => {
@@ -251,7 +280,7 @@ function ScheduleDesk() {
           onStatus={(status) => shop.setAppointmentStatus(selected.id, status)}
           onWrite={() => setPreset(selected)}
           onEdit={() => openAppointment(selected.id)}
-          onCancel={() => { setActionError(null); setCancelId(selected.id); }}
+          onCancel={() => askCancel(selected.id)}
           onReinstate={() => reinstate(selected.id)}
         />
       ) : null}
@@ -289,31 +318,41 @@ function ScheduleDesk() {
       <Modal open={editing !== null} onClose={() => setEditingId(null)} title="Appointment details" description={editing ? `${dayLabel(editing.date)} · ${editing.time}` : undefined}>
         {editing ? (
           <>
-            <AppointmentFields
-              key={`${editing.id}-${editing.status}`}
-              customers={shop.customers}
-              vehicles={shop.vehicles}
-              advisors={shop.advisors}
-              techs={board}
-              laborOps={shop.laborOps}
-              transports={transports}
-              submitLabel="Save changes"
-              showStatus={editing.status !== "cancelled"}
-              capacityFor={(draft) => capacityFor(draft, editing.id)}
-              initial={editing}
-              onSubmit={(value) => {
-                const result = shop.saveAdvisorAppointment(value, editing.id);
-                if (!result.ok) return result.error;
-                setEditingId(null);
-                return null;
-              }}
-            />
+            {editing.status === "cancelled" ? (
+              <div className="grid gap-2 text-sm">
+                <p><span className="text-muted">Day</span> {dayLabel(editing.date)} · {clockTime(editing.time)}</p>
+                <p><span className="text-muted">Customer</span> {look.customer.get(editing.customerId)?.name ?? "Customer"}</p>
+                <p><span className="text-muted">Vehicle</span> {look.vehicle.get(editing.vehicleId) ? `${look.vehicle.get(editing.vehicleId)?.year} Ford ${look.vehicle.get(editing.vehicleId)?.model}` : "No vehicle"}</p>
+                <p><span className="text-muted">Concern</span> {editing.concern}</p>
+                <p className="text-muted">This appointment is cancelled. Reinstate it to change the date, customer, vehicle, or concern.</p>
+              </div>
+            ) : (
+              <AppointmentFields
+                key={`${editing.id}-${editing.status}`}
+                customers={shop.customers}
+                vehicles={shop.vehicles}
+                advisors={shop.advisors}
+                techs={board}
+                laborOps={shop.laborOps}
+                transports={transports}
+                submitLabel="Save changes"
+                showStatus
+                capacityFor={(draft) => capacityFor(draft, editing.id)}
+                initial={editing}
+                onSubmit={(value) => {
+                  const result = shop.saveAdvisorAppointment(value, editing.id);
+                  if (!result.ok) return result.error;
+                  setEditingId(null);
+                  return null;
+                }}
+              />
+            )}
             <div className="mt-3">
               <DeskCancelActions
                 actor={actor}
                 status={editing.status}
                 surface="edit"
-                onCancel={() => { setActionError(null); setCancelId(editing.id); }}
+                onCancel={() => askCancel(editing.id)}
                 onReinstate={() => reinstate(editing.id)}
               />
             </div>
@@ -321,8 +360,26 @@ function ScheduleDesk() {
         ) : null}
       </Modal>
 
-      <Modal open={cancelling !== null} onClose={() => setCancelId(null)} title="Cancel appointment" description={cancelling ? `${look.customer.get(cancelling.customerId)?.name ?? "Customer"} · ${dayLabel(cancelling.date)} at ${clockTime(cancelling.time)}` : undefined}>
-        {cancelling ? <CancelForm key={cancelling.id} onSubmit={confirmCancel} /> : null}
+      <Modal open={cancelling !== null} onClose={() => { setCancelId(null); setArrivedGate(null); }} title="Cancel appointment" description={cancelling ? `${look.customer.get(cancelling.customerId)?.name ?? "Customer"} · ${dayLabel(cancelling.date)} at ${clockTime(cancelling.time)}` : undefined}>
+        {cancelling && arrivedGate ? (
+          <div className="grid gap-3">
+            <p className="text-sm">{ARRIVED_CANCEL_CONFIRM}</p>
+            <div className="mt-4 flex justify-start">
+              <Button type="button" className="btn-danger min-h-11" onClick={() => confirmCancel(arrivedGate, true)}>Cancel anyway</Button>
+            </div>
+          </div>
+        ) : cancelling ? <CancelForm key={cancelling.id} onSubmit={(input) => confirmCancel(input)} /> : null}
+      </Modal>
+
+      <Modal open={overridePrompt !== null} onClose={() => setOverridePrompt(null)} title="Reinstate past capacity" description="The same warning as a booking. Nothing is saved until you confirm.">
+        {overridePrompt ? (
+          <div className="grid gap-3">
+            <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{overridePrompt.warning}</p>
+            <div className="mt-4 flex justify-start">
+              <Button className="min-h-11" tone="primary" onClick={() => reinstate(overridePrompt.id, true)}>Reinstate anyway</Button>
+            </div>
+          </div>
+        ) : null}
       </Modal>
 
       <NewOrder
@@ -369,14 +426,15 @@ function Selected({
   onCancel: () => void;
   onReinstate: () => void;
 }) {
-  const cancellation = activeCancellation(row);
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
         <p className="flex flex-wrap items-baseline gap-2 font-semibold">{name}<NoShowMark count={noShows} /></p>
         <p className="text-sm text-muted">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : ""} · {row.concern}</p>
         <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {laneName}</p>
-        {cancellation ? <p className="text-sm text-muted">{cancellationLine(cancellation)}</p> : null}
+        {(row.cancelHistory ?? []).map((event, index) => (
+          <p key={`${event.at}-${event.action ?? "cancel"}-${index}`} className="text-sm text-muted">{cancellationLine(event)}</p>
+        ))}
         {actionError ? <p role="alert" className="text-sm text-[#8a3b2a]">{actionError}</p> : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">

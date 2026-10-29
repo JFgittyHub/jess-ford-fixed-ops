@@ -3,24 +3,28 @@ import { readFileSync } from "node:fs";
 import { after, describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
-import { AppointmentCalendar } from "../components/appointment-calendar.tsx";
-import { CancelledHistory, DeskCancelActions } from "../components/cancel-appointment.tsx";
+import { AppointmentCalendar, clockTime } from "../components/appointment-calendar.tsx";
+import { CancelForm, CancelledHistory, DeskCancelActions } from "../components/cancel-appointment.tsx";
 import { textingAdapter } from "./adapters/texting.ts";
 import { deskSeedFor } from "./booking.ts";
 import { appointmentLoads, assessAppointment, onlineSlots } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import {
+  CANCEL_NOTE_MAX,
   CANCEL_REASONS,
+  CANCELLED_LOCKED,
   activeCancellation,
   appointmentsOnBoard,
+  cancelReasonLabel,
   cancelledOnDay,
   deskActor,
   mayCancelAppointment,
+  normalizeCancelHistory,
 } from "./cancel.ts";
 import { tomorrowIso } from "./notices.ts";
 import type { ShopStorage } from "./shop-storage.ts";
-import { createShopStore, type ShopState } from "./store.ts";
-import type { Appointment, CancelReason } from "./types.ts";
+import { SHOP_PERSIST_VERSION, createShopStore, migrateSavedShop, type ShopState } from "./store.ts";
+import type { Appointment, CancelReason, OnlineRequest } from "./types.ts";
 
 const when = "2026-10-20T15:30:00.000Z";
 const day = "2027-01-06";
@@ -205,6 +209,8 @@ describe("cancel an appointment", () => {
     assert.match(shownList, /Rescheduled/);
     assert.match(shownList, /Megan Cho/);
     assert.match(shownList, /Reinstate/);
+    assert.match(shownList, new RegExp(clockTime("09:30").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(shownList.includes("09:30"), false);
   });
 
   it("is never a no-show and does not set the customer no-show flag", () => {
@@ -225,14 +231,19 @@ describe("cancel an appointment", () => {
     const flagged = shop.getState().customers.find((item) => item.id === helen.id)?.noShows ?? 0;
     assert.equal(flagged, before + 1);
     assert.equal(shop.getState().cancelAppointment(marked.appointmentId, { reason: "customer-request" }).ok, true);
-    assert.equal(shop.getState().appointments.find((item) => item.id === marked.appointmentId)?.status, "cancelled");
-    assert.equal(shop.getState().customers.find((item) => item.id === helen.id)?.noShows, flagged);
+    const cancelledNoShow = shop.getState().appointments.find((item) => item.id === marked.appointmentId);
+    assert.equal(cancelledNoShow?.status, "cancelled");
+    assert.equal(cancelledNoShow?.cancelHistory?.[0]?.priorStatus, "no_show");
+    assert.equal(shop.getState().customers.find((item) => item.id === helen.id)?.noShows, before);
+    assert.equal(shop.getState().reinstateAppointment(marked.appointmentId).ok, true);
+    assert.equal(shop.getState().appointments.find((item) => item.id === marked.appointmentId)?.status, "scheduled");
+    assert.equal(shop.getState().customers.find((item) => item.id === helen.id)?.noShows, before);
 
     const bypass = book(shop.getState(), "Bypass");
     shop.getState().setAppointmentStatus(bypass.appointmentId, "cancelled");
     shop.getState().updateAppointment(bypass.appointmentId, { status: "cancelled" });
     assert.equal(shop.getState().appointments.find((item) => item.id === bypass.appointmentId)?.status, "scheduled");
-    assert.equal(shop.getState().customers.find((item) => item.id === helen.id)?.noShows, flagged);
+    assert.equal(shop.getState().customers.find((item) => item.id === helen.id)?.noShows, before);
   });
 
   it("reinstates through the same capacity check as a booking", () => {
@@ -248,7 +259,10 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().overrides.length, beforeOverrides);
     const restored = shop.getState().appointments.find((row) => row.id === quiet.appointmentId);
     assert.equal(restored?.status, "scheduled");
-    assert.equal(restored?.cancelHistory?.length, 1);
+    assert.equal(restored?.cancelHistory?.length, 2);
+    assert.equal(restored?.cancelHistory?.[1]?.action, "reinstate");
+    assert.equal(restored?.cancelHistory?.[1]?.who, "Jordan Hale");
+    assert.equal(restored?.cancelHistory?.[1]?.whoId, "jordan");
     assert.equal(activeCancellation(restored!), null);
     assert.equal(appointmentsOnBoard(shop.getState().appointments).some((row) => row.id === quiet.appointmentId), true);
 
@@ -256,7 +270,13 @@ describe("cancel an appointment", () => {
     assert.equal(heavy.ok, true, heavy.error ?? "");
     assert.equal(shop.getState().cancelAppointment(heavy.appointmentId, { reason: "rescheduled" }).ok, true);
     const logged = shop.getState().overrides.length;
-    const again = shop.getState().reinstateAppointment(heavy.appointmentId);
+    const asked = shop.getState().reinstateAppointment(heavy.appointmentId);
+    assert.equal(asked.ok, false);
+    assert.match(asked.warning ?? "", /You can still book it/);
+    assert.equal(asked.overrideId, null);
+    assert.equal(shop.getState().overrides.length, logged);
+    assert.equal(shop.getState().appointments.find((row) => row.id === heavy.appointmentId)?.status, "cancelled");
+    const again = shop.getState().reinstateAppointment(heavy.appointmentId, true);
     assert.equal(again.ok, true, again.error ?? "");
     assert.ok(again.overrideId);
     const entry = shop.getState().overrides.find((row) => row.id === again.overrideId);
@@ -270,7 +290,9 @@ describe("cancel an appointment", () => {
     const blockedActor = book(shop.getState(), "Tech reinstate");
     shop.setState({ workingAsId: "megan" });
     assert.equal(shop.getState().cancelAppointment(blockedActor.appointmentId, { reason: "customer-request" }).ok, true);
-    shop.getState().updateAppointment(blockedActor.appointmentId, { techId: "not-on-this-store" });
+    shop.setState({
+      appointments: shop.getState().appointments.map((row) => (row.id === blockedActor.appointmentId ? { ...row, techId: "not-on-this-store" } : row)),
+    });
     const refused = shop.getState().reinstateAppointment(blockedActor.appointmentId);
     assert.equal(refused.ok, false);
     assert.match(refused.error ?? "", /isn't on this store/);
@@ -318,6 +340,191 @@ describe("cancel an appointment", () => {
     const reinstatedNotices = JSON.stringify(shop.getState().notices);
     assert.equal(shop.getState().reinstateAppointment(saved.appointmentId).ok, true);
     assert.equal(JSON.stringify(shop.getState().notices), reinstatedNotices);
+  });
+
+  it("records who reinstated the visit and will not edit or move it while cancelled", () => {
+    pinClock(when);
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
+    const saved = book(shop.getState(), "Locked visit");
+    const before = shop.getState().appointments.find((row) => row.id === saved.appointmentId);
+    assert.ok(before);
+    assert.equal(shop.getState().cancelAppointment(saved.appointmentId, { reason: "customer-request" }).ok, true);
+    const cancelled = shop.getState().appointments.find((row) => row.id === saved.appointmentId);
+    assert.equal(cancelled?.cancelHistory?.[0]?.action, "cancel");
+    assert.equal(cancelled?.cancelHistory?.[0]?.who, "Megan Cho");
+    assert.equal(cancelled?.cancelHistory?.[0]?.at, when);
+
+    const edited = shop.getState().saveAdvisorAppointment(draft(deskSeedFor(shop.getState()), {
+      concern: "Changed after cancel",
+      date: "2027-02-02",
+      customerId: shop.getState().customers[1].id,
+    }), saved.appointmentId);
+    assert.equal(edited.ok, false);
+    assert.equal(edited.error, CANCELLED_LOCKED);
+    const moved = shop.getState().moveAppointment(saved.appointmentId, { date: "2027-02-02", time: "11:00" });
+    assert.equal(moved.ok, false);
+    assert.equal(moved.error, CANCELLED_LOCKED);
+    const patched = shop.getState().updateAppointment(saved.appointmentId, { concern: "Changed after cancel", vehicleId: "someone-else" });
+    assert.equal(patched.ok, false);
+    assert.equal(patched.error, CANCELLED_LOCKED);
+    const still = shop.getState().appointments.find((row) => row.id === saved.appointmentId);
+    assert.equal(still?.date, before.date);
+    assert.equal(still?.customerId, before.customerId);
+    assert.equal(still?.vehicleId, before.vehicleId);
+    assert.equal(still?.concern, before.concern);
+
+    shop.getState().setWorkingAs("jordan");
+    const back = shop.getState().reinstateAppointment(saved.appointmentId);
+    assert.equal(back.ok, true, back.error ?? "");
+    const history = shop.getState().appointments.find((row) => row.id === saved.appointmentId)?.cancelHistory ?? [];
+    assert.equal(history.length, 2);
+    assert.equal(history[1]?.action, "reinstate");
+    assert.equal(history[1]?.who, "Jordan Hale");
+    assert.equal(history[1]?.whoId, "jordan");
+    assert.equal(history[1]?.at, when);
+  });
+
+  it("refuses a technician or advisor who is not on the store when moving or editing", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    const saved = book(shop.getState(), "Stay on this store");
+    const row = shop.getState().appointments.find((item) => item.id === saved.appointmentId);
+    assert.ok(row);
+    const moved = shop.getState().moveAppointment(saved.appointmentId, { techId: "pl-marcus" });
+    assert.equal(moved.ok, false);
+    assert.match(moved.error ?? "", /technician isn't on this store/);
+    const edited = shop.getState().updateAppointment(saved.appointmentId, { advisorId: "pl-jordan" });
+    assert.equal(edited.ok, false);
+    assert.match(edited.error ?? "", /advisor isn't on this store/);
+    const kept = shop.getState().appointments.find((item) => item.id === saved.appointmentId);
+    assert.equal(kept?.techId, row.techId);
+    assert.equal(kept?.advisorId, row.advisorId);
+    assert.equal(shop.getState().moveAppointment(saved.appointmentId, { techId: "elena", time: "10:00" }).ok, true);
+    assert.equal(shop.getState().appointments.find((item) => item.id === saved.appointmentId)?.techId, "elena");
+  });
+
+  it("keeps a legacy cancel reason, caps the note, and marks the linked request cancelled", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
+    const saved = book(shop.getState(), "Linked visit");
+    const linked = requestFor(saved.appointmentId, "rq-linked");
+    const other = requestFor("other-appointment", "rq-other");
+    shop.setState({ onlineRequests: [linked, other] });
+    const longNote = "x".repeat(CANCEL_NOTE_MAX + 1);
+    const tooLong = shop.getState().cancelAppointment(saved.appointmentId, { reason: "other", note: longNote });
+    assert.equal(tooLong.ok, false);
+    assert.equal(tooLong.error, "Keep the note to 500 characters.");
+    assert.equal(shop.getState().cancelAppointment(saved.appointmentId, { reason: "other", note: "x".repeat(CANCEL_NOTE_MAX) }).ok, true);
+    assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-linked")?.status, "cancelled");
+    assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-other")?.status, "approved");
+
+    const kept = normalizeCancelHistory([{ reason: "sold-the-truck", note: "old", who: "Megan", whoId: "megan", at: when }]);
+    assert.equal(kept?.[0]?.reason, "sold-the-truck");
+    assert.equal(cancelReasonLabel(kept?.[0]?.reason ?? ""), "Other");
+    const migrated = migrateSavedShop({
+      orders: [],
+      techs: [{ id: "marcus", name: "Marcus Hale" }],
+      appointments: [{
+        id: "legacy",
+        date: day,
+        time: "09:00",
+        minutes: 60,
+        customerId: "c1",
+        vehicleId: "v1",
+        advisorId: "megan",
+        techId: "marcus",
+        concern: "Oil",
+        lines: [{ id: "a", code: "A", concern: "Oil" }],
+        vin: "",
+        laborOpIds: [],
+        lane: "drop",
+        status: "cancelled",
+        orderId: null,
+        cancelHistory: [{ reason: "sold-the-truck", note: "old", who: "Megan", whoId: "megan", at: when }],
+      }],
+    });
+    const legacy = migrated.appointments?.find((row) => row.id === "legacy");
+    assert.equal(legacy?.cancelHistory?.[0]?.reason, "sold-the-truck");
+    assert.equal(cancelReasonLabel(legacy?.cancelHistory?.[0]?.reason ?? ""), "Other");
+    assert.equal(SHOP_PERSIST_VERSION > 28, true);
+  });
+
+  it("lets a technician be removed when only cancelled appointments remain", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
+    assert.equal(shop.getState().addTech({
+      number: "77",
+      name: "Temp Lane",
+      skill: "b",
+      payStyle: "flat",
+      flagRate: 20,
+      hourlyRate: 20,
+      board: "main",
+    }), true);
+    const tech = shop.getState().techs.find((row) => row.name === "Temp Lane");
+    assert.ok(tech);
+    const saved = shop.getState().saveAdvisorAppointment(draft(deskSeedFor(shop.getState()), { techId: tech.id, concern: "Temp visit" }));
+    assert.equal(saved.ok, true, saved.error ?? "");
+    assert.equal(shop.getState().removeTech(tech.id), "appointments");
+    assert.equal(shop.getState().cancelAppointment(saved.appointmentId, { reason: "duplicate" }).ok, true);
+    assert.equal(shop.getState().removeTech(tech.id), "ok");
+    assert.equal(shop.getState().techs.some((row) => row.id === tech.id), false);
+    assert.equal(shop.getState().appointments.some((row) => row.id === saved.appointmentId), true);
+  });
+
+  it("blocks cancel while the repair order is open, and allows it once the order is invoiced", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
+    const visit = book(shop.getState(), "On a repair order");
+    const orderId = shop.getState().orders.find((row) => row.status !== "invoiced")?.id;
+    assert.ok(orderId);
+    shop.getState().linkAppointment(visit.appointmentId, orderId);
+    const blocked = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.error, "This visit already has a repair order. Close or void the RO first.");
+    assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "in_shop");
+    assert.equal(shop.getState().orders.some((row) => row.id === orderId), true);
+    shop.setState({
+      orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status: "invoiced" as const } : row)),
+    });
+    const closed = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
+    assert.equal(closed.ok, true, closed.error ?? "");
+    assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "cancelled");
+    assert.equal(shop.getState().orders.some((row) => row.id === orderId), true);
+  });
+
+  it("cancels an in-shop visit with no open repair order, and confirms before cancelling an arrived visit", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
+    const inShop = book(shop.getState(), "In the shop");
+    shop.getState().setAppointmentStatus(inShop.appointmentId, "in_shop");
+    assert.equal(shop.getState().cancelAppointment(inShop.appointmentId, { reason: "customer-request" }).ok, true);
+    assert.equal(shop.getState().appointments.find((row) => row.id === inShop.appointmentId)?.status, "cancelled");
+
+    const arrived = book(shop.getState(), "Already here");
+    shop.getState().setAppointmentStatus(arrived.appointmentId, "arrived");
+    const asked = shop.getState().cancelAppointment(arrived.appointmentId, { reason: "customer-request" });
+    assert.equal(asked.ok, false);
+    assert.equal(asked.arrivedConfirm, "The customer is here — cancel anyway?");
+    assert.equal(shop.getState().appointments.find((row) => row.id === arrived.appointmentId)?.status, "arrived");
+    const confirmed = shop.getState().cancelAppointment(arrived.appointmentId, { reason: "customer-request" }, true);
+    assert.equal(confirmed.ok, true, confirmed.error ?? "");
+    assert.equal(shop.getState().appointments.find((row) => row.id === arrived.appointmentId)?.status, "cancelled");
+  });
+
+  it("requires a chosen reason and keeps the confirm control away from a small close button", () => {
+    const html = renderToString(createElement(CancelForm, { onSubmit: () => null }));
+    assert.match(html, /Choose a reason/);
+    assert.equal(html.includes("customer-request\" selected"), false);
+    assert.match(html, /card or SSN numbers/);
+    assert.match(html, /maxLength="500"/);
+    assert.match(html, /btn-danger/);
+    assert.match(html, /min-h-11/);
+    const controls = renderToString(createElement(DeskCancelActions, { actor: "advisor", status: "scheduled", surface: "card" }));
+    assert.match(controls, /min-h-11/);
+    assert.equal(controls.includes("btn-small"), false);
+    const schedule = readFileSync(new URL("../routes/schedule.tsx", import.meta.url), "utf8");
+    assert.match(schedule, /min-h-11[\s\S]{0,240}Show cancelled/);
   });
 });
 
@@ -371,6 +578,39 @@ function summary(name: string) {
     ops: "None",
     status: "Cancelled",
     canWrite: false,
+  };
+}
+
+function requestFor(appointmentId: string, id: string): OnlineRequest {
+  return {
+    id,
+    storeId: "grand-coulee",
+    status: "approved",
+    createdAt: when,
+    serviceId: "gc-oil",
+    serviceName: "Oil",
+    laborHours: 0.5,
+    date: day,
+    time: "09:00",
+    advisorId: "megan",
+    advisorName: "Megan Cho",
+    techId: "marcus",
+    techName: "Marcus Hale",
+    transportId: "drop",
+    transportName: "Drop-off",
+    contactMethod: "call",
+    verified: false,
+    customerId: null,
+    customerName: "Helen Cho",
+    phone: "",
+    email: "",
+    vehicleId: null,
+    year: 2020,
+    make: "Ford",
+    model: "F-150",
+    vin: "",
+    plate: "",
+    appointmentId,
   };
 }
 

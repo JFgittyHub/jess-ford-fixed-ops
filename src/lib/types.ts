@@ -205,13 +205,17 @@ export interface AppointmentLine {
   concern: string;
 }
 
-/** Who cancelled, when, and why. Kept on the appointment. Cancelling does not delete the visit. */
+/** Who changed the visit, and when. `action` is missing on older cancel rows. */
 export interface AppointmentCancel {
-  reason: CancelReason;
+  action?: "cancel" | "reinstate";
+  /** A known cancel reason, a legacy value kept for the record, or empty on reinstate. */
+  reason: string;
   note: string;
   who: string;
   whoId: string;
   at: string;
+  /** Status before the cancel. A former no-show is not put back on reinstate. */
+  priorStatus?: ApptStatus;
 }
 
 export interface Appointment {
@@ -307,7 +311,7 @@ export type ContactMethod = "text" | "email" | "call";
 export interface OnlineRequest {
   id: string;
   storeId: StoreId;
-  status: "pending" | "approved" | "declined";
+  status: "pending" | "approved" | "declined" | "cancelled";
   createdAt: string;
   serviceId: string;
   serviceName: string;

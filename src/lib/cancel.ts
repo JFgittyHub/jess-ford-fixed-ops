@@ -29,8 +29,19 @@ export function deskActor(state: {
   return "customer";
 }
 
-export function cancelReasonLabel(reason: CancelReason): string {
-  return CANCEL_REASONS.find((row) => row.id === reason)?.label ?? reason;
+export const CANCEL_NOTE_MAX = 500;
+export const CANCELLED_LOCKED = "This appointment is cancelled. Reinstate it to change the date, customer, vehicle, or concern.";
+export const RO_CANCEL_BLOCKED = "This visit already has a repair order. Close or void the RO first.";
+export const ARRIVED_CANCEL_CONFIRM = "The customer is here — cancel anyway?";
+
+/** An invoiced repair order is closed. A missing order does not block. Anything still on the open desk does. */
+export function openRepairOrderBlocksCancel(order: { status: string } | undefined): boolean {
+  if (!order) return false;
+  return order.status !== "invoiced";
+}
+
+export function cancelReasonLabel(reason: string): string {
+  return CANCEL_REASONS.find((row) => row.id === reason)?.label ?? "Other";
 }
 
 const SHOP_TZ = "America/Los_Angeles";
@@ -49,6 +60,7 @@ export function shopWhen(iso: string) {
 }
 
 export function cancellationLine(row: AppointmentCancel) {
+  if (row.action === "reinstate") return `Reinstated · ${row.who} · ${shopWhen(row.at)}`;
   const reason = cancelReasonLabel(row.reason);
   const note = row.note.trim() ? ` — ${row.note.trim()}` : "";
   return `${reason}${note} · ${row.who} · ${shopWhen(row.at)}`;
@@ -56,6 +68,7 @@ export function cancellationLine(row: AppointmentCancel) {
 
 export function cancelInputError(reason: string, note: string): string | null {
   if (!CANCEL_REASONS.some((row) => row.id === reason)) return "Choose a reason.";
+  if (note.trim().length > CANCEL_NOTE_MAX) return "Keep the note to 500 characters.";
   if (reason === "other" && !note.trim()) return "Add a note for Other.";
   return null;
 }
@@ -78,7 +91,10 @@ export function appointmentStatusLabel(status: ApptStatus): string {
 export function activeCancellation(row: { status: ApptStatus; cancelHistory?: AppointmentCancel[] }): AppointmentCancel | null {
   if (row.status !== "cancelled") return null;
   const history = row.cancelHistory ?? [];
-  return history[history.length - 1] ?? null;
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    if (history[index]?.action !== "reinstate") return history[index] ?? null;
+  }
+  return null;
 }
 
 export function appointmentsOnBoard<T extends { status: ApptStatus }>(rows: T[]): T[] {
@@ -89,7 +105,7 @@ export function cancelledOnDay<T extends { status: ApptStatus; date: string }>(r
   return rows.filter((row) => row.status === "cancelled" && row.date === day);
 }
 
-const REASONS = new Set<string>(CANCEL_REASONS.map((row) => row.id));
+const PRIOR_STATUSES = new Set<string>(["scheduled", "arrived", "no_show", "in_shop", "cancelled"]);
 
 export function normalizeCancelHistory(value: unknown): AppointmentCancel[] | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -97,14 +113,18 @@ export function normalizeCancelHistory(value: unknown): AppointmentCancel[] | un
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
     const row = item as Partial<AppointmentCancel>;
-    if (typeof row.reason !== "string" || !REASONS.has(row.reason)) continue;
     if (typeof row.who !== "string" || typeof row.at !== "string") continue;
+    const action = row.action === "reinstate" || row.action === "cancel" ? row.action : undefined;
+    if (action !== "reinstate" && typeof row.reason !== "string") continue;
+    const priorStatus = typeof row.priorStatus === "string" && PRIOR_STATUSES.has(row.priorStatus) ? row.priorStatus as ApptStatus : undefined;
     rows.push({
-      reason: row.reason as CancelReason,
-      note: typeof row.note === "string" ? row.note : "",
+      action,
+      reason: typeof row.reason === "string" ? row.reason : "",
+      note: typeof row.note === "string" ? row.note.trim().slice(0, CANCEL_NOTE_MAX) : "",
       who: row.who,
       whoId: typeof row.whoId === "string" ? row.whoId : "",
       at: row.at,
+      priorStatus,
     });
   }
   return rows.length > 0 ? rows : undefined;

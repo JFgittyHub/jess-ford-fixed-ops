@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { clockTime } from "@/components/appointment-calendar";
 import { Button, Field } from "@/components/ui";
 import {
+  CANCEL_NOTE_MAX,
   CANCEL_REASONS,
   activeCancellation,
   cancellationLine,
@@ -26,13 +28,13 @@ export function DeskCancelActions({
   if (status === "cancelled") {
     return (
       <div data-desk-cancel={surface}>
-        <Button small type="button" onClick={onReinstate}>Reinstate</Button>
+        <Button type="button" className="min-h-11" onClick={onReinstate}>Reinstate</Button>
       </div>
     );
   }
   return (
     <div data-desk-cancel={surface}>
-      <Button small type="button" onClick={onCancel}>Cancel appointment</Button>
+      <Button type="button" className="min-h-11" onClick={onCancel}>Cancel appointment</Button>
     </div>
   );
 }
@@ -42,7 +44,7 @@ export function CancelForm({
 }: {
   onSubmit: (input: { reason: CancelReason; note: string }) => string | null;
 }) {
-  const [reason, setReason] = useState<CancelReason>("customer-request");
+  const [reason, setReason] = useState<CancelReason | "">("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   return (
@@ -50,19 +52,23 @@ export function CancelForm({
       className="grid gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        setError(onSubmit({ reason, note }));
+        setError(onSubmit({ reason: reason as CancelReason, note }));
       }}
     >
       <Field label="Reason">
-        <select className="field" value={reason} onChange={(event) => setReason(event.target.value as CancelReason)}>
+        <select className="field min-h-11" value={reason} onChange={(event) => setReason(event.target.value as CancelReason | "")}>
+          <option value="">Choose a reason</option>
           {CANCEL_REASONS.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}
         </select>
       </Field>
       <Field label={reason === "other" ? "Note" : "Note, if you need one"}>
-        <input className="field" value={note} onChange={(event) => setNote(event.target.value)} />
+        <input className="field min-h-11" value={note} maxLength={CANCEL_NOTE_MAX} onChange={(event) => setNote(event.target.value)} />
       </Field>
+      <p className="text-sm normal-case tracking-normal text-muted">Don't enter card or SSN numbers.</p>
       {error ? <p role="alert" className="text-sm text-[#8a3b2a]">{error}</p> : null}
-      <Button tone="primary" type="submit">Cancel appointment</Button>
+      <div className="mt-4 flex justify-start">
+        <Button type="submit" className="btn-danger min-h-11">Cancel appointment</Button>
+      </div>
     </form>
   );
 }
@@ -92,10 +98,10 @@ export function CancelledHistory({
             <li key={row.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3 first:border-t-0 first:pt-0">
               <div>
                 <p className="font-semibold">{nameFor(row)}</p>
-                <p className="text-sm text-muted">{row.time} · {row.concern}</p>
+                <p className="text-sm text-muted">{clockTime(row.time)} · {row.concern}</p>
                 {record ? <p className="text-sm text-muted">{cancellationLine(record)}</p> : null}
               </div>
-              {allowReinstate ? <Button small type="button" onClick={() => onReinstate(row.id)}>Reinstate</Button> : null}
+              {allowReinstate ? <Button type="button" className="min-h-11" onClick={() => onReinstate(row.id)}>Reinstate</Button> : null}
             </li>
           );
         })}

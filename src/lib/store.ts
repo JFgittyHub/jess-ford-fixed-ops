@@ -1,8 +1,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
+import { advisorBookingNote, assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
-import { cancelInputError, deskActor, mayCancelAppointment, normalizeCancelHistory } from "./cancel";
+import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, RO_CANCEL_BLOCKED, cancelInputError, deskActor, mayCancelAppointment, normalizeCancelHistory, openRepairOrderBlocksCancel } from "./cancel";
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
@@ -97,13 +97,13 @@ interface ShopActions {
   createOrder: (input: NewOrderInput) => string;
   createCustomer: (input: NewCustomerInput) => { customerId: string; vehicleId: string };
   setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => void;
-  moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>) => void;
-  updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>) => void;
+  moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>) => { ok: boolean; error: string | null };
+  updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>) => { ok: boolean; error: string | null };
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
   saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null };
-  cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }) => { ok: boolean; error: string | null };
-  reinstateAppointment: (id: string) => { ok: boolean; overrideId: string | null; error: string | null };
+  cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }, confirmArrived?: boolean) => { ok: boolean; error: string | null; arrivedConfirm: string | null };
+  reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
   setWorkingAs: (id: string) => void;
   issueOnlineChallenge: (customerId: string) => { ok: true; code: string; mobileLast4: string } | { ok: false; reason: "unknown" | "no-mobile" };
   addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string };
@@ -331,7 +331,7 @@ function rewriteWithoutPasswords(raw: string): string {
   }
 }
 
-/** Every read and write drops leftover passwords, including a blob already marked version 28. */
+/** Every read and write drops leftover passwords. Persist version 29 re-runs migrate on older blobs. */
 function passwordStrippingStorage(backing: ShopStorage): ShopStorage {
   return {
     getItem(key) {
@@ -533,6 +533,9 @@ export interface ShopStoreOptions {
   /** Backing store. Demo mode never writes through it. */
   storage?: ShopStorage;
 }
+
+/** Bumped past 28 so a saved shop re-runs migrate, including cancel-history cleanup. */
+export const SHOP_PERSIST_VERSION = 29;
 
 export function createShopStore(options: ShopStoreOptions = {}) {
   const demoMode = options.demoMode ?? isDemoMode();
@@ -757,7 +760,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             result = "used";
             return state;
           }
-          if (state.appointments.some((row) => row.techId === id)) {
+          if (state.appointments.some((row) => row.techId === id && row.status !== "cancelled")) {
             result = "appointments";
             return state;
           }
@@ -1172,18 +1175,38 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             customers: adjustNoShows(state.customers, noShowChanges(current.status, status, current.customerId, current.customerId)),
           };
         }),
-      moveAppointment: (id, patch) =>
-        set((state) => ({
-          appointments: state.appointments.map((row) => {
-            if (row.id !== id) return row;
+      moveAppointment: (id, patch) => {
+        const state = get();
+        const current = state.appointments.find((row) => row.id === id);
+        if (!current) return { ok: false, error: "That appointment is not on this store." };
+        if (current.status === "cancelled") return { ok: false, error: CANCELLED_LOCKED };
+        const techId = patch.techId || current.techId;
+        const staffError = staffBlockMessage(
+          state.techs.some((tech) => tech.id === techId),
+          state.advisors.some((advisor) => advisor.id === current.advisorId),
+        );
+        if (staffError) return { ok: false, error: staffError };
+        set((next) => ({
+          appointments: next.appointments.map((row) => {
+            if (row.id !== id || row.status === "cancelled") return row;
             const minutes = patch.minutes === undefined ? row.minutes : Math.max(30, Math.round(patch.minutes / 30) * 30);
             const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : row.time);
             const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : row.date;
-            const techId = patch.techId || row.techId;
             return { ...row, minutes, time, date, techId };
           }),
-        })),
-      updateAppointment: (id, patch) =>
+        }));
+        return { ok: true, error: null };
+      },
+      updateAppointment: (id, patch) => {
+        const state = get();
+        const current = state.appointments.find((row) => row.id === id);
+        if (!current) return { ok: false, error: "That appointment is not on this store." };
+        if (current.status === "cancelled") return { ok: false, error: CANCELLED_LOCKED };
+        const staffError = staffBlockMessage(
+          state.techs.some((tech) => tech.id === (patch.techId || current.techId)),
+          state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
+        );
+        if (staffError) return { ok: false, error: staffError };
         set((state) => {
           const current = state.appointments.find((row) => row.id === id);
           const requested = patch.status ?? current?.status ?? "scheduled";
@@ -1215,8 +1238,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           customers: current
             ? adjustNoShows(state.customers, noShowChanges(current.status, nextStatus, current.customerId, nextCustomer))
             : state.customers,
-        };
-        }),
+          };
+        });
+        return { ok: true, error: null };
+      },
       addAppointment: (input, id) => {
         const appointmentId = id ?? uid("ap");
         set((state) => {
@@ -1253,6 +1278,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (existingId && !state.appointments.some((row) => row.id === existingId)) {
           return { ok: false, appointmentId: existingId, overrideId: null, error: "That appointment is not on this store." };
         }
+        const existing = existingId ? state.appointments.find((row) => row.id === existingId) : undefined;
+        if (existing && existing.status === "cancelled") {
+          return { ok: false, appointmentId: existing.id, overrideId: null, error: CANCELLED_LOCKED };
+        }
         const staffError = staffBlockMessage(
           state.techs.some((tech) => tech.id === input.techId),
           state.advisors.some((advisor) => advisor.id === input.advisorId),
@@ -1262,11 +1291,6 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (vehicleError) return { ok: false, appointmentId: "", overrideId: null, error: vehicleError };
         const concernError = bookingConcernError(input.lines, input.concern);
         if (concernError) return { ok: false, appointmentId: "", overrideId: null, error: concernError };
-        const existing = existingId ? state.appointments.find((row) => row.id === existingId) : undefined;
-        if (existing && existing.status === "cancelled") {
-          get().updateAppointment(existing.id, input);
-          return { ok: true, appointmentId: existing.id, overrideId: null, error: null };
-        }
         const appointmentId = existingId ?? uid("ap");
         const result = assessAppointment({
           scheduling: state.settings.scheduling,
@@ -1305,48 +1329,61 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const overrideId = logOverride(result, appointmentId, input);
         return { ok: true, appointmentId, overrideId, error: null };
       },
-      cancelAppointment: (id, input) => {
+      cancelAppointment: (id, input, confirmArrived = false) => {
         const state = get();
         if (!mayCancelAppointment(deskActor(state))) {
-          return { ok: false, error: "Only an advisor or service manager can cancel an appointment." };
+          return { ok: false, error: "Only an advisor or service manager can cancel an appointment.", arrivedConfirm: null };
         }
         const current = state.appointments.find((row) => row.id === id);
-        if (!current) return { ok: false, error: "That appointment is not on this store." };
-        if (current.status === "cancelled") return { ok: false, error: "This appointment is already cancelled." };
+        if (!current) return { ok: false, error: "That appointment is not on this store.", arrivedConfirm: null };
+        if (current.status === "cancelled") return { ok: false, error: "This appointment is already cancelled.", arrivedConfirm: null };
+        const linked = current.orderId ? state.orders.find((order) => order.id === current.orderId) : undefined;
+        if (openRepairOrderBlocksCancel(linked)) {
+          return { ok: false, error: RO_CANCEL_BLOCKED, arrivedConfirm: null };
+        }
+        if (current.status === "arrived" && !confirmArrived) {
+          return { ok: false, error: null, arrivedConfirm: ARRIVED_CANCEL_CONFIRM };
+        }
         const reasonError = cancelInputError(input.reason, input.note ?? "");
-        if (reasonError) return { ok: false, error: reasonError };
+        if (reasonError) return { ok: false, error: reasonError, arrivedConfirm: null };
         const who = actingStaff(state);
         const record: AppointmentCancel = {
+          action: "cancel",
           reason: input.reason,
-          note: (input.note ?? "").trim(),
+          note: (input.note ?? "").trim().slice(0, CANCEL_NOTE_MAX),
           who: who.name,
           whoId: who.id,
           at: now().toISOString(),
+          priorStatus: current.status,
         };
         set((currentState) => {
           const row = currentState.appointments.find((item) => item.id === id);
           if (!row || row.status === "cancelled") return currentState;
           return {
             appointments: currentState.appointments.map((item) => (item.id === id
-              ? { ...item, status: "cancelled" as const, cancelHistory: [...(item.cancelHistory ?? []), record] }
+              ? { ...item, status: "cancelled" as const, cancelHistory: [...(item.cancelHistory ?? []), { ...record, priorStatus: row.status }] }
               : item)),
+            customers: adjustNoShows(currentState.customers, noShowChanges(row.status, "cancelled", row.customerId, row.customerId)),
+            onlineRequests: (currentState.onlineRequests ?? []).map((request) => (
+              request.appointmentId === id && request.status === "approved" ? { ...request, status: "cancelled" as const } : request
+            )),
           };
         });
-        return { ok: true, error: null };
+        return { ok: true, error: null, arrivedConfirm: null };
       },
-      reinstateAppointment: (id) => {
+      reinstateAppointment: (id, confirmOverride = false) => {
         const state = get();
         if (!mayCancelAppointment(deskActor(state))) {
-          return { ok: false, overrideId: null, error: "Only an advisor or service manager can reinstate an appointment." };
+          return { ok: false, overrideId: null, error: "Only an advisor or service manager can reinstate an appointment.", warning: null };
         }
         const current = state.appointments.find((row) => row.id === id);
-        if (!current) return { ok: false, overrideId: null, error: "That appointment is not on this store." };
-        if (current.status !== "cancelled") return { ok: false, overrideId: null, error: "This appointment is not cancelled." };
+        if (!current) return { ok: false, overrideId: null, error: "That appointment is not on this store.", warning: null };
+        if (current.status !== "cancelled") return { ok: false, overrideId: null, error: "This appointment is not cancelled.", warning: null };
         const staffError = staffBlockMessage(
           state.techs.some((tech) => tech.id === current.techId),
           state.advisors.some((advisor) => advisor.id === current.advisorId),
         );
-        if (staffError) return { ok: false, overrideId: null, error: staffError };
+        if (staffError) return { ok: false, overrideId: null, error: staffError, warning: null };
         const result = assessAppointment({
           scheduling: state.settings.scheduling,
           advisors: state.advisors,
@@ -1363,12 +1400,27 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             ignoreId: current.id,
           },
         });
-        if (result.blocked) return { ok: false, overrideId: null, error: result.blocked };
+        if (result.blocked) return { ok: false, overrideId: null, error: result.blocked, warning: null };
+        const warning = advisorBookingNote(result);
+        if (warning && !confirmOverride) {
+          return { ok: false, overrideId: null, error: null, warning };
+        }
+        const who = actingStaff(state);
+        const reinstated: AppointmentCancel = {
+          action: "reinstate",
+          reason: "",
+          note: "",
+          who: who.name,
+          whoId: who.id,
+          at: now().toISOString(),
+        };
         set((currentState) => ({
-          appointments: currentState.appointments.map((row) => (row.id === id && row.status === "cancelled" ? { ...row, status: "scheduled" as const } : row)),
+          appointments: currentState.appointments.map((row) => (row.id === id && row.status === "cancelled"
+            ? { ...row, status: "scheduled" as const, cancelHistory: [...(row.cancelHistory ?? []), reinstated] }
+            : row)),
         }));
-        const overrideId = logOverride(result, id, current);
-        return { ok: true, overrideId, error: null };
+        const overrideId = warning ? logOverride(result, id, current) : null;
+        return { ok: true, overrideId, error: null, warning };
       },
       setWorkingAs: (id) =>
         set((state) => {
@@ -1522,7 +1574,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const backing = options.storage ?? browserLocalStorage();
           return demoMode ? shopPersistStorage(true, backing) : passwordStrippingStorage(backing);
         }),
-        version: 28,
+        version: SHOP_PERSIST_VERSION,
         skipHydration: true,
         migrate: (persisted) => migrateSavedShop(persisted),
         merge: (persisted, current) => mergeSavedShop(persisted, current as ShopState),

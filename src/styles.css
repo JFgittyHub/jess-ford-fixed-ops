@@ -110,6 +110,12 @@
     color: var(--color-accent-fg);
   }
 
+  .btn-danger {
+    background: #8a3b2a;
+    color: #fff;
+    border-color: #8a3b2a;
+  }
+
   .btn-small {
     min-height: 2.25rem;
     padding: 0.2rem 0.65rem;
