@@ -17,12 +17,15 @@ export function DeskCancelActions({
   surface,
   onCancel,
   onReinstate,
+  blockedReason,
 }: {
   actor: DeskActor;
   status: ApptStatus;
   surface: "card" | "edit";
   onCancel?: () => void;
   onReinstate?: () => void;
+  /** Shown beside Cancel, including inside Edit details, when the visit cannot be cancelled. */
+  blockedReason?: string | null;
 }) {
   if (!mayCancelAppointment(actor)) return null;
   if (status === "cancelled") {
@@ -34,7 +37,8 @@ export function DeskCancelActions({
   }
   return (
     <div data-desk-cancel={surface}>
-      <Button type="button" className="min-h-11" onClick={onCancel}>Cancel appointment</Button>
+      <Button type="button" className="min-h-11" disabled={Boolean(blockedReason)} onClick={onCancel}>Cancel appointment</Button>
+      {blockedReason ? <p role="alert" className="mt-2 max-w-sm text-sm normal-case tracking-normal text-[#8a3b2a]">{blockedReason}</p> : null}
     </div>
   );
 }

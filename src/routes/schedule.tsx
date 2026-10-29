@@ -9,7 +9,7 @@ import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
 import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
-import { ARRIVED_CANCEL_CONFIRM, RO_CANCEL_BLOCKED, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, openRepairOrderBlocksCancel } from "@/lib/cancel";
+import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
@@ -125,11 +125,16 @@ function ScheduleDesk() {
     return { blocked: result.blocked, warning: result.blocked ? null : advisorBookingNote(result) };
   }
 
+  function blockFor(row: { orderId: string | null } | null | undefined) {
+    if (!row?.orderId) return null;
+    return repairOrderCancelBlock(row.orderId, shop.orders.find((order) => order.id === row.orderId));
+  }
+
   function askCancel(id: string) {
     const row = shop.appointments.find((item) => item.id === id);
-    const order = row?.orderId ? shop.orders.find((item) => item.id === row.orderId) : undefined;
-    if (openRepairOrderBlocksCancel(order)) {
-      setActionError(RO_CANCEL_BLOCKED);
+    const block = blockFor(row);
+    if (block) {
+      setActionError(block);
       setCancelId(null);
       return;
     }
@@ -281,6 +286,7 @@ function ScheduleDesk() {
           onWrite={() => setPreset(selected)}
           onEdit={() => openAppointment(selected.id)}
           onCancel={() => askCancel(selected.id)}
+          cancelBlock={blockFor(selected)}
           onReinstate={() => reinstate(selected.id)}
         />
       ) : null}
@@ -352,6 +358,7 @@ function ScheduleDesk() {
                 actor={actor}
                 status={editing.status}
                 surface="edit"
+                blockedReason={blockFor(editing)}
                 onCancel={() => askCancel(editing.id)}
                 onReinstate={() => reinstate(editing.id)}
               />
@@ -412,6 +419,7 @@ function Selected({
   onEdit,
   onCancel,
   onReinstate,
+  cancelBlock,
 }: {
   row: Appointment;
   name: string;
@@ -425,6 +433,7 @@ function Selected({
   onEdit: () => void;
   onCancel: () => void;
   onReinstate: () => void;
+  cancelBlock: string | null;
 }) {
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
@@ -444,7 +453,7 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("arrived")}>Arrived</Button> : null}
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
-        <DeskCancelActions actor={actor} status={row.status} surface="card" onCancel={onCancel} onReinstate={onReinstate} />
+        <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onCancel={onCancel} onReinstate={onReinstate} />
         <Button small onClick={onEdit}>Edit details</Button>
         {row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>

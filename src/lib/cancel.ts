@@ -32,12 +32,21 @@ export function deskActor(state: {
 export const CANCEL_NOTE_MAX = 500;
 export const CANCELLED_LOCKED = "This appointment is cancelled. Reinstate it to change the date, customer, vehicle, or concern.";
 export const RO_CANCEL_BLOCKED = "This visit already has a repair order. Close or void the RO first.";
+export const MISSING_RO_CANCEL_BLOCKED = "This visit is linked to a repair order that isn't on this store. The visit stays until that link is checked.";
 export const ARRIVED_CANCEL_CONFIRM = "The customer is here — cancel anyway?";
 
-/** An invoiced repair order is closed. A missing order does not block. Anything still on the open desk does. */
+/** An invoiced repair order is closed. A missing order is handled separately. Anything still on the open desk blocks. */
 export function openRepairOrderBlocksCancel(order: { status: string } | undefined): boolean {
   if (!order) return false;
   return order.status !== "invoiced";
+}
+
+/** No repair-order link, or an invoiced one, does not block. A missing id blocks. An open order uses the existing close-or-void message. */
+export function repairOrderCancelBlock(orderId: string | null | undefined, order: { status: string } | undefined): string | null {
+  if (!orderId) return null;
+  if (!order) return MISSING_RO_CANCEL_BLOCKED;
+  if (openRepairOrderBlocksCancel(order)) return RO_CANCEL_BLOCKED;
+  return null;
 }
 
 export function cancelReasonLabel(reason: string): string {
@@ -59,11 +68,24 @@ export function shopWhen(iso: string) {
   }).format(date);
 }
 
+function historyWho(who: string | undefined) {
+  const name = who?.trim();
+  return name || "Unknown";
+}
+
+function historyWhen(at: string | undefined) {
+  if (!at?.trim()) return "Unknown";
+  return shopWhen(at);
+}
+
 export function cancellationLine(row: AppointmentCancel) {
-  if (row.action === "reinstate") return `Reinstated · ${row.who} · ${shopWhen(row.at)}`;
+  const who = historyWho(row.who);
+  const when = historyWhen(row.at);
+  if (row.action === "reinstate") return `Reinstated · ${who} · ${when}`;
   const reason = cancelReasonLabel(row.reason);
   const note = row.note.trim() ? ` — ${row.note.trim()}` : "";
-  return `${reason}${note} · ${row.who} · ${shopWhen(row.at)}`;
+  const cleared = row.priorStatus === "no_show" ? " No-show flag cleared." : "";
+  return `${reason}${note} · ${who} · ${when}${cleared}`;
 }
 
 export function cancelInputError(reason: string, note: string): string | null {
@@ -113,7 +135,6 @@ export function normalizeCancelHistory(value: unknown): AppointmentCancel[] | un
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
     const row = item as Partial<AppointmentCancel>;
-    if (typeof row.who !== "string" || typeof row.at !== "string") continue;
     const action = row.action === "reinstate" || row.action === "cancel" ? row.action : undefined;
     if (action !== "reinstate" && typeof row.reason !== "string") continue;
     const priorStatus = typeof row.priorStatus === "string" && PRIOR_STATUSES.has(row.priorStatus) ? row.priorStatus as ApptStatus : undefined;
@@ -121,9 +142,9 @@ export function normalizeCancelHistory(value: unknown): AppointmentCancel[] | un
       action,
       reason: typeof row.reason === "string" ? row.reason : "",
       note: typeof row.note === "string" ? row.note.trim().slice(0, CANCEL_NOTE_MAX) : "",
-      who: row.who,
+      who: typeof row.who === "string" && row.who.trim() ? row.who : "Unknown",
       whoId: typeof row.whoId === "string" ? row.whoId : "",
-      at: row.at,
+      at: typeof row.at === "string" ? row.at : "",
       priorStatus,
     });
   }

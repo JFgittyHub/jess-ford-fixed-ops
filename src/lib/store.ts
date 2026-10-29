@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
-import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, RO_CANCEL_BLOCKED, cancelInputError, deskActor, mayCancelAppointment, normalizeCancelHistory, openRepairOrderBlocksCancel } from "./cancel";
+import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, mayCancelAppointment, normalizeCancelHistory, repairOrderCancelBlock } from "./cancel";
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
@@ -1338,9 +1338,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!current) return { ok: false, error: "That appointment is not on this store.", arrivedConfirm: null };
         if (current.status === "cancelled") return { ok: false, error: "This appointment is already cancelled.", arrivedConfirm: null };
         const linked = current.orderId ? state.orders.find((order) => order.id === current.orderId) : undefined;
-        if (openRepairOrderBlocksCancel(linked)) {
-          return { ok: false, error: RO_CANCEL_BLOCKED, arrivedConfirm: null };
-        }
+        const orderBlock = repairOrderCancelBlock(current.orderId, linked);
+        if (orderBlock) return { ok: false, error: orderBlock, arrivedConfirm: null };
         if (current.status === "arrived" && !confirmArrived) {
           return { ok: false, error: null, arrivedConfirm: ARRIVED_CANCEL_CONFIRM };
         }
@@ -1418,6 +1417,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           appointments: currentState.appointments.map((row) => (row.id === id && row.status === "cancelled"
             ? { ...row, status: "scheduled" as const, cancelHistory: [...(row.cancelHistory ?? []), reinstated] }
             : row)),
+          onlineRequests: (currentState.onlineRequests ?? []).map((request) => (
+            request.appointmentId === id && request.status === "cancelled" ? { ...request, status: "approved" as const } : request
+          )),
         }));
         const overrideId = warning ? logOverride(result, id, current) : null;
         return { ok: true, overrideId, error: null, warning };

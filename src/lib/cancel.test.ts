@@ -13,9 +13,12 @@ import {
   CANCEL_NOTE_MAX,
   CANCEL_REASONS,
   CANCELLED_LOCKED,
+  MISSING_RO_CANCEL_BLOCKED,
+  RO_CANCEL_BLOCKED,
   activeCancellation,
   appointmentsOnBoard,
   cancelReasonLabel,
+  cancellationLine,
   cancelledOnDay,
   deskActor,
   mayCancelAppointment,
@@ -234,6 +237,7 @@ describe("cancel an appointment", () => {
     const cancelledNoShow = shop.getState().appointments.find((item) => item.id === marked.appointmentId);
     assert.equal(cancelledNoShow?.status, "cancelled");
     assert.equal(cancelledNoShow?.cancelHistory?.[0]?.priorStatus, "no_show");
+    assert.match(cancellationLine(cancelledNoShow!.cancelHistory![0]!), /No-show flag cleared/);
     assert.equal(shop.getState().customers.find((item) => item.id === helen.id)?.noShows, before);
     assert.equal(shop.getState().reinstateAppointment(marked.appointmentId).ok, true);
     assert.equal(shop.getState().appointments.find((item) => item.id === marked.appointmentId)?.status, "scheduled");
@@ -417,7 +421,14 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().cancelAppointment(saved.appointmentId, { reason: "other", note: "x".repeat(CANCEL_NOTE_MAX) }).ok, true);
     assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-linked")?.status, "cancelled");
     assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-other")?.status, "approved");
+    assert.equal(shop.getState().reinstateAppointment(saved.appointmentId).ok, true);
+    assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-linked")?.status, "approved");
+    assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-other")?.status, "approved");
 
+    const unnamed = normalizeCancelHistory([{ reason: "customer-request", note: "kept" }]);
+    assert.equal(unnamed?.[0]?.who, "Unknown");
+    assert.equal(unnamed?.[0]?.at, "");
+    assert.match(cancellationLine(unnamed![0]!), /Unknown/);
     const kept = normalizeCancelHistory([{ reason: "sold-the-truck", note: "old", who: "Megan", whoId: "megan", at: when }]);
     assert.equal(kept?.[0]?.reason, "sold-the-truck");
     assert.equal(cancelReasonLabel(kept?.[0]?.reason ?? ""), "Other");
@@ -491,6 +502,13 @@ describe("cancel an appointment", () => {
     assert.equal(closed.ok, true, closed.error ?? "");
     assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "cancelled");
     assert.equal(shop.getState().orders.some((row) => row.id === orderId), true);
+
+    const dangling = book(shop.getState(), "Missing repair order");
+    shop.getState().linkAppointment(dangling.appointmentId, "ro-not-on-this-store");
+    const missing = shop.getState().cancelAppointment(dangling.appointmentId, { reason: "customer-request" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error, MISSING_RO_CANCEL_BLOCKED);
+    assert.equal(shop.getState().appointments.find((row) => row.id === dangling.appointmentId)?.status, "in_shop");
   });
 
   it("cancels an in-shop visit with no open repair order, and confirms before cancelling an arrived visit", () => {
@@ -523,6 +541,16 @@ describe("cancel an appointment", () => {
     const controls = renderToString(createElement(DeskCancelActions, { actor: "advisor", status: "scheduled", surface: "card" }));
     assert.match(controls, /min-h-11/);
     assert.equal(controls.includes("btn-small"), false);
+    const editBlocked = renderToString(createElement(DeskCancelActions, {
+      actor: "advisor",
+      status: "in_shop",
+      surface: "edit",
+      blockedReason: RO_CANCEL_BLOCKED,
+    }));
+    assert.match(editBlocked, /data-desk-cancel="edit"/);
+    assert.match(editBlocked, /role="alert"/);
+    assert.match(editBlocked, /Close or void the RO first/);
+    assert.match(editBlocked, /disabled=""/);
     const schedule = readFileSync(new URL("../routes/schedule.tsx", import.meta.url), "utf8");
     assert.match(schedule, /min-h-11[\s\S]{0,240}Show cancelled/);
   });
