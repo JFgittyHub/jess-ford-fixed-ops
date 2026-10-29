@@ -1,4 +1,4 @@
-import { STATUS_LABEL, clockTime, feeCharge, usd } from "@/lib/format";
+import { clockTime, feeCharge, roStatusLabel, usd } from "@/lib/format";
 import { orderMoney } from "@/lib/metrics";
 import { payLabel } from "@/lib/pay";
 import { useShop } from "@/lib/store";
@@ -36,7 +36,8 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
         </div>
         <div>
           <p>Opened {order.openedOn}</p>
-          <p>{order.invoicedOn ? `Invoiced ${order.invoicedOn}` : STATUS_LABEL[order.status]}</p>
+          <p>{order.closeType === "no_work" || order.status === "closed" ? "Closed — no work ($0)" : order.invoicedOn ? `Booked ${order.invoicedOn}` : roStatusLabel(order)}</p>
+          {order.closeType === "no_work" && order.closeNote ? <p>{order.closeNote}</p> : null}
           <p>{order.promiseTime ? `Promise ${clockTime(order.promiseTime)}` : "No promise time"}</p>
           <p>Advisor {advisor?.name ?? "—"}</p>
         </div>

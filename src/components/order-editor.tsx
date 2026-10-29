@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, monthName, punchHours, usd } from "@/lib/format";
+import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, monthName, punchHours, roStatusLabel, usd } from "@/lib/format";
+import { NO_WORK_NOTE_MAX } from "@/lib/ro";
+import { shopWhen } from "@/lib/cancel";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney, closeGaps } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
@@ -22,7 +24,7 @@ function TechTime({ order }: { order: RepairOrder }) {
     return () => window.clearInterval(id);
   }, []);
   const techIds = [...new Set(order.labor.map((line) => line.techId).filter(Boolean))];
-  const closed = order.status === "invoiced";
+  const closed = order.status === "invoiced" || order.status === "closed";
   return (
     <section className="mt-6">
       <h3 className="font-display text-2xl leading-none">Tech time</h3>
@@ -60,6 +62,37 @@ function readyToInvoice(order: RepairOrder) {
   return orderMoney(order).ticket <= limit + 0.009;
 }
 
+export function NoWorkCloseForm({
+  note,
+  error,
+  onNote,
+  onSubmit,
+}: {
+  note: string;
+  error: string | null;
+  onNote: (value: string) => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <form
+      className="mt-4 grid max-w-xl gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <Field label="Why no work was done">
+        <textarea className="field min-h-20" rows={3} maxLength={NO_WORK_NOTE_MAX} value={note} onChange={(event) => onNote(event.target.value)} />
+      </Field>
+      <p className="text-sm text-muted">Don't enter card or SSN numbers.</p>
+      {error ? <p role="alert" className="text-sm text-[#8a3b2a]">{error}</p> : null}
+      <div>
+        <Button type="submit">Close with no work ($0)</Button>
+      </div>
+    </form>
+  );
+}
+
 export function OrderEditor({ orderId, onClose }: { orderId: string | null; onClose: () => void }) {
   const shop = useShop();
   const order = shop.orders.find((row) => row.id === orderId) ?? null;
@@ -74,16 +107,21 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const [qty, setQty] = useState("1");
   const [partPay, setPartPay] = useState("cp");
   const [tab, setTab] = useState<"ticket" | "sheet">("ticket");
+  const [noWorkNote, setNoWorkNote] = useState("");
+  const [noWorkError, setNoWorkError] = useState<string | null>(null);
 
   useEffect(() => {
     setTab("ticket");
+    setNoWorkNote("");
+    setNoWorkError(null);
   }, [orderId]);
 
   if (!order) {
     return <Modal open={orderId !== null} onClose={onClose} title="Repair order">That repair order is not in this month.</Modal>;
   }
 
-  const locked = order.status === "invoiced" || order.status === "booked";
+  const sealed = order.status === "closed" || order.closeType === "no_work";
+  const locked = order.status === "invoiced" || order.status === "booked" || sealed;
   const closed = order.status === "invoiced";
   const booked = order.status === "booked";
   const gaps = closeGaps(order, shop.techs, shop.advisors, shop.timeLogs);
@@ -102,7 +140,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       description={customer ? `${customer.name} · ${vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "Vehicle"}` : "Repair order"}
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" ? "good" : undefined}>{STATUS_LABEL[order.status]}</Pill>
+        <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "invoiced" ? "good" : undefined}>{roStatusLabel(order)}</Pill>
         <span className="text-sm text-muted">{advisor?.name}</span>
         {order.promiseTime ? <span className="text-sm text-muted">Promise {clockTime(order.promiseTime)}</span> : null}
         <span className="text-sm tabular-nums text-muted">In {order.mileage.toLocaleString("en-US")}{order.mileageOut != null ? ` · Out ${order.mileageOut.toLocaleString("en-US")}` : ""}</span>
@@ -133,16 +171,17 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           <select
             className="field"
             disabled={locked}
-            value={closed ? "invoiced" : order.status}
+            value={sealed ? "closed" : closed ? "invoiced" : order.status}
             onChange={(event) => shop.updateOrder(order.id, { status: event.target.value as RoStatus })}
           >
-            {closed ? <option value="invoiced">Invoiced</option> : null}
+            {sealed ? <option value="closed">Closed — no work ($0)</option> : null}
+            {closed ? <option value="invoiced">{STATUS_LABEL.invoiced}</option> : null}
             {booked ? <option value="booked">Booked</option> : null}
             {STATUSES.map((status) => <option key={status} value={status}>{STATUS_LABEL[status]}</option>)}
           </select>
         </Field>
         <Field label="Bay status">
-          <select className="field" value={order.bay ?? "dispatch"} onChange={(event) => shop.updateOrder(order.id, { bay: event.target.value as BayStatus })}>
+          <select className="field" disabled={closed || sealed} value={order.bay ?? "dispatch"} onChange={(event) => shop.updateOrder(order.id, { bay: event.target.value as BayStatus })}>
             {BAYS.map((bay) => <option key={bay} value={bay}>{BAY_LABEL[bay]}</option>)}
           </select>
         </Field>
@@ -150,7 +189,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           <input className="field tabular-nums" disabled={locked} type="number" min={0} value={order.mileage} onChange={(event) => shop.updateOrder(order.id, { mileage: Math.max(0, Number(event.target.value) || 0) })} />
         </Field>
         <Field label="Mileage out">
-          <input className="field tabular-nums" type="number" min={0} value={order.mileageOut ?? ""} placeholder="When it leaves" onChange={(event) => shop.updateOrder(order.id, { mileageOut: event.target.value === "" ? null : Math.max(0, Number(event.target.value) || 0) })} />
+          <input className="field tabular-nums" disabled={closed || sealed} type="number" min={0} value={order.mileageOut ?? ""} placeholder="When it leaves" onChange={(event) => shop.updateOrder(order.id, { mileageOut: event.target.value === "" ? null : Math.max(0, Number(event.target.value) || 0) })} />
         </Field>
         <Field label="Promise time">
           <select className="field" disabled={locked} value={order.promiseTime} onChange={(event) => shop.updateOrder(order.id, { promiseTime: event.target.value })}>
@@ -399,6 +438,13 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         <div><p className="text-xs uppercase tracking-wide text-muted">Totals</p><p className="font-display text-2xl tabular-nums">{usd(money.total)}</p><p className="text-xs text-muted">Before tax {usd(money.ticket)}</p></div>
       </div>
       <p className="mt-2 text-sm text-muted">Technician pay is counted on the month, not on this ticket. Flat-rate pay hits when you invoice. Hourly pay already hit when they were on the clock.</p>
+      {sealed ? (
+        <div className="mt-4 grid gap-1">
+          <p className="font-semibold">Closed — no work ($0)</p>
+          <p className="text-sm">{order.closeNote}</p>
+          <p className="text-sm text-muted">{order.closedBy || "Unknown"} · {order.closedAt ? shopWhen(order.closedAt) : "Unknown"}</p>
+        </div>
+      ) : (
       <div className="mt-4 flex flex-wrap gap-2">
         {closed ? (
           <Button tone="ghost" onClick={() => shop.reopenOrder(order.id)}>Reopen</Button>
@@ -411,7 +457,19 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           <Button tone="primary" disabled={!readyToInvoice(order)} onClick={() => shop.bookOrder(order.id)}>Book — ready to close</Button>
         )}
       </div>
-      {!closed && !booked && !readyToInvoice(order) ? (
+      )}
+      {sealed || closed ? null : (
+        <NoWorkCloseForm
+          note={noWorkNote}
+          error={noWorkError}
+          onNote={setNoWorkNote}
+          onSubmit={() => {
+            const result = shop.closeOrderWithNoWork(order.id, noWorkNote);
+            setNoWorkError(result.error);
+          }}
+        />
+      )}
+      {!closed && !booked && !sealed && !readyToInvoice(order) ? (
         <p className="mt-2 text-sm text-muted">You can add labor and parts now. Book stays off until the Washington authorization covers this ticket.</p>
       ) : null}
       {booked && gaps.length > 0 ? (

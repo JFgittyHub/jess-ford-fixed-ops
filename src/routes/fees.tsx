@@ -24,7 +24,7 @@ function FeesPage() {
         <p className="text-sm font-semibold uppercase tracking-wide text-muted">Fixed operations</p>
         <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Fees</h1>
         <p className="mt-3 max-w-2xl text-muted">
-          Misc shop fee is a percent of labor and parts, with a cap. Sales tax is added on every repair order. Open tickets pick up changes. Invoiced tickets keep the rate they closed with.
+          Misc shop fee is a percent of labor and parts, with a cap. Sales tax is added on every repair order. Open tickets pick up changes. Booked tickets keep the rate they closed with.
         </p>
       </div>
 

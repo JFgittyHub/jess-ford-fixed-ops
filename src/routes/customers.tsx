@@ -41,7 +41,7 @@ function CustomersPage() {
       const orders = shop.orders.filter((order) => order.customerId === customer.id);
       const sold = orders.filter(isSold);
       const last = orders.reduce<string>((max, order) => (order.openedOn > max ? order.openedOn : max), "");
-      const open = orders.find((order) => order.status !== "invoiced");
+      const open = orders.find((order) => order.status !== "invoiced" && order.status !== "closed");
       const age = last ? daySpan(last) : 999;
       return { customer, vehicles, visits: sold.length, last, age, open };
     });

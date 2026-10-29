@@ -103,6 +103,8 @@ export interface Digest {
   oldWip: RepairOrder[];
   insights: Insight[];
   hoursPerRo: number;
+  /** $0 closes this month. Left out of sales, hours, and hours-per-RO. */
+  noWorkCloses: number;
 }
 
 export function isSold(order: RepairOrder) {
@@ -110,7 +112,11 @@ export function isSold(order: RepairOrder) {
 }
 
 export function isOpen(order: RepairOrder) {
-  return order.status !== "invoiced";
+  return order.status !== "invoiced" && order.status !== "closed";
+}
+
+export function isNoWorkClose(order: RepairOrder) {
+  return order.status === "closed" || order.closeType === "no_work";
 }
 
 function lineLabor(hours: number, rate: number) {
@@ -163,6 +169,8 @@ export function closedRecord(order: RepairOrder, customer?: Customer, vehicle?: 
     partNumbers: order.parts.map((line) => `${line.number} ${line.description}`).join(" "),
     total: money.total,
     beforeTax: money.ticket,
+    closeType: order.closeType ?? (order.status === "closed" ? "no_work" : order.status === "invoiced" ? "invoiced" : undefined),
+    closeNote: order.closeNote?.trim() ?? "",
   };
 }
 
@@ -484,6 +492,7 @@ export function digest(data: ShopData): Digest {
     oldWip,
     insights,
     hoursPerRo: safeDiv(hoursSold, sold.length),
+    noWorkCloses: data.orders.filter((order) => isNoWorkClose(order) && (order.invoicedOn ?? "").startsWith(monthKey())).length,
   };
 }
 

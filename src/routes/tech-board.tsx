@@ -2,10 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { BAY_LABEL, STATUS_LABEL, clockTime, formatDuration, punchHours, today as shopToday } from "@/lib/format";
+import { BAY_LABEL, clockTime, formatDuration, punchHours, roStatusLabel, today as shopToday } from "@/lib/format";
 import { lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
-import type { BayStatus, RepairOrder, RoStatus, TimeLog } from "@/lib/types";
+import type { BayStatus, RepairOrder, TimeLog } from "@/lib/types";
 
 export const Route = createFileRoute("/tech-board")({ component: TechBoardPage });
 
@@ -19,7 +19,7 @@ function useNow() {
 }
 
 function assignedOpen(techId: string, orders: RepairOrder[]) {
-  return orders.filter((order) => order.status !== "invoiced" && order.labor.some((line) => line.techId === techId));
+  return orders.filter((order) => order.status !== "invoiced" && order.status !== "closed" && order.labor.some((line) => line.techId === techId));
 }
 
 function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, now: number) {
@@ -114,7 +114,7 @@ function TechBoardPage() {
                 <div>
                   <p className="font-display text-3xl leading-none">RO {order.number}</p>
                   <p className="mt-2 font-semibold">{customer?.name ?? "Customer"} · {vehicle ? `${vehicle.year} ${vehicle.model}` : "Vehicle"}</p>
-                  <p className="text-sm text-muted">{STATUS_LABEL[order.status as RoStatus]} · {BAY_LABEL[(order.bay ?? "dispatch") as BayStatus]}{order.promiseTime ? ` · Promise ${clockTime(order.promiseTime)}` : ""}</p>
+                  <p className="text-sm text-muted">{roStatusLabel(order)} · {BAY_LABEL[(order.bay ?? "dispatch") as BayStatus]}{order.promiseTime ? ` · Promise ${clockTime(order.promiseTime)}` : ""}</p>
                 </div>
                 <div className="text-right">
                   <p className="tabular-nums font-semibold">{formatDuration(hours)} logged</p>

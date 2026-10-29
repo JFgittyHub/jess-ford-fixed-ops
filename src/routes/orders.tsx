@@ -4,11 +4,11 @@ import { NewOrder } from "@/components/new-order";
 import { OrderEditor } from "@/components/order-editor";
 import { Shell } from "@/components/shell";
 import { Button, Pill } from "@/components/ui";
-import { BAY_LABEL, daySpan, monthName, STATUS_LABEL, usd } from "@/lib/format";
+import { BAY_LABEL, daySpan, monthName, roStatusLabel, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
 import { isOpen, isSold, lookups, orderMoney } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
-import type { BayStatus, ClosedRecord, RepairOrder, RoStatus } from "@/lib/types";
+import type { BayStatus, ClosedRecord, RepairOrder } from "@/lib/types";
 
 export const Route = createFileRoute("/orders")({ component: OrdersPage });
 
@@ -77,7 +77,7 @@ function OrdersPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Repair orders</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
-          <p className="mt-2 max-w-xl text-muted">{openCount} open. {soldCount} closed in {monthName()}. Book a ticket when it is ready, then close it. Close is what moves absorption.</p>
+          <p className="mt-2 max-w-xl text-muted">{openCount} open. {soldCount} booked in {monthName()}. Book a ticket when it is ready, then close it. Close is what moves absorption.</p>
         </div>
         <Button tone="primary" onClick={() => setWriting(true)}>Write RO</Button>
       </div>
@@ -85,7 +85,7 @@ function OrdersPage() {
       <div className="mt-5 flex flex-wrap gap-2">
         {(["open", "booked", "sold", "closed", "all"] as const).map((item) => (
           <Button key={item} small tone={filter === item ? "primary" : "ghost"} onClick={() => { setFilter(item); setPage(0); }}>
-            {item === "open" ? "Open" : item === "booked" ? "Booked" : item === "sold" ? "Invoiced" : item === "closed" ? "Closed" : "All"}
+            {item === "open" ? "Open" : item === "booked" ? "Booked" : item === "sold" ? "Booked" : item === "closed" ? "Closed" : "All"}
           </Button>
         ))}
         <input
@@ -143,7 +143,15 @@ function OrdersPage() {
             {filter === "closed" ? visibleHistory.map((row) => (
               <tr key={row.id} className="clickable" onClick={() => setOpenId(row.orderId)}>
                 <td className="tabular-nums font-semibold">{row.number}</td>
-                <td className="tabular-nums">{row.closedOn}</td>
+                <td className="tabular-nums">
+                  {row.closeType === "no_work" ? (
+                    <>
+                      <span className="block font-semibold">Closed — no work ($0)</span>
+                      <span className="block">{row.closedOn}</span>
+                      {row.closeNote ? <span className="block text-sm text-muted">{row.closeNote}</span> : null}
+                    </>
+                  ) : row.closedOn}
+                </td>
                 <td>
                   <span className="block font-semibold">{row.customerName}</span>
                   <span className="block text-sm text-muted">{row.vehicle}</span>
@@ -181,7 +189,7 @@ function OrdersPage() {
                       ? <span className="text-muted">—</span>
                       : order.labor.map((line) => line.opcode).join(", ")}
                   </td>
-                  <td><Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "invoiced" ? "good" : undefined}>{STATUS_LABEL[order.status as RoStatus]}</Pill></td>
+                  <td><Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "invoiced" ? "good" : undefined}>{roStatusLabel(order)}</Pill></td>
                   <td><MpiCell order={order} /></td>
                   <td className="tabular-nums">{usd(money.total)}</td>
                 </tr>

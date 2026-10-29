@@ -31,22 +31,37 @@ export function deskActor(state: {
 
 export const CANCEL_NOTE_MAX = 500;
 export const CANCELLED_LOCKED = "This appointment is cancelled. Reinstate it to change the date, customer, vehicle, or concern.";
-export const RO_CANCEL_BLOCKED = "This visit already has a repair order. Close or void the RO first.";
 export const MISSING_RO_CANCEL_BLOCKED = "This visit is linked to a repair order that isn't on this store. The visit stays until that link is checked.";
 export const ARRIVED_CANCEL_CONFIRM = "The customer is here — cancel anyway?";
 
-/** An invoiced repair order is closed. A missing order is handled separately. Anything still on the open desk blocks. */
-export function openRepairOrderBlocksCancel(order: { status: string } | undefined): boolean {
-  if (!order) return false;
-  return order.status !== "invoiced";
+export function openRoCancelMessage(number: number | string) {
+  return `RO ${number} is still open. Close the RO first.`;
 }
 
-/** No repair-order link, or an invoiced one, does not block. A missing id blocks. An open order uses the existing close-or-void message. */
-export function repairOrderCancelBlock(orderId: string | null | undefined, order: { status: string } | undefined): string | null {
+export function closedRoReinstateMessage(number: number | string) {
+  return `This visit's RO #${number} is closed. Book a new appointment instead.`;
+}
+
+/** Only a Closed repair order allows cancel. Booked and every other status still block. */
+export function openRepairOrderBlocksCancel(order: { status: string } | undefined): boolean {
+  if (!order) return false;
+  return order.status !== "closed";
+}
+
+/** No repair-order link does not block. A missing id blocks. Anything except Closed names the RO and says to close it first. */
+export function repairOrderCancelBlock(orderId: string | null | undefined, order: { status: string; number?: number } | undefined): string | null {
   if (!orderId) return null;
   if (!order) return MISSING_RO_CANCEL_BLOCKED;
-  if (openRepairOrderBlocksCancel(order)) return RO_CANCEL_BLOCKED;
-  return null;
+  if (!openRepairOrderBlocksCancel(order)) return null;
+  return order.number == null ? "This repair order is still open. Close the RO first." : openRoCancelMessage(order.number);
+}
+
+/** A visit cannot return to the board while it still points at a Closed repair order. */
+export function repairOrderReinstateBlock(order: { status: string; number?: number } | undefined): string | null {
+  if (!order || order.status !== "closed") return null;
+  return order.number == null
+    ? "This visit's repair order is closed. Book a new appointment instead."
+    : closedRoReinstateMessage(order.number);
 }
 
 export function cancelReasonLabel(reason: string): string {

@@ -7,7 +7,15 @@ export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 export type PayType = string;
 export type PayKind = "customer" | "warranty" | "internal";
-export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "invoiced";
+export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "invoiced" | "closed";
+/** `invoiced` is a normal month close. `no_work` is a $0 close with no work on the ticket. */
+export type RoCloseType = "invoiced" | "no_work";
+
+export interface RoPayment {
+  id: string;
+  amount: number;
+  takenAt: string;
+}
 export type BayStatus = "lot" | "dispatch" | "bay" | "working" | "parts" | "qc" | "wash" | "ready";
 export type PayStyle = "flat" | "hourly";
 export type Skill = "master" | "a" | "b" | "diesel" | "express" | "quick";
@@ -197,6 +205,17 @@ export interface RepairOrder {
   stockApplied: boolean;
   inspection: MultiPoint | null;
   wa?: WaRecord;
+  /** Set when the ticket is closed. Missing on older open tickets. */
+  closeType?: RoCloseType | null;
+  /** Why a no-work close had no work. Empty on a normal close. */
+  closeNote?: string;
+  /** Who closed a no-work repair order. */
+  closedBy?: string;
+  closedById?: string;
+  /** ISO time of a no-work close. */
+  closedAt?: string | null;
+  /** Money already taken on this repair order. A nonzero amount blocks a no-work close. */
+  payments?: RoPayment[];
 }
 
 export interface AppointmentLine {
@@ -287,6 +306,8 @@ export interface ClosedRecord {
   partNumbers: string;
   total: number;
   beforeTax: number;
+  closeType?: RoCloseType | null;
+  closeNote?: string;
 }
 
 export interface Campaign {

@@ -125,8 +125,16 @@ export const STATUS_LABEL = {
   parts: "Waiting parts",
   ready: "Ready",
   booked: "Booked",
-  invoiced: "Invoiced",
+  invoiced: "Booked",
+  closed: "Closed",
 } as const;
+
+/** Badge and history label. A no-work close is not the Booked month-close status. */
+export function roStatusLabel(order: { status: string; closeType?: string | null }) {
+  if (order.status === "closed" || order.closeType === "no_work") return "Closed — no work ($0)";
+  if (order.status in STATUS_LABEL) return STATUS_LABEL[order.status as keyof typeof STATUS_LABEL];
+  return order.status;
+}
 
 export const BAY_LABEL = {
   lot: "On the lot",

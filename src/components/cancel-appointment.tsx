@@ -18,6 +18,7 @@ export function DeskCancelActions({
   onCancel,
   onReinstate,
   blockedReason,
+  onOpenOrder,
 }: {
   actor: DeskActor;
   status: ApptStatus;
@@ -26,6 +27,8 @@ export function DeskCancelActions({
   onReinstate?: () => void;
   /** Shown beside Cancel, including inside Edit details, when the visit cannot be cancelled. */
   blockedReason?: string | null;
+  /** Opens the linked repair order when cancel is blocked because it is still open. */
+  onOpenOrder?: () => void;
 }) {
   if (!mayCancelAppointment(actor)) return null;
   if (status === "cancelled") {
@@ -39,6 +42,7 @@ export function DeskCancelActions({
     <div data-desk-cancel={surface}>
       <Button type="button" className="min-h-11" disabled={Boolean(blockedReason)} onClick={onCancel}>Cancel appointment</Button>
       {blockedReason ? <p role="alert" className="mt-2 max-w-sm text-sm normal-case tracking-normal text-[#8a3b2a]">{blockedReason}</p> : null}
+      {blockedReason && onOpenOrder ? <Button type="button" className="mt-2 min-h-11" onClick={onOpenOrder}>Open RO</Button> : null}
     </div>
   );
 }

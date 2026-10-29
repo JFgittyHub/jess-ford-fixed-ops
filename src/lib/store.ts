@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
-import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, mayCancelAppointment, normalizeCancelHistory, repairOrderCancelBlock } from "./cancel";
+import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, mayCancelAppointment, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
@@ -16,9 +16,9 @@ import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normali
 import { fullVin } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
-import { bookRepairOrder, dropClosedHistory, invoiceRepairOrder, reopenRepairOrder, unbookRepairOrder } from "./ro";
+import { bookRepairOrder, closeRepairOrderWithNoWork, dropClosedHistory, invoiceRepairOrder, noWorkCloseError, reopenRepairOrder, unbookRepairOrder } from "./ro";
 import { closedRecord } from "./metrics";
-import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, PartLine, PartSku, PayKind, RepairOrder, RoStatus, ShopData, StoreId, Tech, TechBoard, WeekdayIndex } from "./types";
+import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoPayment, RoStatus, ShopData, StoreId, Tech, TechBoard, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -74,6 +74,8 @@ interface ShopActions {
   bookOrder: (orderId: string) => void;
   unbookOrder: (orderId: string) => void;
   reopenOrder: (orderId: string) => void;
+  /** $0 close for an open or booked repair order with no work. The RO number stays. */
+  closeOrderWithNoWork: (orderId: string, note: string) => { ok: boolean; error: string | null };
   addLabor: (orderId: string, line: Omit<LaborLine, "id">) => void;
   updateLabor: (orderId: string, lineId: string, patch: Partial<LaborLine>) => void;
   removeLabor: (orderId: string, lineId: string) => void;
@@ -245,7 +247,48 @@ function createDesk(demoMode: boolean): { activeStoreId: StoreId; stores: Record
 }
 
 function isHeld(status: RoStatus) {
-  return status === "invoiced" || status === "booked";
+  return status === "invoiced" || status === "booked" || status === "closed";
+}
+
+function isSealed(status: RoStatus) {
+  return status === "invoiced" || status === "closed";
+}
+
+function normalizePayments(value: unknown): RoPayment[] {
+  if (!Array.isArray(value)) return [];
+  const rows: RoPayment[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<RoPayment>;
+    const amount = typeof row.amount === "number" && Number.isFinite(row.amount) ? row.amount : 0;
+    rows.push({
+      id: typeof row.id === "string" && row.id ? row.id : `pay-${rows.length + 1}`,
+      amount,
+      takenAt: typeof row.takenAt === "string" ? row.takenAt : "",
+    });
+  }
+  return rows;
+}
+
+function normalizeCloseFields(prior: RepairOrder) {
+  const raw = prior.closeType;
+  let closeType: RoCloseType | null = raw === "no_work" || raw === "invoiced" ? raw : null;
+  if (!closeType && prior.status === "invoiced") closeType = "invoiced";
+  if (!closeType && prior.status === "closed") closeType = "no_work";
+  return {
+    closeType,
+    closeNote: typeof prior.closeNote === "string" ? prior.closeNote.trim().slice(0, 500) : "",
+    closedBy: typeof prior.closedBy === "string" ? prior.closedBy : "",
+    closedById: typeof prior.closedById === "string" ? prior.closedById : "",
+    closedAt: typeof prior.closedAt === "string" ? prior.closedAt : null,
+    payments: normalizePayments(prior.payments),
+  };
+}
+
+function nextOrderNumber(state: { orders: { number: number }[]; closedHistory?: { number: number }[] }) {
+  const fromOrders = state.orders.reduce((max, order) => Math.max(max, order.number), 241000);
+  const fromHistory = (state.closedHistory ?? []).reduce((max, row) => Math.max(max, row.number), 241000);
+  return Math.max(fromOrders, fromHistory) + 1;
 }
 
 function mapOrder(orders: RepairOrder[], orderId: string, edit: (order: RepairOrder) => RepairOrder) {
@@ -425,6 +468,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         labor,
         parts: parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
         wa: stamped,
+        ...normalizeCloseFields(prior),
       };
     }),
     laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
@@ -534,8 +578,8 @@ export interface ShopStoreOptions {
   storage?: ShopStorage;
 }
 
-/** Bumped past 28 so a saved shop re-runs migrate, including cancel-history cleanup. */
-export const SHOP_PERSIST_VERSION = 29;
+/** Bumped past 29 so a saved shop re-runs migrate, including no-work close fields. */
+export const SHOP_PERSIST_VERSION = 30;
 
 export function createShopStore(options: ShopStoreOptions = {}) {
   const demoMode = options.demoMode ?? isDemoMode();
@@ -831,7 +875,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       updateOrder: (orderId, patch) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (order.status === "invoiced") return order;
+            if (isSealed(order.status)) return order;
             if (order.status === "booked") return patch.bay ? { ...order, bay: patch.bay } : order;
             return { ...order, ...patch, status: (patch.status ?? order.status) as RoStatus };
           }),
@@ -934,6 +978,26 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             orders: mapOrder(state.orders, orderId, () => result.order),
           };
         }),
+      closeOrderWithNoWork: (orderId, note) => {
+        const state = get();
+        const order = state.orders.find((row) => row.id === orderId);
+        if (!order) return { ok: false, error: "That repair order is not on this store." };
+        const error = noWorkCloseError(order, state.timeLogs, note);
+        if (error) return { ok: false, error };
+        const who = actingStaff(state);
+        const next = closeRepairOrderWithNoWork(order, note, who, now().toISOString(), today());
+        const copy = closedRecord(
+          next,
+          state.customers.find((row) => row.id === order.customerId),
+          state.vehicles.find((row) => row.id === order.vehicleId),
+        );
+        copy.id = uid("hist");
+        set((current) => ({
+          closedHistory: [copy, ...current.closedHistory],
+          orders: mapOrder(current.orders, orderId, () => next),
+        }));
+        return { ok: true, error: null };
+      },
       addLabor: (orderId, line) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
@@ -957,7 +1021,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       clockIn: (techId, orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || order.status === "invoiced") return state;
+          if (!order || isSealed(order.status)) return state;
           if (!order.labor.some((line) => line.techId === techId)) return state;
           const now = localStamp();
           const open = state.timeLogs.find((row) => row.techId === techId && row.endedAt === null && row.orderId === orderId);
@@ -1117,7 +1181,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       createOrder: (input) => {
         const id = uid("ro");
         set((state) => {
-          const number = state.orders.reduce((max, order) => Math.max(max, order.number), 241000) + 1;
+          const number = nextOrderNumber(state);
           const written = input.lines.map((line) => line.concern.trim()).filter(Boolean);
           const jobs = (written.length > 0 ? written : [""]).map((concern, index) => jobLine(uid("jb"), lineLetter(index), concern));
           const order: RepairOrder = {
@@ -1142,6 +1206,12 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             invoicedOn: null,
             stockApplied: false,
             inspection: blankSheet(state.techs[0]?.id ?? ""),
+            closeType: null,
+            closeNote: "",
+            closedBy: "",
+            closedById: "",
+            closedAt: null,
+            payments: [],
           };
           return { orders: [order, ...state.orders], focusOrderId: id };
         });
@@ -1378,6 +1448,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const current = state.appointments.find((row) => row.id === id);
         if (!current) return { ok: false, overrideId: null, error: "That appointment is not on this store.", warning: null };
         if (current.status !== "cancelled") return { ok: false, overrideId: null, error: "This appointment is not cancelled.", warning: null };
+        const linked = current.orderId ? state.orders.find((order) => order.id === current.orderId) : undefined;
+        const closedBlock = repairOrderReinstateBlock(linked);
+        if (closedBlock) return { ok: false, overrideId: null, error: closedBlock, warning: null };
         const staffError = staffBlockMessage(
           state.techs.some((tech) => tech.id === current.techId),
           state.advisors.some((advisor) => advisor.id === current.advisorId),

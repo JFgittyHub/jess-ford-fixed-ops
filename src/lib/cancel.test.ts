@@ -14,7 +14,8 @@ import {
   CANCEL_REASONS,
   CANCELLED_LOCKED,
   MISSING_RO_CANCEL_BLOCKED,
-  RO_CANCEL_BLOCKED,
+  closedRoReinstateMessage,
+  openRoCancelMessage,
   activeCancellation,
   appointmentsOnBoard,
   cancelReasonLabel,
@@ -483,25 +484,40 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().appointments.some((row) => row.id === saved.appointmentId), true);
   });
 
-  it("blocks cancel while the repair order is open, and allows it once the order is invoiced", () => {
+  it("blocks cancel until the repair order is closed, including booked and invoiced", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
     const visit = book(shop.getState(), "On a repair order");
-    const orderId = shop.getState().orders.find((row) => row.status !== "invoiced")?.id;
-    assert.ok(orderId);
+    const order = shop.getState().orders.find((row) => row.status !== "invoiced" && row.status !== "closed");
+    assert.ok(order);
+    const orderId = order.id;
     shop.getState().linkAppointment(visit.appointmentId, orderId);
     const blocked = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
     assert.equal(blocked.ok, false);
-    assert.equal(blocked.error, "This visit already has a repair order. Close or void the RO first.");
+    assert.equal(blocked.error, openRoCancelMessage(order.number));
+    assert.match(blocked.error ?? "", /Close the RO first/);
     assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "in_shop");
-    assert.equal(shop.getState().orders.some((row) => row.id === orderId), true);
+    for (const status of ["booked", "invoiced"] as const) {
+      shop.setState({
+        orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status } : row)),
+      });
+      const still = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
+      assert.equal(still.ok, false, status);
+      assert.equal(still.error, openRoCancelMessage(order.number));
+      assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "in_shop");
+    }
     shop.setState({
-      orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status: "invoiced" as const } : row)),
+      orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status: "closed" as const, closeType: "no_work" as const } : row)),
     });
     const closed = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
     assert.equal(closed.ok, true, closed.error ?? "");
     assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "cancelled");
     assert.equal(shop.getState().orders.some((row) => row.id === orderId), true);
+    const putBack = shop.getState().reinstateAppointment(visit.appointmentId);
+    assert.equal(putBack.ok, false);
+    assert.equal(putBack.error, closedRoReinstateMessage(order.number));
+    assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "cancelled");
+    assert.equal(shop.getState().orders.find((row) => row.id === orderId)?.status, "closed");
 
     const dangling = book(shop.getState(), "Missing repair order");
     shop.getState().linkAppointment(dangling.appointmentId, "ro-not-on-this-store");
@@ -545,11 +561,12 @@ describe("cancel an appointment", () => {
       actor: "advisor",
       status: "in_shop",
       surface: "edit",
-      blockedReason: RO_CANCEL_BLOCKED,
+      blockedReason: openRoCancelMessage(1042),
     }));
     assert.match(editBlocked, /data-desk-cancel="edit"/);
     assert.match(editBlocked, /role="alert"/);
-    assert.match(editBlocked, /Close or void the RO first/);
+    assert.match(editBlocked, /Close the RO first/);
+    assert.match(editBlocked, /1042/);
     assert.match(editBlocked, /disabled=""/);
     const schedule = readFileSync(new URL("../routes/schedule.tsx", import.meta.url), "utf8");
     assert.match(schedule, /min-h-11[\s\S]{0,240}Show cancelled/);

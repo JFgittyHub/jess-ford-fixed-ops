@@ -120,7 +120,7 @@ function AdvisorsPage() {
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {shop.advisors.map((advisor) => {
           const mine = sold.filter((order) => order.advisorId === advisor.id);
-          const openCount = shop.orders.filter((order) => order.advisorId === advisor.id && order.status !== "invoiced").length;
+          const openCount = shop.orders.filter((order) => order.advisorId === advisor.id && order.status !== "invoiced" && order.status !== "closed").length;
           const laborSales = mine.reduce((sum, order) => sum + orderMoney(order).labor, 0);
           const partsSales = mine.reduce((sum, order) => sum + orderMoney(order).parts, 0);
           const basePay = advisor.base * pace;
@@ -129,7 +129,7 @@ function AdvisorsPage() {
           return (
             <article key={advisor.id} className="card">
               <h2 className="font-display text-3xl leading-none">#{advisor.number} {advisor.name}</h2>
-              <p className="mt-1 text-sm text-muted">{mine.length} invoiced · {openCount} still open</p>
+              <p className="mt-1 text-sm text-muted">{mine.length} booked · {openCount} still open</p>
               <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
                 <div><dt className="text-muted">Labor sales</dt><dd className="tabular-nums font-semibold">{usd(laborSales)}</dd></div>
                 <div><dt className="text-muted">Parts sales</dt><dd className="tabular-nums font-semibold">{usd(partsSales)}</dd></div>

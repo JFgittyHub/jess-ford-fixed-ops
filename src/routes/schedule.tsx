@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { Calendar } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours } from "@/components/appointment-calendar";
@@ -42,6 +42,7 @@ function SchedulePage() {
 
 function ScheduleDesk() {
   const shop = useShop();
+  const navigate = useNavigate();
   const look = lookups(shop);
   const [preset, setPreset] = useState<Appointment | null>(null);
   const [seed, setSeed] = useState<DeskSeed>(() => deskSeedFor(shop));
@@ -128,6 +129,11 @@ function ScheduleDesk() {
   function blockFor(row: { orderId: string | null } | null | undefined) {
     if (!row?.orderId) return null;
     return repairOrderCancelBlock(row.orderId, shop.orders.find((order) => order.id === row.orderId));
+  }
+
+  function openRepairOrder(orderId: string) {
+    shop.setFocus(orderId);
+    void navigate({ to: "/orders" });
   }
 
   function askCancel(id: string) {
@@ -287,6 +293,7 @@ function ScheduleDesk() {
           onEdit={() => openAppointment(selected.id)}
           onCancel={() => askCancel(selected.id)}
           cancelBlock={blockFor(selected)}
+          onOpenOrder={selected.orderId && shop.orders.some((order) => order.id === selected.orderId) ? () => openRepairOrder(selected.orderId as string) : undefined}
           onReinstate={() => reinstate(selected.id)}
         />
       ) : null}
@@ -359,6 +366,7 @@ function ScheduleDesk() {
                 status={editing.status}
                 surface="edit"
                 blockedReason={blockFor(editing)}
+                onOpenOrder={editing.orderId && shop.orders.some((order) => order.id === editing.orderId) ? () => openRepairOrder(editing.orderId as string) : undefined}
                 onCancel={() => askCancel(editing.id)}
                 onReinstate={() => reinstate(editing.id)}
               />
@@ -420,6 +428,7 @@ function Selected({
   onCancel,
   onReinstate,
   cancelBlock,
+  onOpenOrder,
 }: {
   row: Appointment;
   name: string;
@@ -434,6 +443,7 @@ function Selected({
   onCancel: () => void;
   onReinstate: () => void;
   cancelBlock: string | null;
+  onOpenOrder?: () => void;
 }) {
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
@@ -453,7 +463,7 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("arrived")}>Arrived</Button> : null}
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
-        <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onCancel={onCancel} onReinstate={onReinstate} />
+        <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
         <Button small onClick={onEdit}>Edit details</Button>
         {row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>
