@@ -12,7 +12,9 @@ export type BayStatus = "lot" | "dispatch" | "bay" | "working" | "parts" | "qc" 
 export type PayStyle = "flat" | "hourly";
 export type Skill = "master" | "a" | "b" | "diesel" | "express" | "quick";
 export type TechBoard = "express" | "main" | "internal" | "none";
-export type ApptStatus = "scheduled" | "arrived" | "no_show" | "in_shop";
+export type ApptStatus = "scheduled" | "arrived" | "no_show" | "in_shop" | "cancelled";
+/** Why an advisor or service manager cancelled a visit. `other` needs a note. */
+export type CancelReason = "customer-request" | "rescheduled" | "vehicle-gone" | "duplicate" | "other";
 /** Transport option id. Older appointments used express and loaner; those load as waiter and drop. */
 export type Lane = string;
 export type Department = "service" | "parts";
@@ -203,6 +205,15 @@ export interface AppointmentLine {
   concern: string;
 }
 
+/** Who cancelled, when, and why. Kept on the appointment. Cancelling does not delete the visit. */
+export interface AppointmentCancel {
+  reason: CancelReason;
+  note: string;
+  who: string;
+  whoId: string;
+  at: string;
+}
+
 export interface Appointment {
   id: string;
   date: string;
@@ -219,6 +230,8 @@ export interface Appointment {
   lane: Lane;
   status: ApptStatus;
   orderId: string | null;
+  /** Append-only. The latest entry is the active cancel while status is `cancelled`. */
+  cancelHistory?: AppointmentCancel[];
 }
 
 export interface BudgetLine {

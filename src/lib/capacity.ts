@@ -5,7 +5,9 @@ import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } fr
  * A slot is open only when the job's labor hours fit the technician's
  * remaining shop day and the advisor still has a free appointment that day.
  * Hours follow that store's open hours. Pending holds count the same way as
- * appointments. No-shows and declined holds do not.
+ * appointments. No-shows, cancelled appointments, and declined holds do not.
+ * A technician or advisor who is not on this store is refused. That is not
+ * a warning the advisor can override.
  */
 export type CapacityLoad = {
   id: string;
@@ -36,8 +38,10 @@ export type CapacitySide = {
 export type CapacityResult = {
   /** False when online customers should not see the slot. */
   open: boolean;
-  /** Set when an advisor may continue anyway. Null when the slot is open. */
+  /** Set when an advisor may continue anyway. Null when the slot is open or blocked. */
   warning: string | null;
+  /** Hard stop. The visit is not saved and no override is written. */
+  blocked: string | null;
   tech: CapacitySide;
   advisor: CapacitySide;
 };
@@ -69,7 +73,7 @@ export function appointmentLoads(
     advisorId: row.advisorId,
     techId: row.techId,
     laborHours: laborHoursFor(row.laborOpIds, row.minutes, laborOps),
-    counts: row.status !== "no_show",
+    counts: row.status !== "no_show" && row.status !== "cancelled",
   }));
 }
 
@@ -109,16 +113,18 @@ export function evaluateCapacity(input: {
   const advisorCapacity = !day.closed && knownAdvisor ? day.advisorCap : 0;
   const techOverloaded = !knownTech || techUsed + adding > techCapacity + EPSILON;
   const advisorOverloaded = !knownAdvisor || advisorUsed + 1 > advisorCapacity;
-  const warning = capacityWarning({
-    closed: day.closed,
-    knownTech,
-    knownAdvisor,
-    techOverloaded,
-    advisorOverloaded,
-  });
+  const blocked = staffBlockMessage(knownTech, knownAdvisor);
+  const warning = blocked
+    ? null
+    : capacityWarning({
+        closed: day.closed,
+        techOverloaded,
+        advisorOverloaded,
+      });
   return {
-    open: warning === null,
+    open: blocked === null && warning === null,
     warning,
+    blocked,
     tech: { used: techUsed, adding, capacity: techCapacity, overloaded: techOverloaded },
     advisor: { used: advisorUsed, adding: 1, capacity: advisorCapacity, overloaded: advisorOverloaded },
   };
@@ -157,16 +163,24 @@ export function assessAppointment(input: {
   });
 }
 
-/** Sentence for the advisor form. Saving stays allowed and records an override. */
+/** Sentence for the advisor form. A block is a hard stop. A warning can still be saved. */
 export function advisorBookingNote(result: CapacityResult): string | null {
+  if (result.blocked) return result.blocked;
   if (!result.warning) return null;
   return `${result.warning} You can still book it. Online customers will not see this time.`;
 }
 
+export function staffBlockMessage(knownTech: boolean, knownAdvisor: boolean): string | null {
+  if (!knownTech && !knownAdvisor) return "That technician and advisor aren't on this store.";
+  if (!knownTech) return "That technician isn't on this store.";
+  if (!knownAdvisor) return "That advisor isn't on this store.";
+  return null;
+}
+
 export function overrideReason(result: CapacityResult): OverrideReason | null {
-  if (result.open || !result.warning) return null;
+  if (result.blocked || result.open || !result.warning) return null;
   if (result.warning.startsWith("The store is closed")) return "closed";
-  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return "unknown-staff";
+  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return null;
   if (result.tech.overloaded && result.advisor.overloaded) return "both";
   if (result.tech.overloaded) return "tech-hours";
   if (result.advisor.overloaded) return "advisor";
@@ -240,15 +254,10 @@ export function onlineSlots(input: {
 
 function capacityWarning(input: {
   closed: boolean;
-  knownTech: boolean;
-  knownAdvisor: boolean;
   techOverloaded: boolean;
   advisorOverloaded: boolean;
 }): string | null {
   if (input.closed) return "The store is closed that day.";
-  if (!input.knownTech && !input.knownAdvisor) return "That technician and advisor aren't on this store.";
-  if (!input.knownTech) return "That technician isn't on this store.";
-  if (!input.knownAdvisor) return "That advisor isn't on this store.";
   if (input.techOverloaded && input.advisorOverloaded) return "This would overload technician hours and advisor capacity.";
   if (input.techOverloaded) return "This would overload technician hours for that job.";
   if (input.advisorOverloaded) return "This would overload advisor capacity.";
