@@ -236,10 +236,11 @@ describe("round 6", () => {
     const punch = shop.getState().timeLogs.find((row) => row.id === open?.id);
     const after = shop.getState().orders.find((row) => row.id === id);
     assert.equal(typeof punch?.endedAt, "string");
-    assert.notEqual(punch?.endedAt, null);
+    assert.equal(punch?.needsReview, true);
+    assert.match(punch?.note ?? "", /close time/);
+    assert.equal(after?.history?.length, before?.history?.length);
     assert.equal(after?.status, "closed");
     assert.equal(after?.labor.length, before?.labor.length);
-    assert.equal(after?.mileage, before?.mileage);
   });
 
   it("kills the close-role, first-advisor, last-name, and removed-line gaps", () => {
@@ -285,7 +286,7 @@ describe("round 6", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const derek = shop.getState().advisors.find((row) => row.role === "service-manager");
     assert.ok(derek);
-    shop.getState().updateAdvisor(derek.id, { name: derek.name, role: "advisor" } as { name: string; role?: string });
+    shop.getState().updateAdvisor(derek.id, { name: derek.name, role: "advisor" });
     assert.equal(shop.getState().advisors.find((row) => row.id === derek.id)?.role, "service-manager");
     const id = openOrder(shop);
     const shopFee = shop.getState().settings.fees.find((row) => row.basis === "percent");

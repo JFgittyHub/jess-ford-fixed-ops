@@ -348,6 +348,19 @@ export interface TimeLog {
   orderId: string;
   startedAt: string;
   endedAt: string | null;
+  /** Written on the time log when a punch on a Closed repair order is ended. The repair order itself is not changed. */
+  note?: string;
+  /** The punch was ended at the repair order's close time and needs a service manager to review it. */
+  needsReview?: boolean;
+}
+
+export interface RoleChange {
+  at: string;
+  who: string;
+  whoId: string;
+  advisorId: string;
+  before: string;
+  after: string;
 }
 
 export interface ClosedRecord {
@@ -491,4 +504,6 @@ export interface ShopData {
   onlineRequests: OnlineRequest[];
   onlineChallenges: OnlineChallenge[];
   notices: ShopNotice[];
+  /** Who changed an advisor's role, and when. */
+  roleLog?: RoleChange[];
 }

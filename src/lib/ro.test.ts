@@ -10,6 +10,7 @@ import {
   dropClosedHistory,
   invoiceRepairOrder,
   ticketBeforeTax,
+  linkLaborAndParts,
   unbookRepairOrder,
 } from "./ro.ts";
 import type { Advisor, ClosedRecord, Customer, PartSku, RepairOrder, Tech, TimeLog, Vehicle } from "./types.ts";
@@ -271,11 +272,11 @@ function closeContext(patch: Partial<{ techs: Tech[]; advisors: Advisor[]; logs:
 }
 
 function closable(order: RepairOrder): RepairOrder {
-  return {
+  return linkLaborAndParts({
     ...order,
     jobs: [{ id: "j", code: "A", concern: order.concern, cause: "The pads were worn.", correction: "Replaced the pads." }],
     mileageOut: order.mileage + 4,
-    labor: order.labor.map((line) => ({ ...line, jobId: line.jobId || "j" })),
-    parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new", jobId: line.jobId || "j" })),
-  };
+    labor: order.labor.map((line) => ({ ...line, jobId: undefined })),
+    parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new", jobId: undefined })),
+  });
 }

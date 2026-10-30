@@ -4,6 +4,7 @@ import { NO_WORK_NOTE_MAX, advisorCloseGaps, hasBookedWork } from "@/lib/ro";
 import { deskActor, displayRecordedName, displayRecordedWhen, mayCloseRepairOrder } from "@/lib/cancel";
 import { lastVisitHint, lastVisitMileage, mileageFloorMessage, mileageOutGapMessage } from "@/lib/mileage";
 import { phoneDigitError } from "@/lib/range";
+import { isFullVin, vinEntryError } from "@/lib/vin";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
@@ -123,6 +124,9 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const [partJobId, setPartJobId] = useState("");
   const [outDraft, setOutDraft] = useState("");
   const [outError, setOutError] = useState("");
+  const [outReason, setOutReason] = useState("");
+  const [vinWarning, setVinWarning] = useState("");
+  const [vinReplace, setVinReplace] = useState(false);
 
   useEffect(() => {
     setTab("ticket");
@@ -210,7 +214,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "closed" ? "good" : undefined}>{roStatusLabel(order)}</Pill>
-        <span className="text-sm text-muted">{advisor?.name}</span>
+        <p className="text-sm text-muted">Advisor on this repair order: {advisor?.name ?? "Unassigned"}</p>
         {order.promiseTime ? <span className="text-sm text-muted">Promise {clockTime(order.promiseTime)}</span> : null}
         <span className="text-sm tabular-nums text-muted">In {order.mileage.toLocaleString("en-US")}{order.mileageOut != null ? ` · Out ${order.mileageOut.toLocaleString("en-US")}` : ""}</span>
         {order.inspection && (mpi.red > 0 || mpi.yellow > 0) ? (
@@ -257,6 +261,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           <input
             className="field"
             disabled={locked}
+            maxLength={20}
             value={phoneDraft}
             onChange={(event) => setPhoneDraft(event.target.value)}
             onBlur={() => {
@@ -278,14 +283,44 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             aria-label="VIN"
             onChange={(event) => setVinDraft(event.target.value.toUpperCase())}
             onBlur={() => {
-              if (!locked) shop.updateOpenVin(order.id, vinDraft);
+              if (locked) return;
+              const error = vinEntryError(vinDraft);
+              if (error || !vinDraft.trim()) {
+                setVinReplace(false);
+                setVinWarning(vinDraft.trim() ? (error ?? "") : (isFullVin(vehicle?.vin ?? "") ? "Enter a 17-character VIN." : ""));
+                return;
+              }
+              const nextVin = vinDraft.trim().toUpperCase();
+              if (isFullVin(vehicle?.vin ?? "") && vehicle?.vin.toUpperCase() !== nextVin) {
+                setVinReplace(true);
+                setVinWarning(`Replace VIN ${vehicle?.vin} with ${nextVin}?`);
+                return;
+              }
+              const result = shop.updateOpenVin(order.id, nextVin);
+              setVinReplace(false);
+              setVinWarning(result.error || result.warning || "");
             }}
           />
+          {vinWarning ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{vinWarning}</p> : null}
+          {vinReplace ? (
+            <Button
+              small
+              type="button"
+              onClick={() => {
+                const result = shop.updateOpenVin(order.id, vinDraft.trim().toUpperCase());
+                setVinReplace(false);
+                setVinWarning(result.error || result.warning || "");
+              }}
+            >
+              Replace the VIN
+            </Button>
+          ) : null}
         </Field>
         <Field label="Address">
           <input
             className="field"
             disabled={locked}
+            maxLength={200}
             value={addressDraft}
             onChange={(event) => setAddressDraft(event.target.value)}
             onBlur={() => {
@@ -327,7 +362,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           {mileageError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{mileageError}</p> : null}
           {!locked && mileageError && actor === "service-manager" ? (
             <div className="mt-2 grid gap-2">
-              <textarea className="field min-h-16" placeholder="Reason, at least 10 characters" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />
+              <textarea className="field min-h-16" maxLength={500} placeholder="Reason, at least 10 characters" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />
               <Button type="button" onClick={() => {
                 const next = Number(mileageDraft);
                 const result = shop.recordMileageOverride(order.id, next, overrideReason);
@@ -375,18 +410,24 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           />
           {outError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{outError}</p> : null}
           {!sealed && outError && actor === "service-manager" ? (
-            <Button
-              type="button"
-              small
-              onClick={() => {
-                const next = Number(outDraft);
-                const result = shop.recordMileageOutOverride(order.id, next, overrideReason);
-                setOutError(result.error ?? "");
-                if (result.ok) setOutDraft(String(next));
-              }}
-            >
-              Save mileage out with a reason
-            </Button>
+            <div className="mt-2 grid gap-2">
+              <textarea className="field min-h-16" maxLength={500} aria-label="Mileage out reason" placeholder="Reason, at least 10 characters" value={outReason} onChange={(event) => setOutReason(event.target.value)} />
+              <Button
+                type="button"
+                small
+                onClick={() => {
+                  const next = Number(outDraft);
+                  const result = shop.recordMileageOutOverride(order.id, next, outReason);
+                  setOutError(result.error ?? "");
+                  if (result.ok) {
+                    setOutDraft(String(next));
+                    setOutReason("");
+                  }
+                }}
+              >
+                Save mileage out with a reason
+              </Button>
+            </div>
           ) : null}
         </Field>
         <Field label="Promise time">
@@ -433,7 +474,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           {order.labor.map((line) => (
             <div key={line.id} className="card grid gap-2">
               <div className="flex items-start justify-between gap-3">
-                <p className="font-semibold">{line.opcode} · {line.description}</p>
+                <p className="font-semibold">{order.jobs.find((job) => job.id === line.jobId)?.code ? `Line ${order.jobs.find((job) => job.id === line.jobId)?.code} · ` : ""}{line.opcode} · {line.description}</p>
                 <p className="tabular-nums font-semibold">{usd(line.hours * line.rate, true)}</p>
               </div>
               <div className="grid gap-2 sm:grid-cols-4">
@@ -462,6 +503,15 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                   </select>
                 </Field>
               </div>
+              {!locked && order.jobs.some((job) => job.needsAssignment) ? (
+                <Field label="Assign to">
+                  <select className="field" aria-label={`Assign ${line.opcode}`} value={line.jobId ?? ""} onChange={(event) => shop.moveWorkToJob(order.id, "labor", line.id, event.target.value)}>
+                    {order.jobs.map((job) => (
+                      <option key={job.id} value={job.id} disabled={Boolean(job.needsAssignment)}>{job.code}{job.needsAssignment ? " · needs assignment" : ""}</option>
+                    ))}
+                  </select>
+                </Field>
+              ) : null}
               {locked ? null : <Button small onClick={() => shop.removeLabor(order.id, line.id)}>Remove labor</Button>}
             </div>
           ))}
@@ -548,7 +598,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           {order.parts.map((line) => (
             <div key={line.id} className="card flex flex-wrap items-end justify-between gap-3">
               <div>
-                <p className="font-semibold">{line.number}</p>
+                <p className="font-semibold">{order.jobs.find((job) => job.id === line.jobId)?.code ? `Line ${order.jobs.find((job) => job.id === line.jobId)?.code} · ` : ""}{line.number}</p>
                 <p className="text-sm text-muted">{line.description} · {line.condition ?? "new"}</p>
               </div>
               <div className="flex flex-wrap items-end gap-2">
@@ -566,6 +616,15 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                   <input className="field w-28 tabular-nums" disabled={locked} type="number" min={0} step={0.01} value={line.price} onChange={(event) => shop.updatePartLine(order.id, line.id, { price: Number(event.target.value) || 0 })} />
                 </Field>
                 <p className="pb-2 text-sm tabular-nums text-muted">Cost {usd(line.cost, true)}</p>
+                {!locked && order.jobs.some((job) => job.needsAssignment) ? (
+                  <Field label="Assign to">
+                    <select className="field" aria-label={`Assign ${line.number}`} value={line.jobId ?? ""} onChange={(event) => shop.moveWorkToJob(order.id, "part", line.id, event.target.value)}>
+                      {order.jobs.map((job) => (
+                        <option key={job.id} value={job.id} disabled={Boolean(job.needsAssignment)}>{job.code}{job.needsAssignment ? " · needs assignment" : ""}</option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : null}
                 {locked ? null : <Button small onClick={() => shop.removePartLine(order.id, line.id)}>Remove</Button>}
               </div>
             </div>
@@ -697,9 +756,38 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       ) : null}
       {!sealed && !canClose ? <p className="mt-2 text-sm text-muted">An advisor or service manager closes this repair order.</p> : null}
       {!booked && !sealed && (!readyToInvoice(order) || !hasBookedWork(order)) ? (
-        <p className="mt-2 text-sm text-muted">You can add labor and parts now. Book stays off until the hours, technician, and cost are on the ticket and the Washington authorization covers it.</p>
+        <ul className="mt-2 grid gap-1 text-sm text-muted">
+          <li>Book stays off until this repair order is ready:</li>
+          {!order.labor.some((line) => line.hours > 0) ? <li>Add labor hours.</li> : null}
+          {!order.labor.some((line) => line.techId.trim()) ? <li>Assign a technician on a labor line.</li> : null}
+          {orderMoney(order).ticket <= 0 ? <li>Add a labor or parts cost.</li> : null}
+          {!readyToInvoice(order) ? <li>Fill the Washington authorization so it covers the ticket.</li> : null}
+        </ul>
       ) : null}
-      {closeError ? <p role="alert" className="mt-2 whitespace-pre-line text-sm text-[#8a3b2a]">{closeError}</p> : null}
+      {closeError ? (
+        <div role="alert" className="mt-2 grid gap-1 text-sm text-[#8a3b2a]">
+          {closeError.split("\n").map((gap) => {
+            const match = /^(Concern|Cause|Correction) on line (\S+)/.exec(gap);
+            const job = match ? (order.jobs ?? []).find((row) => row.code === match[2]) : undefined;
+            if (!match || !job) return <p key={gap}>{gap}</p>;
+            const field = match[1].toLowerCase();
+            return (
+              <button
+                key={gap}
+                type="button"
+                className="text-left underline"
+                onClick={() => {
+                  const target = document.getElementById(`job-${job.id}-${field}`);
+                  target?.scrollIntoView({ block: "center" });
+                  target?.focus();
+                }}
+              >
+                {gap}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
       {booked && gaps.length > 0 ? (
         <ul className="mt-2 grid gap-1 text-sm text-muted">
           {gaps.map((gap) => {

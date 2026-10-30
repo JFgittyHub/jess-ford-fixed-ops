@@ -144,6 +144,16 @@
     text-transform: uppercase;
   }
 
+  .label input,
+  .label textarea,
+  .label select,
+  .label p,
+  .label button {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+  }
+
   .nav-link {
     display: flex;
     align-items: center;

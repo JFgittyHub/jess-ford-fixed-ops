@@ -519,7 +519,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       const roKey = `h${seq}`;
       const labor: LaborLine[] = [];
       const partLines: PartLine[] = [];
-      const openedAt = `${padDay(day)}T${String(7 + Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}:00`;
+      const openedAt = new Date(Date.UTC(year, month - 1, day, 15, 0, n)).toISOString();
       jobs.forEach((item, index) => {
         const techId = item.techs[Math.floor(rng() * item.techs.length)];
         const hours = money2(item.hours * (0.86 + rng() * 0.28));
@@ -768,12 +768,13 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   ];
 
   function priorVisitReading(vehicleId: string, openedAt: string) {
-    let bestStamp = "";
+    const cutoff = Date.parse(openedAt);
+    let bestStamp = -1;
     let best = 0;
     for (const row of orders) {
       if (row.vehicleId !== vehicleId) continue;
-      const stamp = row.openedAt || `${row.openedOn}T00:00:00`;
-      if (!stamp || stamp >= openedAt) continue;
+      const stamp = Date.parse(row.openedAt || "");
+      if (!Number.isFinite(stamp) || stamp >= cutoff) continue;
       const reading = row.mileage + 4;
       if (stamp > bestStamp || (stamp === bestStamp && reading > best)) {
         bestStamp = stamp;
@@ -794,10 +795,11 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   }
 
   const open = openSeeds.map((order, index) => {
-    const openedAt = `${order.openedOn}T23:${String(50 - index).padStart(2, "0")}:00`;
+    const [y, m, d] = order.openedOn.split("-").map(Number);
+    const openedAt = new Date(Date.UTC(y, m - 1, d, 22, Math.max(0, 50 - index), 0)).toISOString();
     const floor = priorVisitReading(order.vehicleId, openedAt);
     const mileage = Math.max(order.mileage, floor > 0 ? floor : 0);
-    return withJobIds({ ...order, openedAt, mileage, mileageOut: mileage, inspection: demoSheet(order.id) });
+    return withJobIds({ ...order, openedAt, mileage, inspection: demoSheet(order.id) });
   });
 
   function appt(
@@ -886,7 +888,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     return {
       ...order,
       bay: bayFromStatus(order.status),
-      mileageOut: (order as { mileageOut?: number | null }).mileageOut ?? (closed || order.status === "ready" ? order.mileage + 4 : null),
+      mileageOut: closed ? ((order as { mileageOut?: number | null }).mileageOut ?? order.mileage + 4) : null,
       closeSnapshot: closed && customer && vehicle
         ? {
             customerName: customer.name,

@@ -2,14 +2,16 @@ import type { RepairOrder, Vehicle } from "./types";
 import { isFullVin } from "./vin";
 
 export interface MileageVisit {
-  /** The reading the next visit has to meet: mileage in, or mileage out when that is higher. */
+  /** The last visit's mileage out, or mileage in when that visit has no mileage out yet. */
   mileage: number;
+  /** Which reading on that visit set the floor. */
+  readingFrom: "out" | "in";
   date: string;
   orderId: string;
 }
 
 export interface MileageShop {
-  orders: Array<Pick<RepairOrder, "id" | "vehicleId" | "mileage" | "mileageOut" | "openedOn"> & { openedAt?: string | null }>;
+  orders: Array<Pick<RepairOrder, "id" | "number" | "vehicleId" | "mileage" | "mileageOut" | "openedOn"> & { openedAt?: string | null }>;
   vehicles: Pick<Vehicle, "id" | "vin">[];
 }
 
@@ -26,16 +28,35 @@ export function visitReading(order: { mileage: number; mileageOut?: number | nul
   return Number.isFinite(order.mileage) && order.mileage > 0 ? order.mileage : 0;
 }
 
+export function visitReadingFrom(order: { mileage: number; mileageOut?: number | null }): "out" | "in" {
+  if (order.mileageOut != null && Number.isFinite(order.mileageOut) && order.mileageOut > 0) return "out";
+  return "in";
+}
+
 function sameVin(left: string, right: string) {
   const a = vinKey(left);
   const b = vinKey(right);
   return isFullVin(a) && isFullVin(b) && a === b;
 }
 
-export function openedStamp(order: { openedOn?: string; openedAt?: string | null }) {
-  if (typeof order.openedAt === "string" && order.openedAt.trim()) return order.openedAt.trim();
-  if (order.openedOn) return `${order.openedOn}T00:00:00`;
-  return "";
+/** UTC milliseconds. A saved UTC stamp wins. A legacy row is the opened date plus its RO number, so two same-day rows are ordered and neither is earlier than the other both ways. */
+export function openedInstant(order: { openedOn?: string; openedAt?: string | null; number?: number }): number {
+  if (typeof order.openedAt === "string") {
+    const text = order.openedAt.trim();
+    if (/Z$|[+-]\d{2}:\d{2}$/.test(text)) {
+      const ms = Date.parse(text);
+      if (Number.isFinite(ms)) return ms;
+    }
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(order.openedOn ?? "");
+  if (!match) return 0;
+  const base = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 15, 0, 0);
+  const sequence = typeof order.number === "number" && Number.isFinite(order.number) ? Math.abs(Math.trunc(order.number)) % 80000 : 0;
+  return base + sequence * 1000;
+}
+
+export function utcOpenedAt(order: { openedOn?: string; openedAt?: string | null; number?: number }): string {
+  return new Date(openedInstant(order)).toISOString();
 }
 
 const REASON_SHORT = "Add a reason of at least 10 characters.";
@@ -69,15 +90,18 @@ export function lastVisitMileage(
 ): MileageVisit | null {
   if (!vehicle) return null;
   const cutoff = options.openedAt
-    || (options.openedOn ? `${options.openedOn}T23:59:59.999` : "9999-12-31T23:59:59.999");
-  let bestStamp = "";
+    ? Date.parse(options.openedAt)
+    : options.openedOn
+      ? Date.parse(`${options.openedOn}T23:59:59.999Z`)
+      : Number.POSITIVE_INFINITY;
+  let bestStamp = -1;
   let best: MileageVisit | null = null;
   for (const shop of shops) {
     const vinById = new Map(shop.vehicles.map((row) => [row.id, row.vin ?? ""]));
     for (const order of shop.orders) {
       if (options.excludeOrderId && order.id === options.excludeOrderId) continue;
-      const stamp = openedStamp(order);
-      if (!stamp || stamp >= cutoff) continue;
+      const stamp = openedInstant(order);
+      if (!Number.isFinite(stamp) || stamp <= 0 || stamp >= cutoff) continue;
       const reading = visitReading(order);
       if (reading <= 0) continue;
       const sameId = order.vehicleId === vehicle.id;
@@ -85,7 +109,7 @@ export function lastVisitMileage(
       if (!sameId && !sameVin(vehicle.vin ?? "", otherVin)) continue;
       if (!best || stamp > bestStamp || (stamp === bestStamp && reading > best.mileage)) {
         bestStamp = stamp;
-        best = { mileage: reading, date: order.openedOn || stamp.slice(0, 10), orderId: order.id };
+        best = { mileage: reading, readingFrom: visitReadingFrom(order), date: order.openedOn || new Date(stamp).toISOString().slice(0, 10), orderId: order.id };
       }
     }
   }
@@ -123,10 +147,14 @@ export function mileageTooHigh(mileage: number) {
 export function mileageFloorMessage(mileage: number, last: MileageVisit | null) {
   if (!last || !Number.isFinite(mileage) || mileage >= last.mileage) return null;
   const miles = last.mileage.toLocaleString("en-US");
-  return `Mileage in can't be lower than the last visit (${miles} mi on ${formatVisitDate(last.date)}).`;
+  const which = last.readingFrom === "in" ? "mileage in" : "mileage out";
+  return `Mileage in can't be lower than the last visit's ${which} (${miles} mi on ${formatVisitDate(last.date)}).`;
 }
 
 export function lastVisitHint(last: MileageVisit | null) {
   if (!last) return "";
-  return `Last visit: ${last.mileage.toLocaleString("en-US")} mi on ${formatVisitDate(last.date)}.`;
+  const miles = last.mileage.toLocaleString("en-US");
+  const when = formatVisitDate(last.date);
+  if (last.readingFrom === "in") return `Last visit: mileage in ${miles} mi on ${when}.`;
+  return `Last visit: left at ${miles} mi on ${when}.`;
 }

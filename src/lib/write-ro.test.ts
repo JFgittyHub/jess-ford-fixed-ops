@@ -681,11 +681,12 @@ describe("RO editor", () => {
     const source = seed.orders.find((row) => row.status !== "closed" && row.labor.some((line) => line.techId));
     assert.ok(source);
     const tech = seed.techs.find((row) => row.id === source.labor.find((line) => line.techId)?.techId);
-    assert.ok(tech);
+    const tara = seed.advisors.find((row) => row.name === "Tara Singh");
+    assert.ok(tech && tara);
     useShop.setState({
       ...seed,
       focusOrderId: null,
-      orders: seed.orders.map((row) => (row.id === source.id ? { ...row, status: "booked" as const } : row)),
+      orders: seed.orders.map((row) => (row.id === source.id ? { ...row, status: "booked" as const, advisorId: tara.id } : row)),
     });
     useShop.getState().setWorkingAs("derek");
     const host = (document as unknown as { createElement: (tag: string) => { textContent: string } }).createElement("div");
@@ -695,9 +696,13 @@ describe("RO editor", () => {
       root.render(createElement(OrderEditor, { orderId: source.id, onClose() {} }));
     });
     const text = (document as unknown as { body: { textContent: string } }).body.textContent;
-    assert.match(text, /Tara Singh/);
+    const customer = seed.customers.find((row) => row.id === source.customerId);
+    assert.match(text, /Advisor on this repair order: Tara Singh/);
+    assert.match(text, new RegExp(String(source.number)));
+    assert.match(text, new RegExp(source.concern.split("·")[0].trim().slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.match(text, new RegExp(tech.name));
     assert.match(text, /Booked/);
+    if (customer) assert.match(text, new RegExp(customer.name.split(" ")[0]));
     await act(async () => root.unmount());
   });
 });

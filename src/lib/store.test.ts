@@ -4,6 +4,7 @@ import { pinClock, resetClock } from "./clock.ts";
 import { createEmptyShop, createSeed } from "./seed.ts";
 import { confirmedDemoStaffAccess } from "./demo.ts";
 import { SCORECARD_STORAGE_KEY, SHOP_STORAGE_KEY, type ShopStorage } from "./shop-storage.ts";
+import { linkLaborAndParts } from "./ro.ts";
 import { createShopStore, migrateSavedShop, mergeSavedShop, sampleLoadAllowed, useShop } from "./store.ts";
 import type { Advisor, RepairOrder, Tech, TimeLog } from "./types.ts";
 import { fullVin } from "./vin.ts";
@@ -63,10 +64,10 @@ function bookedOrder(): RepairOrder {
     fees: [],
     taxRate: 6.5,
     labor: [
-      { id: "l1", opcode: "BRK", description: "Brakes", hours: 1, rate: 189, payType: "cp", techId: tech.id, jobId: "j" },
+      { id: "l1", opcode: "BRK", description: "Brakes", hours: 1, rate: 189, payType: "cp", techId: tech.id },
     ],
     parts: [
-      { id: "p1", partId: "pads", number: "BL", description: "Pads", qty: 2, cost: 10, price: 40, payType: "cp", condition: "new", jobId: "j" },
+      { id: "p1", partId: "pads", number: "BL", description: "Pads", qty: 2, cost: 10, price: 40, payType: "cp", condition: "new" },
     ],
     invoicedOn: null,
     stockApplied: false,
@@ -113,7 +114,7 @@ describe("shop store", () => {
       workingAsId: advisor.id,
       customers: [{ id: "c", name: "Helen Cho", phone: "5095550100", mobile: "", email: "", noShows: 0 }],
       vehicles: [{ id: "v", customerId: "c", year: 2018, make: "Ford", model: "F-150", vin: fullVin({ prefix: "1FTEW1EP", year: 2018, plant: "A", serial: 100001 }) }],
-      orders: [bookedOrder()],
+      orders: [linkLaborAndParts(bookedOrder())],
       timeLogs: [log],
       closedHistory: [],
     });

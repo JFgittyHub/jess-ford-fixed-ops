@@ -188,8 +188,24 @@ function looseLine(line: { jobId?: string }, jobIds: Set<string>) {
   return !line.jobId || !jobIds.has(line.jobId);
 }
 
-/** Put labor and parts that have no line onto the only line, or onto a line the advisor must assign. */
+/** Drop a flagged assignment line a previous load added to a Closed repair order. Labor and parts go back to having no line. */
+export function undoFlaggedLines(order: RepairOrder): RepairOrder {
+  const jobs = order.jobs ?? [];
+  const flagged = jobs.filter((job) => job.needsAssignment);
+  if (flagged.length === 0) return order;
+  const ids = new Set(flagged.map((job) => job.id));
+  const clear = <T extends { jobId?: string }>(line: T): T => (line.jobId && ids.has(line.jobId) ? { ...line, jobId: undefined } : line);
+  return {
+    ...order,
+    jobs: jobs.filter((job) => !job.needsAssignment),
+    labor: order.labor.map(clear),
+    parts: order.parts.map(clear),
+  };
+}
+
+/** Open repair orders only. One real line gets the loose work. More than one gets a line the advisor assigns. A Closed repair order is not given new lines. */
 export function linkLaborAndParts(order: RepairOrder): RepairOrder {
+  if (order.status === "closed" || order.authorizationLocked) return undoFlaggedLines(order);
   const jobs = [...(order.jobs ?? [])];
   const known = new Set(jobs.map((job) => job.id));
   const looseLabor = order.labor.some((line) => looseLine(line, known));
@@ -272,12 +288,12 @@ export function noWorkCloseError(
 ): string | null {
   if (!NO_WORK_STATUSES.has(order.status)) return NO_WORK_NOT_OPEN;
   const blocks = noWorkBlockers(order, logs, identity);
-  if (blocks.length > 0) return blocks.join(". ");
   const trimmed = note.trim();
   const nonSpace = trimmed.replace(/\s/g, "");
-  if (!trimmed) return NO_WORK_NOTE_REQUIRED;
-  if (nonSpace.length < NO_WORK_NOTE_MIN) return NO_WORK_NOTE_SHORT;
-  if (trimmed.length > NO_WORK_NOTE_MAX) return NO_WORK_NOTE_LONG;
+  if (!trimmed) blocks.push(NO_WORK_NOTE_REQUIRED);
+  else if (nonSpace.length < NO_WORK_NOTE_MIN) blocks.push(NO_WORK_NOTE_SHORT);
+  else if (trimmed.length > NO_WORK_NOTE_MAX) blocks.push(NO_WORK_NOTE_LONG);
+  if (blocks.length > 0) return blocks.join(". ");
   return null;
 }
 
@@ -339,6 +355,9 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   const jobs = order.jobs ?? [];
   const concern = (order.concern || jobs.map((job) => job.concern).join(" ")).trim();
   if (!concern) gaps.push("Concern");
+  if (order.status === "closed") {
+    // A Closed repair order is not checked or changed line by line.
+  } else {
   const jobIds = new Set(jobs.map((job) => job.id));
   if (order.labor.some((line) => looseLine(line, jobIds)) || order.parts.some((line) => looseLine(line, jobIds))) {
     gaps.push("Labor or parts are not on a job line");
@@ -353,6 +372,7 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
     if (!job.cause.trim()) gaps.push(`Cause on line ${job.code}`);
     if (!job.correction.trim()) gaps.push(`Correction on line ${job.code}`);
   });
+  }
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) gaps.push("Mileage in");
   if (mileageTooHigh(order.mileage)) gaps.push("Mileage in can't be over 999,999.");
   const belowLast = mileageOverrideAllows(order, order.mileage) ? null : mileageFloorMessage(order.mileage, ctx.lastVisit ?? null);

@@ -24,6 +24,26 @@ export function isFullVin(value: string): boolean {
   return /^[A-HJ-NPR-Z0-9]{17}$/.test(value);
 }
 
+/** Blank is allowed until close. I, O, and Q are refused, not stripped. */
+export function vinEntryError(value: unknown): string | null {
+  if (typeof value !== "string") return "Enter a 17-character VIN.";
+  const vin = value.trim().toUpperCase();
+  if (!vin) return null;
+  if (vin === "UNKNOWN") return "Enter the VIN. Unknown is not a VIN.";
+  if (/[IOQ]/.test(vin)) return "A VIN can't include the letters I, O, or Q.";
+  if (vin.length !== 17 || !isFullVin(vin)) return "VIN has to be 17 characters.";
+  return null;
+}
+
+/** A bad check digit warns. It does not block saving or closing. */
+export function vinCheckWarning(value: string): string | null {
+  if (vinEntryError(value) || !isFullVin(value.trim().toUpperCase())) return null;
+  const vin = value.trim().toUpperCase();
+  const digit = vinCheckDigit(vin);
+  if (digit && vin[8] !== digit) return "The VIN check digit doesn't match. Check it before you close.";
+  return null;
+}
+
 export function vinCheckDigit(vin: string): string | null {
   if (!isFullVin(vin)) return null;
   let sum = 0;

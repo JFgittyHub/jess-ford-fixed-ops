@@ -160,7 +160,7 @@ describe("no-work close", () => {
   });
 
   it("migrates an invoiced repair order to booked and does not invent a no-work close", () => {
-    assert.equal(SHOP_PERSIST_VERSION, 34);
+    assert.equal(SHOP_PERSIST_VERSION, 35);
     const migrated = migrateSavedShop({
       orders: [{ id: "ro-old", status: "invoiced", number: 12, labor: [], parts: [], concern: "Oil", closeType: "invoiced", closedBy: "Unknown" }],
       closedHistory: [{ id: "h-old", orderId: "kept", number: 9, openedOn: "2026-09-01", closedOn: "2026-09-02", customerName: "Helen Cho", phone: "", address: "", plate: "", vin: "", vehicle: "", mileage: 1, mileageOut: null, concern: "Oil", opcodes: "", partNumbers: "", total: 10, beforeTax: 9, closeType: "invoiced", closedBy: "Unknown", closedAt: "Unknown" }],

@@ -112,19 +112,19 @@ describe("round 8", () => {
 
   it("compares mileage by opened timestamp and uses mileage out only", () => {
     const vehicle = { id: "v", vin: "1FTEW1EP0KFA00001" };
-    const early = visit("early", "2026-10-30T08:00:00", 80210, 80300);
-    const later = visit("later", "2026-10-30T09:00:00", 1000, 5000);
+    const early = visit("early", "2026-10-30T08:00:00.000Z", 80210, 80300);
+    const later = visit("later", "2026-10-30T09:00:00.000Z", 1000, 5000);
     const shops = [{ orders: [early, later], vehicles: [vehicle] }];
     assert.equal(lastVisitMileage(shops, vehicle, { excludeOrderId: "early", openedAt: early.openedAt })?.orderId, undefined);
     assert.equal(lastVisitMileage(shops, vehicle, { excludeOrderId: "later", openedAt: later.openedAt })?.mileage, 80300);
-    const tied = visit("tied", "2026-10-30T08:00:00", 90000, 90000);
+    const tied = visit("tied", "2026-10-30T08:00:00.000Z", 90000, 90000);
     const tiedShops = [{ orders: [early, tied], vehicles: [vehicle] }];
-    assert.equal(lastVisitMileage(tiedShops, vehicle, { excludeOrderId: "early", openedAt: "2026-10-30T08:00:00" }), null);
-    assert.equal(lastVisitMileage(tiedShops, vehicle, { excludeOrderId: "tied", openedAt: "2026-10-30T08:00:00" }), null);
-    const openVisit = visit("open", "2026-10-29T08:00:00", 50000, null);
-    assert.equal(lastVisitMileage([{ orders: [openVisit], vehicles: [vehicle] }], vehicle, { openedAt: "2026-10-30T08:00:00" })?.mileage, 50000);
-    const outLower = visit("out-lower", "2026-10-29T08:00:00", 80300, 80210);
-    assert.equal(lastVisitMileage([{ orders: [outLower], vehicles: [vehicle] }], vehicle, { openedAt: "2026-10-30T08:00:00" })?.mileage, 80210);
+    assert.equal(lastVisitMileage(tiedShops, vehicle, { excludeOrderId: "early", openedAt: "2026-10-30T08:00:00.000Z" }), null);
+    assert.equal(lastVisitMileage(tiedShops, vehicle, { excludeOrderId: "tied", openedAt: "2026-10-30T08:00:00.000Z" }), null);
+    const openVisit = visit("open", "2026-10-29T08:00:00.000Z", 50000, null);
+    assert.equal(lastVisitMileage([{ orders: [openVisit], vehicles: [vehicle] }], vehicle, { openedAt: "2026-10-30T08:00:00.000Z" })?.mileage, 50000);
+    const outLower = visit("out-lower", "2026-10-29T08:00:00.000Z", 80300, 80210);
+    assert.equal(lastVisitMileage([{ orders: [outLower], vehicles: [vehicle] }], vehicle, { openedAt: "2026-10-30T08:00:00.000Z" })?.mileage, 80210);
   });
 
   it("logs a service-manager mileage override with the old value, the new value, and the floor", () => {
@@ -225,16 +225,23 @@ describe("round 8", () => {
     const before = shop.getState().orders.find((row) => row.id === id);
     shop.getState().clockOut("marcus");
     const after = shop.getState().orders.find((row) => row.id === id);
-    assert.equal(shop.getState().timeLogs.find((row) => row.orderId === id)?.endedAt == null, false);
+    const punch = shop.getState().timeLogs.find((row) => row.orderId === id);
+    assert.equal(punch?.endedAt == null, false);
+    assert.equal(punch?.needsReview, true);
+    assert.match(punch?.note ?? "", /Megan Cho/);
     assert.equal(after?.status, before?.status);
     assert.equal(after?.mileage, before?.mileage);
     assert.equal(after?.labor.length, before?.labor.length);
-    assert.match(after?.history?.at(-1)?.text ?? "", /Marcus Hale clocked out/);
+    assert.equal(after?.history?.length, before?.history?.length);
     const reloaded = migrateSavedShop({
       orders: [after],
       timeLogs: shop.getState().timeLogs.map((row) => ({ ...row, endedAt: null })),
     });
-    assert.equal(reloaded.timeLogs?.find((row) => row.orderId === id)?.endedAt, null);
+    const reloadedPunch = reloaded.timeLogs?.find((row) => row.orderId === id);
+    assert.equal(reloadedPunch?.needsReview, true);
+    assert.notEqual(reloadedPunch?.endedAt, null);
+    assert.equal(reloaded.orders?.find((row) => row.id === id)?.status, "closed");
+    assert.equal(reloaded.orders?.find((row) => row.id === id)?.jobs.some((job) => job.needsAssignment), false);
   });
 
   it("logs phone and address edits in sentence case and refuses bad money", () => {

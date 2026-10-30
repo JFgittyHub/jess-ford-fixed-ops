@@ -18,7 +18,9 @@ function AdvisorsPage() {
   const [base, setBase] = useState("4200");
   const [laborPercent, setLaborPercent] = useState("5");
   const [partsPercent, setPartsPercent] = useState("2");
+  const [role, setRole] = useState<"advisor" | "service-manager">("advisor");
   const [error, setError] = useState("");
+  const managers = shop.advisors.filter((advisor) => advisor.role === "service-manager").length;
   const pace = dayOfMonth() / daysInMonth();
   const sold = shop.orders.filter(isSold);
 
@@ -41,7 +43,7 @@ function AdvisorsPage() {
             setError("Need a number, a name, and a pay plan.");
             return;
           }
-          const ok = addAdvisor({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts });
+          const ok = addAdvisor({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts, role });
           if (!ok) {
             setError("That advisor number is already on the drive.");
             return;
@@ -69,6 +71,12 @@ function AdvisorsPage() {
         <Field label="Parts %">
           <input className="field tabular-nums" type="number" min={0} step={0.1} value={partsPercent} onChange={(event) => setPartsPercent(event.target.value)} />
         </Field>
+        <Field label="Role">
+          <select className="field" aria-label="New advisor role" value={role} onChange={(event) => setRole(event.target.value === "service-manager" ? "service-manager" : "advisor")}>
+            <option value="advisor">Advisor</option>
+            <option value="service-manager">Service manager</option>
+          </select>
+        </Field>
         <div className="flex items-end">
           <Button tone="primary" type="submit">Add advisor</Button>
         </div>
@@ -84,6 +92,7 @@ function AdvisorsPage() {
               <th>Monthly base</th>
               <th>Labor %</th>
               <th>Parts %</th>
+              <th>Role</th>
               <th></th>
             </tr>
           </thead>
@@ -104,6 +113,21 @@ function AdvisorsPage() {
                 </td>
                 <td>
                   <input className="field w-24 tabular-nums" aria-label={`${advisor.name} parts percent`} type="number" min={0} step={0.1} value={advisor.partsPercent} onChange={(event) => updateAdvisor(advisor.id, { partsPercent: Number(event.target.value) || 0 })} />
+                </td>
+                <td>
+                  <select
+                    className="field"
+                    aria-label={`${advisor.name} role`}
+                    value={advisor.role === "service-manager" ? "service-manager" : "advisor"}
+                    onChange={(event) => {
+                      const next = event.target.value === "service-manager" ? "service-manager" : "advisor";
+                      const ok = updateAdvisor(advisor.id, { role: next });
+                      setError(ok ? "" : managers === 0 ? "That role was not saved." : "Only a service manager can change a role.");
+                    }}
+                  >
+                    <option value="advisor">Advisor</option>
+                    <option value="service-manager">Service manager</option>
+                  </select>
                 </td>
                 <td>
                   <Button small onClick={() => {
