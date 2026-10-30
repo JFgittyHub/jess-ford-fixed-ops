@@ -506,4 +506,18 @@ export interface ShopData {
   notices: ShopNotice[];
   /** Who changed an advisor's role, and when. */
   roleLog?: RoleChange[];
+  /** A confirmed VIN transfer. Closed repair orders keep their own snapshot. */
+  ownershipLog?: OwnershipChange[];
+}
+
+/** Who moved a vehicle to another customer, and when. */
+export interface OwnershipChange {
+  at: string;
+  who: string;
+  whoId: string;
+  beforeVehicleId: string;
+  afterVehicleId: string;
+  beforeCustomerId: string;
+  afterCustomerId: string;
+  vin: string;
 }

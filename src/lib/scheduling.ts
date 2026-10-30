@@ -1,4 +1,5 @@
 import { money2 } from "./format";
+import { HOURS_MAX, inRange } from "./range";
 import type { BookingWindow, DayHours, OnlineService, SchedulingSettings, StoreId, TransportOption, WeekdayIndex } from "./types";
 
 export const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -140,8 +141,9 @@ function cleanService(value: unknown, fallbackId: string): OnlineService | null 
   if (!value || typeof value !== "object") return null;
   const row = value as Partial<OnlineService> & { price?: unknown };
   const name = typeof row.name === "string" ? row.name.trim() : "";
-  const laborHours = money2(Number(row.laborHours));
-  if (!name || !Number.isFinite(laborHours) || laborHours <= 0) return null;
+  if (typeof row.laborHours !== "number" || !inRange(row.laborHours, 0.01, HOURS_MAX)) return null;
+  const laborHours = money2(row.laborHours);
+  if (!name || laborHours <= 0) return null;
   const id = typeof row.id === "string" && row.id.trim() ? row.id.trim() : fallbackId;
   return { id, name, laborHours };
 }

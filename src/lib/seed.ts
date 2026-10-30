@@ -282,8 +282,18 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
       customerId: p(order.customerId),
       vehicleId: p(order.vehicleId),
       jobs: order.jobs.map((job) => ({ ...job, id: p(job.id) })),
-      labor: order.labor.map((line) => ({ ...line, id: p(line.id), techId: p(line.techId), jobId: line.jobId ? p(line.jobId) : line.jobId })),
-      parts: order.parts.map((line) => ({ ...line, id: p(line.id), partId: line.partId ? p(line.partId) : null, jobId: line.jobId ? p(line.jobId) : line.jobId })),
+      labor: order.labor.map((line) => {
+        const next = { ...line, id: p(line.id), techId: p(line.techId) };
+        if (line.jobId) next.jobId = p(line.jobId);
+        else delete next.jobId;
+        return next;
+      }),
+      parts: order.parts.map((line) => {
+        const next = { ...line, id: p(line.id), partId: line.partId ? p(line.partId) : null };
+        if (line.jobId) next.jobId = p(line.jobId);
+        else delete next.jobId;
+        return next;
+      }),
       inspection: order.inspection ? { ...order.inspection, techId: p(order.inspection.techId) } : null,
       closedById: order.closedById ? p(order.closedById) : "",
     })),
@@ -524,6 +534,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
         const techId = item.techs[Math.floor(rng() * item.techs.length)];
         const hours = money2(item.hours * (0.86 + rng() * 0.28));
         const jobId = `${roKey}-j${index}`;
+        const linked = jobs.length > 1;
         labor.push({
           id: `${roKey}-l${index}`,
           opcode: item.opcode,
@@ -532,9 +543,9 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
           rate: rateFor(item.payType, settings.cpRate, settings.warrantyRate, settings.internalRate),
           payType: item.payType,
           techId,
-          jobId,
+          ...(linked ? { jobId } : {}),
         });
-        partLines.push(...lineParts(item, sku, item.payType, `${roKey}-${index}`).map((line) => ({ ...line, jobId })));
+        partLines.push(...lineParts(item, sku, item.payType, `${roKey}-${index}`).map((line) => (linked ? { ...line, jobId } : line)));
       });
       const story = jobs.map((item, index) => jobLine(
         `${roKey}-j${index}`,
@@ -954,5 +965,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     onlineRequests: [],
     onlineChallenges: [],
     notices: [],
+    roleLog: [],
+    ownershipLog: [],
   }, pullman ? "pl-" : "");
 }

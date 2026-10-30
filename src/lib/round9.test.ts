@@ -27,15 +27,12 @@ describe("round 9", () => {
     };
     const once = migrateSavedShop({ orders: [closed], timeLogs: [] });
     const row = once.orders?.find((order) => order.id === "cl");
-    assert.equal(row?.jobs.some((job) => job.needsAssignment), false);
-    assert.equal(row?.jobs.some((job) => job.code === "C"), false);
-    assert.equal(row?.labor[0]?.jobId, undefined);
-    assert.equal(row?.parts[0]?.jobId, undefined);
+    assert.equal(JSON.stringify(row), JSON.stringify(closed));
+    assert.equal(row?.labor[0]?.jobId, "cl-assign");
     assert.equal(row?.history?.length, 1);
     const twice = migrateSavedShop(once);
     const again = twice.orders?.find((order) => order.id === "cl");
-    assert.deepEqual(again?.jobs.map((job) => job.id), row?.jobs.map((job) => job.id));
-    assert.equal(again?.labor[0]?.jobId, undefined);
+    assert.equal(JSON.stringify(again), JSON.stringify(row));
   });
 
   it("lets an advisor move flagged work onto a real line and then close", () => {

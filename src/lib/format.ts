@@ -86,9 +86,20 @@ export function shortDate(iso: string) {
   return `${Number(m)}/${Number(d)}`;
 }
 
-export function punchHours(startedAt: string, endedAt: string | null, now = Date.now()) {
+/** A flagged punch stops at the repair order's close time, or at its start when there is no close time. */
+export function reviewCap(row: { startedAt: string; endedAt: string | null; needsReview?: boolean }, closedAt?: string | null): string | null {
+  if (row.endedAt || !row.needsReview) return null;
+  if (closedAt && Number.isFinite(Date.parse(closedAt)) && Date.parse(closedAt) >= Date.parse(row.startedAt)) return closedAt;
+  return row.startedAt;
+}
+
+export function punchHours(startedAt: string, endedAt: string | null, now = Date.now(), capAt?: string | null) {
   const start = new Date(startedAt).getTime();
-  const end = endedAt ? new Date(endedAt).getTime() : now;
+  let end = endedAt ? new Date(endedAt).getTime() : now;
+  if (capAt) {
+    const cap = new Date(capAt).getTime();
+    if (Number.isFinite(cap)) end = Math.min(end, cap);
+  }
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
   return (end - start) / 3_600_000;
 }

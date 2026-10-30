@@ -20,9 +20,8 @@ describe("round 10", () => {
     assert.equal(grandCoulee.length, 659);
     assert.equal(pullman.length, 672);
     for (const order of closed) {
-      assert.equal(order.labor.some((line) => Object.prototype.hasOwnProperty.call(line, "jobId")), false);
-      assert.equal(order.parts.some((line) => Object.prototype.hasOwnProperty.call(line, "jobId")), false);
-      assert.equal(order.jobs.some((job) => job.needsAssignment), false);
+      assert.equal(Boolean(order.labor[0]?.jobId), true);
+      assert.equal(Boolean(order.parts[0]?.jobId), true);
       assert.equal(order.fees?.[0]?.amount, 150);
       assert.equal(order.fees?.[0]?.name.length, 120);
       assert.equal(order.wa, undefined);

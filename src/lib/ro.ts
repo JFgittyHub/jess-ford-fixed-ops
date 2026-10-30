@@ -203,9 +203,10 @@ export function undoFlaggedLines(order: RepairOrder): RepairOrder {
   };
 }
 
-/** Open repair orders only. One real line gets the loose work. More than one gets a line the advisor assigns. A Closed repair order is not given new lines. */
+/** Open repair orders only. One real line gets the loose work. More than one gets a line the advisor assigns. A Closed repair order is returned as saved. */
 export function linkLaborAndParts(order: RepairOrder): RepairOrder {
-  if (order.status === "closed" || order.authorizationLocked) return undoFlaggedLines(order);
+  if (order.status === "closed") return order;
+  if (order.authorizationLocked) return undoFlaggedLines(order);
   const jobs = [...(order.jobs ?? [])];
   const known = new Set(jobs.map((job) => job.id));
   const looseLabor = order.labor.some((line) => looseLine(line, known));
@@ -265,7 +266,7 @@ export function noWorkBlockers(
   if (!identity?.customer?.name.trim()) blocks.push("Add the customer name");
   if (!recordedAddress(order)) blocks.push("Add the address");
   if (!identity?.customer?.phone.trim()) blocks.push("Add the customer phone");
-  if (!isFullVin(identity?.vehicle?.vin ?? "")) blocks.push("VIN");
+  if (!isFullVin(identity?.vehicle?.vin ?? "")) blocks.push("Add the full 17-character VIN.");
   const vehicle = identity?.vehicle;
   if (!vehicle || !vehicle.year || !vehicle.model.trim() || !vehicle.make?.trim()) blocks.push("Add the year, make, and model");
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) blocks.push("Add the mileage in");

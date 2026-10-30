@@ -1,4 +1,4 @@
-import { daySpan, feeTotal, monthKey, paceRatio, punchHours, salesTax, SKILL_LABEL, usd } from "./format";
+import { daySpan, feeTotal, monthKey, paceRatio, punchHours, reviewCap, salesTax, SKILL_LABEL, usd } from "./format";
 import { doorRate, payKindOf } from "./pay";
 import type { Advisor, ClosedRecord, Customer, PayKind, RepairOrder, ShopData, Tech, TimeLog, Vehicle } from "./types";
 import { normalizeWa } from "./wa";
@@ -161,7 +161,7 @@ export function closeGaps(order: RepairOrder, techs: Tech[], advisors: Advisor[]
   else if (!advisor.number.trim()) gaps.push("The advisor needs an advisor number.");
   const numbered = order.labor.filter((line) => techs.find((tech) => tech.id === line.techId)?.number.trim());
   if (numbered.length === 0 || numbered.length !== order.labor.length) gaps.push("Every labor line needs a technician number.");
-  const time = timeLogs.filter((row) => row.orderId === order.id).reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt), 0);
+  const time = timeLogs.filter((row) => row.orderId === order.id).reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, Date.now(), reviewCap(row, order.closedAt)), 0);
   if (time <= 0) gaps.push("Clock time");
   return gaps;
 }

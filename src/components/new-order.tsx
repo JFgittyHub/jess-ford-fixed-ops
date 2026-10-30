@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lastVisitHint, lastVisitMileage, mileageFloorMessage, mileageOutGapMessage } from "@/lib/mileage";
@@ -78,7 +78,8 @@ function NewOrderForm({
   const [make, setMake] = useState("");
   const [vin, setVin] = useState("");
   const [vinWarning, setVinWarning] = useState("");
-  const [vinConfirmed, setVinConfirmed] = useState(false);
+  const transferRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const [mileageReason, setMileageReason] = useState("");
 
   const seeded = preset?.lines?.map((line) => line.concern.trim()).filter(Boolean).join("\n") || preset?.concern || "";
@@ -103,6 +104,7 @@ function NewOrderForm({
         <Button small tone={mode === "new" ? "primary" : "ghost"} onClick={() => setMode("new")}>New customer</Button>
       </div>
       <form
+        ref={formRef}
         className="grid gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -127,15 +129,16 @@ function NewOrderForm({
               make: make.trim(),
               model,
               vin: cleanedVin,
+              confirmTransfer: transferRef.current,
             });
-            if (created.error || !created.customerId) {
-              setFormError(created.error || "That customer was not added.");
+            transferRef.current = false;
+            if (created.needsTransfer) {
+              setVinWarning(created.warning || `This VIN is on file for another customer. Transfer the vehicle to ${name.trim()}?`);
+              setFormError("");
               return;
             }
-            if (created.warning && !vinConfirmed) {
-              setVinWarning(created.warning);
-              setVinConfirmed(true);
-              setFormError(created.warning);
+            if (created.error || !created.customerId) {
+              setFormError(created.error || "That customer was not added.");
               return;
             }
             nextCustomer = created.customerId;
@@ -225,8 +228,16 @@ function NewOrderForm({
               <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} placeholder="Ford" /></Field>
               <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="F-150" /></Field>
             </div>
-            <Field label="VIN"><input className="field font-mono uppercase" aria-label="VIN" maxLength={17} value={vin} onChange={(event) => { setVin(event.target.value.toUpperCase()); setVinConfirmed(false); setVinWarning(""); }} placeholder="17 characters" /></Field>
-            {vinWarning ? <p role="alert" className="text-sm text-[#8a3b2a]">{vinWarning} Submit again to use that vehicle.</p> : null}
+            <Field label="VIN"><input className="field font-mono uppercase" aria-label="VIN" maxLength={17} value={vin} onChange={(event) => { setVin(event.target.value.toUpperCase()); transferRef.current = false; setVinWarning(""); }} placeholder="17 characters" /></Field>
+            {vinWarning ? (
+              <div className="grid gap-2">
+                <p role="alert" className="text-sm text-[#8a3b2a]">{vinWarning}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" small onClick={() => { transferRef.current = true; formRef.current?.requestSubmit(); }}>Transfer the vehicle</Button>
+                  <Button type="button" small onClick={() => { setVin(""); setVinWarning(""); transferRef.current = false; }}>Fix the VIN</Button>
+                </div>
+              </div>
+            ) : null}
           </>
         )}
         <Field label="Advisor">

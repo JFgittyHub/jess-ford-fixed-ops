@@ -32,6 +32,13 @@ export function WaAuth({ orderId }: { orderId: string }) {
   const over = ready && money.ticket > (limit as number) + 0.009;
   const customer = customers.find((row) => row.id === order.customerId);
   const vehicle = vehicles.find((row) => row.id === order.vehicleId);
+  const snap = locked ? order.closeSnapshot : undefined;
+  const copyName = snap?.customerName || customer?.name;
+  const copyPhone = snap?.phone || customer?.phone;
+  const copyVin = snap?.vin || vehicle?.vin || "";
+  const copyYear = snap?.year || vehicle?.year || "";
+  const copyMake = snap?.make || vehicle?.make || "Ford";
+  const copyModel = snap?.model || vehicle?.model || "";
   const advisor = advisors.find((row) => row.id === order.advisorId);
 
   return (
@@ -148,8 +155,8 @@ export function WaAuth({ orderId }: { orderId: string }) {
         </div>
         <p className="mt-2 text-sm">{settings.storeName}</p>
         <p className="text-sm text-muted">{[settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || "Add the street and phone in Settings. The invoice has to show them."}</p>
-        <p className="mt-2 text-sm">{customer?.name} · {customer?.phone}{wa.address ? ` · ${wa.address}` : ""}</p>
-        <p className="text-sm">{vehicle ? vehicleTitle(vehicle.year, vehicle.make || "Ford", vehicle.model) : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
+        <p className="mt-2 text-sm">{copyName} · {copyPhone}{wa.address ? ` · ${wa.address}` : ""}</p>
+        <p className="text-sm">{copyModel ? vehicleTitle(copyYear, copyMake, copyModel) : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : copyVin ? `VIN ${vinTail(copyVin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
         <p className="mt-2 text-sm">{order.jobs.map((job) => `${job.code}. ${job.concern}`).join(" · ")}</p>
         <p className="mt-2 text-sm">Labor {usd(money.labor)} · Parts {usd(money.parts)} · Total before tax {usd(money.ticket)}</p>
         <ul className="mt-1 text-sm text-muted">

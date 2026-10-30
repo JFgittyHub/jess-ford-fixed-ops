@@ -78,6 +78,31 @@ function orderNumber(order: { number?: number }): number {
   return typeof order.number === "number" && Number.isFinite(order.number) ? order.number : 0;
 }
 
+function hasClock(openedAt?: string | null): boolean {
+  return typeof openedAt === "string" && openedAt.trim().length > 0;
+}
+
+function sameShopDay(left?: string, right?: string): boolean {
+  const a = (left ?? "").slice(0, 10);
+  const b = (right ?? "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(a) && a === b;
+}
+
+/** A same-day repair order with no time is ordered by number, not treated as midnight. */
+function earlierVisit(
+  candidate: { openedAt?: string | null; openedOn?: string; number?: number },
+  cutoff: { openedAt?: string | null; openedOn?: string; number?: number },
+  mixedOk: boolean,
+): boolean {
+  const mixed = mixedOk && sameShopDay(candidate.openedOn, cutoff.openedOn) && hasClock(candidate.openedAt) !== hasClock(cutoff.openedAt);
+  if (mixed) return orderNumber(candidate) < orderNumber(cutoff);
+  const stamp = openedInstant(candidate);
+  const cutoffMs = openedInstant(cutoff);
+  if (!Number.isFinite(stamp) || stamp <= 0) return false;
+  if (stamp !== cutoffMs) return stamp < cutoffMs;
+  return orderNumber(candidate) < orderNumber(cutoff);
+}
+
 export function utcOpenedAt(order: { openedOn?: string; openedAt?: string | null; number?: number }): string {
   return new Date(openedInstant(order)).toISOString();
 }
@@ -112,28 +137,23 @@ export function lastVisitMileage(
   options: { excludeOrderId?: string; openedAt?: string; openedOn?: string; number?: number } = {},
 ): MileageVisit | null {
   if (!vehicle) return null;
-  const cutoffMs = openedInstant({ openedAt: options.openedAt, openedOn: options.openedAt ? undefined : options.openedOn });
-  const cutoffNumber = options.number;
-  let bestStamp = -1;
-  let bestNumber = -1;
+  const cutoff = { openedAt: options.openedAt, openedOn: options.openedOn, number: options.number };
+  const mixedOk = options.number !== undefined;
+  let bestOrder: MileageShop["orders"][number] | null = null;
   let best: MileageVisit | null = null;
   for (const shop of shops) {
     const vinById = new Map(shop.vehicles.map((row) => [row.id, row.vin ?? ""]));
     for (const order of shop.orders) {
       if (options.excludeOrderId && order.id === options.excludeOrderId) continue;
-      const stamp = openedInstant(order);
-      const rank = orderNumber(order);
-      const laterInstant = stamp > cutoffMs || (stamp === cutoffMs && (cutoffNumber === undefined || rank >= cutoffNumber));
-      if (!Number.isFinite(stamp) || stamp <= 0 || laterInstant) continue;
+      if (!earlierVisit(order, cutoff, mixedOk)) continue;
       const reading = visitReading(order);
       if (reading <= 0) continue;
       const sameId = order.vehicleId === vehicle.id;
       const otherVin = vinById.get(order.vehicleId) ?? "";
       if (!sameId && !sameVin(vehicle.vin ?? "", otherVin)) continue;
-      if (!best || stamp > bestStamp || (stamp === bestStamp && rank > bestNumber)) {
-        bestStamp = stamp;
-        bestNumber = rank;
-        best = { mileage: reading, readingFrom: visitReadingFrom(order), date: order.openedOn || new Date(stamp).toISOString().slice(0, 10), orderId: order.id };
+      if (!bestOrder || earlierVisit(bestOrder, order, true)) {
+        bestOrder = order;
+        best = { mileage: reading, readingFrom: visitReadingFrom(order), date: order.openedOn || new Date(openedInstant(order)).toISOString().slice(0, 10), orderId: order.id };
       }
     }
   }

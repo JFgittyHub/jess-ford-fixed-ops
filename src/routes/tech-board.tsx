@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { BAY_LABEL, clockTime, formatDuration, punchHours, roStatusLabel, today as shopToday } from "@/lib/format";
+import { BAY_LABEL, clockTime, formatDuration, punchHours, reviewCap, roStatusLabel, today as shopToday } from "@/lib/format";
 import { lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { BayStatus, RepairOrder, TimeLog } from "@/lib/types";
@@ -22,10 +22,10 @@ function assignedOpen(techId: string, orders: RepairOrder[]) {
   return orders.filter((order) => order.status !== "closed" && order.labor.some((line) => line.techId === techId));
 }
 
-function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, now: number) {
+function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, now: number, orders: RepairOrder[]) {
   return logs
     .filter((row) => row.techId === techId && (orderId === null || row.orderId === orderId))
-    .reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now), 0);
+    .reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now, reviewCap(row, orders.find((order) => order.id === row.orderId)?.closedAt)), 0);
 }
 
 function TechBoardPage() {
@@ -33,6 +33,7 @@ function TechBoardPage() {
   const look = lookups(shop);
   const now = useNow();
   const [techId, setTechId] = useState("");
+  const [clockError, setClockError] = useState("");
   const tech = shop.techs.find((row) => row.id === techId);
   const roster = [...shop.techs].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
 
@@ -66,7 +67,7 @@ function TechBoardPage() {
   const open = shop.timeLogs.find((row) => row.techId === tech.id && row.endedAt === null) ?? null;
   const current = open ? shop.orders.find((order) => order.id === open.orderId) : undefined;
   const todayLogs = shop.timeLogs.filter((row) => row.techId === tech.id && (row.startedAt.startsWith(shopToday()) || row.endedAt === null));
-  const today = loggedHours(todayLogs, tech.id, null, now);
+  const today = loggedHours(todayLogs, tech.id, null, now, shop.orders);
   const flagged = jobs.reduce((sum, order) => sum + order.labor.filter((line) => line.techId === tech.id).reduce((hours, line) => hours + line.hours, 0), 0);
   const ordered = [...jobs].sort((a, b) => (a.id === open?.orderId ? -1 : b.id === open?.orderId ? 1 : a.promiseTime.localeCompare(b.promiseTime)));
 
@@ -110,7 +111,7 @@ function TechBoardPage() {
           const vehicle = look.vehicle.get(order.vehicleId);
           const lines = order.labor.filter((line) => line.techId === tech.id);
           const onThis = open?.orderId === order.id;
-          const hours = loggedHours(shop.timeLogs, tech.id, order.id, now);
+          const hours = loggedHours(shop.timeLogs, tech.id, order.id, now, shop.orders);
           return (
             <article key={order.id} className={onThis ? "card border-2 border-primary" : "card"}>
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -130,15 +131,16 @@ function TechBoardPage() {
               <p className="mt-2 text-sm">{order.concern}</p>
               <div className="mt-4 flex flex-wrap gap-2">
                 {onThis ? (
-                  <Button onClick={() => shop.clockOut(tech.id)}>Clock out {tech.name}</Button>
+                  <Button onClick={() => { const result = shop.clockOut(tech.id); setClockError(result.error ?? ""); }}>Clock out {tech.name}</Button>
                 ) : (
-                  <Button tone="primary" onClick={() => shop.clockIn(tech.id, order.id)}>{open ? "Move clock here" : "Clock in"}</Button>
+                  <Button tone="primary" onClick={() => { const result = shop.clockIn(tech.id, order.id); setClockError(result.error ?? ""); }}>{open ? "Move clock here" : "Clock in"}</Button>
                 )}
               </div>
             </article>
           );
         })}
       </div>
+      {clockError ? <p role="alert" className="mt-2 text-sm text-[#8a3b2a]">{clockError}</p> : null}
     </Shell>
   );
 }

@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, punchHours, roStatusLabel, usd } from "@/lib/format";
+import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, punchHours, reviewCap, roStatusLabel, usd } from "@/lib/format";
 import { NO_WORK_NOTE_MAX, advisorCloseGaps, hasBookedWork } from "@/lib/ro";
 import { deskActor, displayRecordedName, displayRecordedWhen, mayCloseRepairOrder } from "@/lib/cancel";
 import { lastVisitHint, lastVisitMileage, mileageFloorMessage, mileageOutGapMessage } from "@/lib/mileage";
 import { phoneDigitError } from "@/lib/range";
-import { isFullVin, vinEntryError } from "@/lib/vin";
+import { isFullVin, normalizeVin, vinEntryError } from "@/lib/vin";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
@@ -40,18 +40,27 @@ function TechTime({ order }: { order: RepairOrder }) {
           const punches = shop.timeLogs.filter((row) => row.techId === techId && row.orderId === order.id);
           const open = shop.timeLogs.find((row) => row.techId === techId && row.endedAt === null);
           const onThis = open?.orderId === order.id;
-          const hours = punches.reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now), 0);
+          const hours = punches.reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now, reviewCap(row, order.closedAt)), 0);
+          const waiting = punches.filter((row) => row.needsReview && !row.endedAt);
+          const actor = deskActor(shop);
           return (
             <article key={techId} className="card flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="font-semibold">{tech ? `${tech.number} · ${tech.name}` : "Technician"}</p>
                 <p className="text-sm text-muted">{onThis ? `On this repair order · ${formatDuration(hours)} logged` : `${formatDuration(hours)} logged on this repair order`}</p>
-                {punches.some((row) => row.needsReview) ? <p className="text-sm text-[#8a3b2a]">Needs service manager review</p> : null}
+                {waiting.map((row) => (
+                  <div key={row.id} className="mt-1">
+                    <p className="text-sm text-[#8a3b2a]">Needs service manager review. {row.note}</p>
+                    {actor === "service-manager" ? (
+                      <Button small type="button" onClick={() => { const result = shop.resolveFlaggedPunch(row.id); setClockError(result.error ?? ""); }}>Resolve punch</Button>
+                    ) : <p className="text-sm text-muted">Sent for review</p>}
+                  </div>
+                ))}
               </div>
               {onThis ? (
                 <Button onClick={() => { const result = shop.clockOut(techId); setClockError(result.error ?? ""); }}>Clock out {tech?.name ?? "technician"}</Button>
               ) : closed ? null : (
-                <Button tone="primary" onClick={() => shop.clockIn(techId, order.id)}>{open ? "Move clock here" : "Clock in"}</Button>
+                <Button tone="primary" onClick={() => { const result = shop.clockIn(techId, order.id); setClockError(result.error ?? ""); }}>{open ? "Move clock here" : "Clock in"}</Button>
               )}
             </article>
           );
@@ -130,6 +139,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const [outReason, setOutReason] = useState("");
   const [vinWarning, setVinWarning] = useState("");
   const [vinReplace, setVinReplace] = useState(false);
+  const [vinTransfer, setVinTransfer] = useState(false);
 
   useEffect(() => {
     setTab("ticket");
@@ -142,11 +152,15 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
     setOutError("");
     setLaborJobId("");
     setPartJobId("");
+    setVinWarning("");
+    setVinReplace(false);
+    setVinTransfer(false);
   }, [orderId]);
 
-  const customerPhone = order ? (look.customer.get(order.customerId)?.phone ?? "") : "";
+  const sealedView = order?.status === "closed" ? order.closeSnapshot : undefined;
+  const customerPhone = order ? (sealedView?.phone || look.customer.get(order.customerId)?.phone || "") : "";
   const waAddress = order ? normalizeWa(order.wa).address : "";
-  const vehicleVin = order ? (look.vehicle.get(order.vehicleId)?.vin ?? "") : "";
+  const vehicleVin = order ? (sealedView?.vin || look.vehicle.get(order.vehicleId)?.vin || "") : "";
   const mileageNow = order?.mileage ?? 0;
   const orderKey = order?.id ?? "";
   useEffect(() => {
@@ -169,7 +183,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const booked = order.status === "booked";
   const actor = deskActor(shop);
   const canClose = mayCloseRepairOrder(actor);
-  const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), look.vehicle.get(order.vehicleId), { excludeOrderId: order.id, openedAt: order.openedAt || `${order.openedOn}T23:59:59.999` });
+  const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), look.vehicle.get(order.vehicleId), { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number });
   const lineChoices = (order.jobs ?? []).filter((job) => !job.needsAssignment);
   const laborTarget = lineChoices.some((job) => job.id === laborJobId) ? laborJobId : (lineChoices[0]?.id ?? "");
   const partTarget = lineChoices.some((job) => job.id === partJobId) ? partJobId : (lineChoices[0]?.id ?? "");
@@ -213,7 +227,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       wide
       onClose={requestClose}
       title={`RO ${order.number}`}
-      description={customer ? `${customer.name} · ${vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "Vehicle"}` : "Repair order"}
+      description={customer || sealedView?.customerName ? `${sealedView?.customerName || customer?.name} · ${vehicle ? `${sealedView?.year || vehicle.year} ${sealedView?.make || vehicle.make || "Ford"} ${sealedView?.model || vehicle.model}` : "Vehicle"}` : "Repair order"}
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "closed" ? "good" : undefined}>{roStatusLabel(order)}</Pill>
@@ -290,33 +304,57 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               const error = vinEntryError(vinDraft);
               if (error || !vinDraft.trim()) {
                 setVinReplace(false);
-                setVinWarning(vinDraft.trim() ? (error ?? "") : (isFullVin(vehicle?.vin ?? "") ? "Enter a 17-character VIN." : ""));
+                setVinTransfer(false);
+                setVinWarning(vinDraft.trim() ? (error ?? "") : (isFullVin(vehicleVin) ? "Enter a 17-character VIN." : ""));
                 return;
               }
-              const nextVin = vinDraft.trim().toUpperCase();
-              if (isFullVin(vehicle?.vin ?? "") && vehicle?.vin.toUpperCase() !== nextVin) {
+              const nextVin = normalizeVin(vinDraft);
+              const currentVin = normalizeVin(vehicleVin);
+              if (isFullVin(currentVin) && currentVin !== nextVin) {
+                setVinTransfer(false);
                 setVinReplace(true);
-                setVinWarning(`Replace VIN ${vehicle?.vin} with ${nextVin}?`);
+                setVinWarning(`Replace VIN ${currentVin} with ${nextVin}?`);
                 return;
               }
               const result = shop.updateOpenVin(order.id, nextVin);
               setVinReplace(false);
+              setVinTransfer(Boolean(result.needsTransfer));
               setVinWarning(result.error || result.warning || "");
             }}
           />
           {vinWarning ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{vinWarning}</p> : null}
           {vinReplace ? (
-            <Button
-              small
-              type="button"
-              onClick={() => {
-                const result = shop.updateOpenVin(order.id, vinDraft.trim().toUpperCase());
-                setVinReplace(false);
-                setVinWarning(result.error || result.warning || "");
-              }}
-            >
-              Replace the VIN
-            </Button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                small
+                type="button"
+                onClick={() => {
+                  const result = shop.updateOpenVin(order.id, normalizeVin(vinDraft));
+                  setVinReplace(false);
+                  setVinTransfer(Boolean(result.needsTransfer));
+                  setVinWarning(result.error || result.warning || "");
+                }}
+              >
+                Replace the VIN
+              </Button>
+              <Button small type="button" onClick={() => { setVinDraft(vehicleVin); setVinReplace(false); setVinTransfer(false); setVinWarning(""); }}>Keep the VIN</Button>
+            </div>
+          ) : null}
+          {vinTransfer ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button
+                small
+                type="button"
+                onClick={() => {
+                  const result = shop.updateOpenVin(order.id, normalizeVin(vinDraft), true);
+                  setVinTransfer(false);
+                  setVinWarning(result.error || result.warning || "");
+                }}
+              >
+                Transfer the vehicle
+              </Button>
+              <Button small type="button" onClick={() => { setVinDraft(vehicleVin); setVinTransfer(false); setVinWarning(""); }}>Fix the VIN</Button>
+            </div>
           ) : null}
         </Field>
         <Field label="Address">
@@ -404,7 +442,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                 return;
               }
               if (next < order.mileage) {
-                setOutError("Mileage out can't be lower than mileage in.");
+                setOutError("Mileage out can't be lower than mileage in. This can't be overridden.");
                 return;
               }
               setOutError("");
@@ -412,7 +450,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             }}
           />
           {outError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{outError}</p> : null}
-          {!sealed && outError && actor === "service-manager" ? (
+          {!sealed && outError.startsWith("Mileage out can't be more than 10,000") && actor === "service-manager" ? (
             <div className="mt-2 grid gap-2">
               <textarea className="field min-h-16" maxLength={500} aria-label="Mileage out reason" placeholder="Reason, at least 10 characters" value={outReason} onChange={(event) => setOutReason(event.target.value)} />
               <Button
@@ -714,13 +752,6 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         <div><p className="text-xs uppercase tracking-wide text-muted">Totals</p><p className="font-display text-2xl tabular-nums">{usd(money.total)}</p><p className="text-xs text-muted">Before tax {usd(money.ticket)}</p></div>
       </div>
       <p className="mt-2 text-sm text-muted">Technician pay is counted on the month, not on this ticket. Flat-rate pay hits when the advisor closes the repair order. Hourly pay already hit when they were on the clock.</p>
-      {(order.history ?? []).length > 0 ? (
-        <ul className="mt-3 grid gap-1 text-sm text-muted">
-          {(order.history ?? []).map((entry) => (
-            <li key={`${entry.at}-${entry.kind}-${entry.text}`}>{entry.text} · {displayRecordedName(entry.who)} · {displayRecordedWhen(entry.at)}</li>
-          ))}
-        </ul>
-      ) : null}
       {sealed ? (
         <div className="mt-4 grid gap-1">
           <p className="font-semibold">{order.closeType === "no_work" ? "Closed — no work ($0)" : "Closed"}</p>
@@ -765,6 +796,13 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           {!order.labor.some((line) => line.techId.trim()) ? <li>Assign a technician on a labor line.</li> : null}
           {orderMoney(order).ticket <= 0 ? <li>Add a labor or parts cost.</li> : null}
           {!readyToInvoice(order) ? <li>Fill the Washington authorization so it covers the ticket.</li> : null}
+          {gaps.filter((gap) => /^(Concern|Cause|Correction) on line /.test(gap)).map((gap) => <li key={gap}>{gap}</li>)}
+        </ul>
+      ) : null}
+      {!sealed && !booked && readyToInvoice(order) && hasBookedWork(order) && gaps.some((gap) => /^(Concern|Cause|Correction) on line /.test(gap)) ? (
+        <ul className="mt-2 grid gap-1 text-sm text-muted">
+          <li>Book stays available. Close still needs:</li>
+          {gaps.filter((gap) => /^(Concern|Cause|Correction) on line /.test(gap)).map((gap) => <li key={gap}>{gap}</li>)}
         </ul>
       ) : null}
       {closeError ? (
@@ -814,6 +852,13 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               </li>
             );
           })}
+        </ul>
+      ) : null}
+      {(order.history ?? []).length > 0 ? (
+        <ul className="mt-3 grid gap-1 text-sm text-muted">
+          {(order.history ?? []).map((entry) => (
+            <li key={`${entry.at}-${entry.kind}-${entry.text}`}>{entry.text} · {displayRecordedName(entry.who)} · {displayRecordedWhen(entry.at)}</li>
+          ))}
         </ul>
       ) : null}
       <WaAuth orderId={order.id} />

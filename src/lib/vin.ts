@@ -20,14 +20,19 @@ const YEAR_CODE: Record<number, string> = {
   2027: "V",
 };
 
+/** Upper case, with spaces removed, before a compare or a save. */
+export function normalizeVin(value: string): string {
+  return value.toUpperCase().replace(/\s+/g, "");
+}
+
 export function isFullVin(value: string): boolean {
-  return /^[A-HJ-NPR-Z0-9]{17}$/.test(value);
+  return /^[A-HJ-NPR-Z0-9]{17}$/.test(normalizeVin(value));
 }
 
 /** Blank is allowed until close. I, O, and Q are refused, not stripped. */
 export function vinEntryError(value: unknown): string | null {
   if (typeof value !== "string") return "Enter a 17-character VIN.";
-  const vin = value.trim().toUpperCase();
+  const vin = normalizeVin(value);
   if (!vin) return null;
   if (vin === "UNKNOWN") return "Enter the VIN. Unknown is not a VIN.";
   if (/[IOQ]/.test(vin)) return "A VIN can't include the letters I, O, or Q.";
@@ -37,8 +42,8 @@ export function vinEntryError(value: unknown): string | null {
 
 /** A bad check digit warns. It does not block saving or closing. */
 export function vinCheckWarning(value: string): string | null {
-  if (vinEntryError(value) || !isFullVin(value.trim().toUpperCase())) return null;
-  const vin = value.trim().toUpperCase();
+  if (vinEntryError(value) || !isFullVin(value)) return null;
+  const vin = normalizeVin(value);
   const digit = vinCheckDigit(vin);
   if (digit && vin[8] !== digit) return "The VIN check digit doesn't match. Check it before you close.";
   return null;
