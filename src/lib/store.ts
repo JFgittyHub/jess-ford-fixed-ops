@@ -404,9 +404,10 @@ function shopsFrom(state: { orders: RepairOrder[]; vehicles: Vehicle[]; activeSt
   const activeId = state.activeStoreId === "pullman" ? "pullman" : "grand-coulee";
   const stores = { ...(state.stores ?? {}) };
   stores[activeId] = { ...(stores[activeId] ?? {}), orders: state.orders, vehicles: state.vehicles };
-  const shops = Object.values(stores)
-    .filter((shop) => shop && Array.isArray(shop.orders) && Array.isArray(shop.vehicles))
-    .map((shop) => ({ orders: shop.orders ?? [], vehicles: shop.vehicles ?? [] }));
+  const shops = Object.values(stores).flatMap((shop) => {
+    if (!shop || !Array.isArray(shop.orders) || !Array.isArray(shop.vehicles)) return [];
+    return [{ orders: shop.orders, vehicles: shop.vehicles }];
+  });
   return shops.length > 0 ? shops : [{ orders: state.orders, vehicles: state.vehicles }];
 }
 
