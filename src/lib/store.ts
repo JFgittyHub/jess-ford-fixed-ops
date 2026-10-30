@@ -16,7 +16,7 @@ import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normali
 import { fullVin, isFullVin, vinCheckWarning, vinEntryError } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
-import { lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, preparedReason, utcOpenedAt } from "./mileage";
+import { lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, openedInstant, preparedReason, utcOpenedAt } from "./mileage";
 import { inRange, MONEY_MAX, HOURS_MAX, QTY_MAX, asText, phoneDigits, NAME_MAX, TEXT_MAX, REASON_MAX } from "./range";
 import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, linkLaborAndParts, mileageOverrideAllows, noWorkCloseError, unbookRepairOrder } from "./ro";
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
@@ -69,7 +69,9 @@ interface ShopActions {
   removeTech: (id: string) => "ok" | "used" | "appointments";
   addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent"> & { role?: Advisor["role"] }) => boolean;
   updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "role">>) => boolean;
-  removeAdvisor: (id: string) => "ok" | "used";
+  removeAdvisor: (id: string) => "ok" | "used" | "role" | "last";
+  /** One-time store setup. Only while this store has no service manager and no Closed repair order. */
+  appointFirstServiceManager: (advisorId: string) => { ok: boolean; error: string | null };
   updateOrder: (orderId: string, patch: Partial<Pick<RepairOrder, "concern" | "mileage" | "mileageOut" | "promiseTime" | "advisorId" | "status" | "bay">>) => void;
   updateJob: (orderId: string, jobId: string, patch: Partial<Pick<JobLine, "concern" | "cause" | "correction">>) => void;
   addJob: (orderId: string) => void;
@@ -98,7 +100,7 @@ interface ShopActions {
   updateLabor: (orderId: string, lineId: string, patch: Partial<LaborLine>) => void;
   removeLabor: (orderId: string, lineId: string) => void;
   clockIn: (techId: string, orderId: string) => void;
-  clockOut: (techId: string) => void;
+  clockOut: (techId: string) => { ok: boolean; error: string | null };
   addPartLine: (orderId: string, line: Omit<PartLine, "id">) => void;
   updatePartLine: (orderId: string, lineId: string, patch: Partial<PartLine>) => void;
   removePartLine: (orderId: string, lineId: string) => void;
@@ -420,9 +422,9 @@ function shopsFrom(state: { orders: RepairOrder[]; vehicles: Vehicle[]; activeSt
   return shops.length > 0 ? shops : [{ orders: state.orders, vehicles: state.vehicles }];
 }
 
-function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: Pick<RepairOrder, "id" | "vehicleId" | "openedOn" | "openedAt">) {
+function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: Pick<RepairOrder, "id" | "number" | "vehicleId" | "openedOn" | "openedAt">) {
   const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
-  return lastVisitMileage(shopsFrom(state), vehicle, { excludeOrderId: order.id, openedAt: utcOpenedAt(order) });
+  return lastVisitMileage(shopsFrom(state), vehicle, { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number });
 }
 
 function jobForLine(order: RepairOrder, requested?: string): string | null {
@@ -441,10 +443,45 @@ function settleAssignment(order: RepairOrder): RepairOrder {
   return jobs.length === order.jobs.length ? order : { ...order, jobs };
 }
 
+function dropJobId<T extends { jobId?: string }>(line: T): T {
+  if (!Object.prototype.hasOwnProperty.call(line, "jobId")) return line;
+  const copy = { ...line };
+  delete copy.jobId;
+  return copy;
+}
+
+/** Closed repair orders stay as saved, except v34 job ids on the only line (or an empty flagged line) are removed. */
+function freezeClosedOrder(order: RepairOrder): RepairOrder {
+  const jobs = Array.isArray(order.jobs) ? order.jobs : [];
+  const real = jobs.filter((job) => !job.needsAssignment);
+  const emptyFlagged = jobs.filter((job) => job.needsAssignment && !job.concern?.trim() && !job.cause?.trim() && !job.correction?.trim());
+  const strip = new Set(emptyFlagged.map((job) => job.id));
+  if (real.length <= 1) for (const job of real) strip.add(job.id);
+  const clean = <T extends { jobId?: string }>(line: T): T => {
+    if (!line || typeof line !== "object") return line;
+    if (line.jobId && (real.length <= 1 || strip.has(line.jobId))) return dropJobId(line);
+    if (line.jobId === undefined && Object.prototype.hasOwnProperty.call(line, "jobId")) return dropJobId(line);
+    return line;
+  };
+  return {
+    ...order,
+    jobs: jobs.filter((job) => !emptyFlagged.some((flag) => flag.id === job.id)),
+    labor: (Array.isArray(order.labor) ? order.labor : []).map(clean),
+    parts: (Array.isArray(order.parts) ? order.parts : []).map(clean),
+  };
+}
+
+function namedActor(state: ShopData): { id: string; name: string } | null {
+  const who = matchedStaff(state);
+  if (!who?.id || !who.name.trim()) return null;
+  return who;
+}
+
 function roleChangeAllowed(state: ShopData, from: string, to: string): boolean {
   if (from === to) return true;
+  if (!namedActor(state)) return false;
   const hasManager = state.advisors.some((advisor) => advisor.role === "service-manager");
-  if (!hasManager) return true;
+  if (!hasManager) return false;
   return deskActor(state) === "service-manager";
 }
 
@@ -723,21 +760,16 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
         ? prior.jobs
         : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
-      const total = labor.reduce((sum, line) => sum + line.hours * line.rate, 0)
-        + parts.reduce((sum, line) => sum + line.qty * line.price, 0);
+      if (prior.status === "closed") return freezeClosedOrder(prior);
       const wa = normalizeWa(prior.wa);
-      const stamped = wa.choice
-        ? wa
-        : total > 0
-          ? { ...blankWa(), choice: "written" as const, initials: "on file", date: prior.openedOn, time: "08:00", estimate: money2(total) }
-          : wa;
+      const stamped = wa;
       const built: RepairOrder = {
         ...prior,
         jobs,
         concern: concernFromJobs(jobs) || prior.concern,
         bay: prior.bay ?? bayFromStatus(prior.status),
         mileageOut: prior.mileageOut ?? null,
-        fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, prior.status === "closed" || (prior.status as string) === "invoiced"),
+        fees: normalizeFees(Array.isArray(prior.fees) ? prior.fees : saved.settings?.fees, (prior.status as string) === "invoiced"),
         taxRate: typeof prior.taxRate === "number" ? prior.taxRate : (typeof saved.settings?.taxRate === "number" ? saved.settings.taxRate : DEFAULT_TAX_RATE),
         inspection: prior.inspection ?? demoSheet(prior.id),
         labor,
@@ -751,7 +783,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
           return normalizeCloseFields(prior, historyIds.has(prior.id));
         })(),
         stockApplied: (prior.status as string) === "invoiced" && !historyIds.has(prior.id) ? false : Boolean(prior.stockApplied),
-        authorizationLocked: prior.status === "closed" || ((prior.status as string) === "invoiced" && historyIds.has(prior.id)) ? true : Boolean(prior.authorizationLocked),
+        authorizationLocked: (prior.status as string) === "invoiced" && historyIds.has(prior.id) ? true : Boolean(prior.authorizationLocked),
       };
       const previouslyClosed = Boolean(prior.authorizationLocked) || historyIds.has(prior.id);
       if (previouslyClosed) {
@@ -768,7 +800,9 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         const vehicle = vehicleList.find((row) => row.id === prior.vehicleId);
         built.closeSnapshot = identitySnapshot(built, customer, vehicle);
       }
-      if (built.status !== "closed" && !built.authorizationLocked) built.openedAt = utcOpenedAt(built);
+      if (built.status !== "closed" && !built.authorizationLocked && !(typeof prior.openedAt === "string" && prior.openedAt.trim())) {
+        built.openedAt = new Date(openedInstant(prior)).toISOString();
+      }
       return linkLaborAndParts(built);
     }),
     laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
@@ -805,14 +839,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       ? saved.timeLogs.map((row) => {
           if (!row || row.endedAt) return row;
           const order = (Array.isArray(saved.orders) ? saved.orders : []).find((item) => item && item.id === row.orderId);
-          const closed = order && (order.status === "closed" || order.authorizationLocked);
+          const closed = order && order.status === "closed";
           if (!closed) return row;
-          const endedAt = typeof order.closedAt === "string" && order.closedAt
-            ? order.closedAt
-            : typeof order.invoicedOn === "string" && order.invoicedOn
-              ? `${order.invoicedOn}T23:00:00.000Z`
-              : row.startedAt;
-          return { ...row, endedAt, needsReview: true, note: row.note || "Ended at the repair order's close time for service manager review." };
+          const closeAt = typeof order.closedAt === "string" && order.closedAt.trim() ? order.closedAt : "";
+          if (!closeAt || Date.parse(closeAt) < Date.parse(row.startedAt)) {
+            return { ...row, needsReview: true, note: row.note || "No usable close time, so the punch stays open for service manager review." };
+          }
+          return { ...row, endedAt: closeAt, needsReview: true, note: row.note || "Ended at the repair order's close time for service manager review." };
         })
       : [],
     closedHistory: Array.isArray(saved.closedHistory) ? saved.closedHistory.map((row) => migrateHistoryRow(row)) : [],
@@ -886,8 +919,8 @@ export interface ShopStoreOptions {
   storage?: ShopStorage;
 }
 
-/** Bumped so a Closed repair order is not given a new job line on load. */
-export const SHOP_PERSIST_VERSION = 35;
+/** Bumped so a load strips v34 job ids from Closed repair orders and does not invent an authorization. */
+export const SHOP_PERSIST_VERSION = 36;
 
 export function createShopStore(options: ShopStoreOptions = {}) {
   const demoMode = options.demoMode ?? isDemoMode();
@@ -959,9 +992,15 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             const storeName = asText(patch.storeName, NAME_MAX);
             if (storeName) settings.storeName = storeName;
           }
-          if (typeof patch.city === "string") settings.city = patch.city;
+          if (typeof patch.city === "string") {
+            const city = asText(patch.city, TEXT_MAX);
+            if (city !== null) settings.city = city;
+          }
           if (typeof patch.phone === "string") settings.phone = patch.phone;
-          if (typeof patch.address === "string") settings.address = patch.address;
+          if (typeof patch.address === "string") {
+            const address = asText(patch.address, TEXT_MAX);
+            if (address !== null) settings.address = address;
+          }
           if (inRange(patch.cpRate, 0, MONEY_MAX)) settings.cpRate = patch.cpRate;
           if (inRange(patch.warrantyRate, 0, MONEY_MAX)) settings.warrantyRate = patch.warrantyRate;
           if (inRange(patch.internalRate, 0, MONEY_MAX)) settings.internalRate = patch.internalRate;
@@ -1020,6 +1059,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           settings: { ...state.settings, scheduling: patchBookingWindow(state.settings.scheduling, patch) },
         })),
       addOnlineService: (input) => {
+        if (!inRange(input.laborHours, 0.01, HOURS_MAX)) return false;
         let added = false;
         set((state) => {
           const next = addOnlineService(state.settings.scheduling, input, uid("svc"));
@@ -1076,7 +1116,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       addTech: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
-        if (!name || !number) return false;
+        if (!name || !number || !inRange(input.flagRate, 0, MONEY_MAX) || !inRange(input.hourlyRate, 0, MONEY_MAX)) return false;
         let added = false;
         set((state) => {
           if (state.techs.some((tech) => tech.number === number)) return state;
@@ -1088,8 +1128,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             skill: input.skill,
             board: input.board,
             payStyle: input.payStyle,
-            flagRate: inRange(input.flagRate, 0, MONEY_MAX) ? money2(input.flagRate) : 0,
-            hourlyRate: inRange(input.hourlyRate, 0, MONEY_MAX) ? money2(input.hourlyRate) : 0,
+            flagRate: money2(input.flagRate),
+            hourlyRate: money2(input.hourlyRate),
             availableHoursMonth: 118,
             clockedHoursMonth: 0,
             clockedToday: 0,
@@ -1145,7 +1185,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       addAdvisor: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
-        if (!name || !number) return false;
+        if (!name || !number || !inRange(input.base, 0, MONEY_MAX) || !inRange(input.laborPercent, 0, 100) || !inRange(input.partsPercent, 0, 100)) return false;
         let added = false;
         set((state) => {
           if (state.advisors.some((advisor) => advisor.number === number)) return state;
@@ -1156,9 +1196,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             id: uid("adv"),
             number,
             name,
-            base: inRange(input.base, 0, MONEY_MAX) ? money2(input.base) : 0,
-            laborPercent: inRange(input.laborPercent, 0, 100) ? input.laborPercent : 0,
-            partsPercent: inRange(input.partsPercent, 0, 100) ? input.partsPercent : 0,
+            base: money2(input.base),
+            laborPercent: input.laborPercent,
+            partsPercent: input.partsPercent,
             role,
           };
           const roleLog = role === "service-manager"
@@ -1181,6 +1221,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (!number || !name) return state;
           if (state.advisors.some((advisor) => advisor.id !== id && advisor.number === number)) return state;
           const nextRole = patch.role === "service-manager" || patch.role === "advisor" ? patch.role : (current.role ?? "advisor");
+          const managers = state.advisors.filter((advisor) => advisor.role === "service-manager");
+          if (current.role === "service-manager" && nextRole !== "service-manager" && managers.length <= 1) return state;
           if (!roleChangeAllowed(state, current.role ?? "advisor", nextRole)) return state;
           updated = true;
           const roleLog = nextRole === (current.role ?? "advisor")
@@ -1205,15 +1247,43 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         });
         return updated;
       },
+      appointFirstServiceManager: (advisorId) => {
+        const state = get();
+        const who = namedActor(state);
+        if (!who) return { ok: false, error: "Choose who is working before setting a service manager." };
+        if (state.orders.some((order) => order.status === "closed")) return { ok: false, error: "Store setup is closed once a repair order has been closed." };
+        if (state.advisors.some((advisor) => advisor.role === "service-manager")) return { ok: false, error: "This store already has a service manager." };
+        const advisor = state.advisors.find((row) => row.id === advisorId);
+        if (!advisor) return { ok: false, error: "That advisor is not on this store." };
+        set((shop) => ({
+          advisors: shop.advisors.map((row) => (row.id === advisorId ? { ...row, role: "service-manager" as const } : row)),
+          roleLog: [...(shop.roleLog ?? []), roleChangeRow(who, advisorId, advisor.role ?? "advisor", "service-manager")],
+        }));
+        return { ok: true, error: null };
+      },
       removeAdvisor: (id) => {
-        let result: "ok" | "used" = "ok";
+        let result: "ok" | "used" | "role" | "last" = "ok";
         set((state) => {
+          const who = namedActor(state);
+          if (deskActor(state) !== "service-manager" || !who) {
+            result = "role";
+            return state;
+          }
+          const target = state.advisors.find((advisor) => advisor.id === id);
+          const managers = state.advisors.filter((advisor) => advisor.role === "service-manager");
+          if (target?.role === "service-manager" && managers.length <= 1) {
+            result = "last";
+            return state;
+          }
           const used = state.orders.some((order) => order.advisorId === id) || state.appointments.some((row) => row.advisorId === id);
           if (used) {
             result = "used";
             return state;
           }
-          return { advisors: state.advisors.filter((advisor) => advisor.id !== id) };
+          return {
+            advisors: state.advisors.filter((advisor) => advisor.id !== id),
+            roleLog: [...(state.roleLog ?? []), roleChangeRow(who, id, target?.role ?? "advisor", "removed")],
+          };
         });
         return result;
       },
@@ -1580,7 +1650,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 if (line.id !== lineId) return line;
                 const next = { ...line };
                 if (typeof patch.opcode === "string") next.opcode = patch.opcode;
-                if (typeof patch.description === "string") next.description = patch.description;
+                if (typeof patch.description === "string") {
+                  const description = asText(patch.description, REASON_MAX);
+                  if (description === null) return line;
+                  next.description = description;
+                }
                 if (typeof patch.payType === "string") next.payType = patch.payType;
                 if (typeof patch.techId === "string" && (patch.techId === "" || state.techs.some((tech) => tech.id === patch.techId))) next.techId = patch.techId;
                 if (typeof patch.jobId === "string" && order.jobs.some((job) => job.id === patch.jobId)) next.jobId = patch.jobId;
@@ -1641,29 +1715,41 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             ],
           };
         }),
-      clockOut: (techId) =>
-        set((state) => {
-          const open = state.timeLogs.filter((row) => row.techId === techId && row.endedAt === null);
-          if (open.length === 0) return state;
-          const actor = matchedStaff(state);
-          const stamp = localStamp();
-          return {
-            timeLogs: state.timeLogs.map((row) => {
-              if (row.techId !== techId || row.endedAt !== null) return row;
-              const order = state.orders.find((item) => item.id === row.orderId);
-              if (order && lockedOrder(order)) {
-                if (!actor?.id || !actor.name) return row;
-                return {
-                  ...row,
-                  endedAt: order.closedAt || (order.invoicedOn ? `${order.invoicedOn}T23:00:00.000Z` : stamp),
-                  needsReview: true,
-                  note: `${actor.name} closed the punch at the repair order's close time for service manager review.`,
-                };
+      clockOut: (techId) => {
+        const state = get();
+        const open = state.timeLogs.filter((row) => row.techId === techId && row.endedAt === null);
+        if (open.length === 0) return { ok: true, error: null };
+        const actor = namedActor(state);
+        const onClosed = open.some((row) => {
+          const order = state.orders.find((item) => item.id === row.orderId);
+          return Boolean(order && lockedOrder(order));
+        });
+        if (onClosed && !actor) return { ok: false, error: "Clock out needs a name. Choose who is working." };
+        const stamp = localStamp();
+        set((shop) => ({
+          timeLogs: shop.timeLogs.map((row) => {
+            if (row.techId !== techId || row.endedAt !== null) return row;
+            const order = shop.orders.find((item) => item.id === row.orderId);
+            if (order && lockedOrder(order)) {
+              const closeAt = typeof order.closedAt === "string" && order.closedAt.trim() ? order.closedAt : "";
+              if (!closeAt) {
+                return { ...row, needsReview: true, note: "No close time is on this repair order, so the punch stays open for service manager review." };
               }
-              return { ...row, endedAt: stamp };
-            }),
-          };
-        }),
+              if (Date.parse(closeAt) < Date.parse(row.startedAt)) {
+                return { ...row, needsReview: true, note: "The close time is before this punch started, so it stays open for service manager review." };
+              }
+              return {
+                ...row,
+                endedAt: closeAt,
+                needsReview: true,
+                note: `${actor?.name ?? "A technician"} closed the punch at the repair order's close time for service manager review.`,
+              };
+            }
+            return { ...row, endedAt: stamp };
+          }),
+        }));
+        return { ok: true, error: null };
+      },
       addPartLine: (orderId, line) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
@@ -1687,7 +1773,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 const next = { ...line };
                 if (typeof patch.partId === "string" || patch.partId === null) next.partId = patch.partId;
                 if (typeof patch.number === "string") next.number = patch.number;
-                if (typeof patch.description === "string") next.description = patch.description;
+                if (typeof patch.description === "string") {
+                  const description = asText(patch.description, REASON_MAX);
+                  if (description === null) return line;
+                  next.description = description;
+                }
                 if (typeof patch.payType === "string") next.payType = patch.payType;
                 if (patch.condition === "new" || patch.condition === "used" || patch.condition === "rebuilt") next.condition = patch.condition;
                 if (typeof patch.jobId === "string" && order.jobs.some((job) => job.id === patch.jobId)) next.jobId = patch.jobId;
@@ -1882,7 +1972,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (below && (!manager || "error" in prepared)) return "";
         let mileageOut: number | null = null;
         if (input.mileageOut != null) {
-          if (!inRange(input.mileageOut, 0, 999999) || mileageOutGapMessage(input.mileage, input.mileageOut)) return "";
+          if (!inRange(input.mileageOut, 0, 999999) || input.mileageOut < input.mileage || mileageOutGapMessage(input.mileage, input.mileageOut)) return "";
           mileageOut = input.mileageOut;
         }
         const id = uid("ro");
@@ -2038,6 +2128,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return {
             orders: mapOrder(state.orders, orderId, (order) => {
               if (lockedOrder(order)) return order;
+              const actor = deskActor(state);
+              if (actor !== "advisor" && actor !== "service-manager") return order;
               const target = order.jobs.find((job) => job.id === jobId && !job.needsAssignment);
               if (!target) return order;
               if (kind === "labor") {
@@ -2439,7 +2531,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           if (!orderId.trim()) return state;
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order) return state;
+          if (!order || lockedOrder(order)) return state;
           if (state.appointments.some((row) => row.orderId === orderId)) return state;
           return {
             appointments: state.appointments.map((row) => {

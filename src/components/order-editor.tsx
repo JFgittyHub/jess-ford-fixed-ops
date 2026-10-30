@@ -22,6 +22,7 @@ const BAYS = Object.keys(BAY_LABEL) as BayStatus[];
 function TechTime({ order }: { order: RepairOrder }) {
   const shop = useShop();
   const [now, setNow] = useState(() => Date.now());
+  const [clockError, setClockError] = useState("");
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 15000);
     return () => window.clearInterval(id);
@@ -45,9 +46,10 @@ function TechTime({ order }: { order: RepairOrder }) {
               <div>
                 <p className="font-semibold">{tech ? `${tech.number} · ${tech.name}` : "Technician"}</p>
                 <p className="text-sm text-muted">{onThis ? `On this repair order · ${formatDuration(hours)} logged` : `${formatDuration(hours)} logged on this repair order`}</p>
+                {punches.some((row) => row.needsReview) ? <p className="text-sm text-[#8a3b2a]">Needs service manager review</p> : null}
               </div>
               {onThis ? (
-                <Button onClick={() => shop.clockOut(techId)}>Clock out {tech?.name ?? "technician"}</Button>
+                <Button onClick={() => { const result = shop.clockOut(techId); setClockError(result.error ?? ""); }}>Clock out {tech?.name ?? "technician"}</Button>
               ) : closed ? null : (
                 <Button tone="primary" onClick={() => shop.clockIn(techId, order.id)}>{open ? "Move clock here" : "Clock in"}</Button>
               )}
@@ -55,6 +57,7 @@ function TechTime({ order }: { order: RepairOrder }) {
           );
         })}
       </div>
+      {clockError ? <p role="alert" className="mt-2 text-sm text-[#8a3b2a]">{clockError}</p> : null}
     </section>
   );
 }
@@ -362,7 +365,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           {mileageError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{mileageError}</p> : null}
           {!locked && mileageError && actor === "service-manager" ? (
             <div className="mt-2 grid gap-2">
-              <textarea className="field min-h-16" maxLength={500} placeholder="Reason, at least 10 characters" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />
+              <textarea className="field min-h-16" maxLength={500} aria-label="Mileage in reason" placeholder="Reason, at least 10 characters" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />
               <Button type="button" onClick={() => {
                 const next = Number(mileageDraft);
                 const result = shop.recordMileageOverride(order.id, next, overrideReason);
@@ -454,10 +457,10 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                 )}
               </div>
               <Field label="Concern">
-                <textarea id={`job-${job.id}-concern`} className="field min-h-20" rows={2} disabled={locked} value={job.concern} onChange={(event) => shop.updateJob(order.id, job.id, { concern: event.target.value })} />
+                <textarea id={`job-${job.id}-concern`} className="field min-h-20" rows={2} maxLength={500} disabled={locked} value={job.concern} onChange={(event) => shop.updateJob(order.id, job.id, { concern: event.target.value })} />
               </Field>
               <Field label="Cause">
-                <textarea id={`job-${job.id}-cause`} className="field min-h-20" rows={2} disabled={locked} placeholder="What you found" value={job.cause} onChange={(event) => shop.updateJob(order.id, job.id, { cause: event.target.value })} />
+                <textarea id={`job-${job.id}-cause`} className="field min-h-20" rows={2} maxLength={500} disabled={locked} placeholder="What you found" value={job.cause} onChange={(event) => shop.updateJob(order.id, job.id, { cause: event.target.value })} />
               </Field>
               <Field label="Correction">
                 <textarea id={`job-${job.id}-correction`} className="field min-h-20" rows={2} disabled={locked} placeholder="What you did" value={job.correction} onChange={(event) => shop.updateJob(order.id, job.id, { correction: event.target.value })} />
@@ -569,7 +572,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               <Field label="Op"><input className="field" value={opcode} onChange={(event) => setOpcode(event.target.value)} /></Field>
             )}
             <div className={opId ? "sm:col-span-4" : "sm:col-span-2"}>
-              <Field label="Description"><input className="field" value={laborDesc} onChange={(event) => setLaborDesc(event.target.value)} placeholder="What the tech is doing" /></Field>
+              <Field label="Description"><input className="field" maxLength={500} value={laborDesc} onChange={(event) => setLaborDesc(event.target.value)} placeholder="What the tech is doing" /></Field>
             </div>
             <Field label="Hours"><input className="field tabular-nums" type="number" min={0} step={0.1} value={hours} onChange={(event) => setHours(event.target.value)} /></Field>
             <Field label="Pay">

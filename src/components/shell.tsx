@@ -235,7 +235,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           }}
         >
           <Field label="Store name">
-            <input className="field" value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
+            <input className="field" maxLength={80} value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
           </Field>
           <Field label="Street address">
             <input className="field" value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />

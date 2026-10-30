@@ -147,7 +147,7 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
       </section>
 
       <p>Sales tax is {order.taxRate}% and is not part of the 110% cap.</p>
-      <p>{wa.choice ? CHOICE[wa.choice] : "No estimate choice recorded."} {wa.initials ? `Initials ${wa.initials} on ${wa.date} at ${wa.time}.` : ""} {limit !== null && Number.isFinite(limit) ? `Authorized to ${usd(limit)} before tax.` : ""}</p>
+      <p>{wa.choice ? CHOICE[wa.choice] : "Not captured"} {wa.initials ? `Initials ${wa.initials} on ${wa.date} at ${wa.time}.` : ""} {limit !== null && Number.isFinite(limit) ? `Authorized to ${usd(limit)} before tax.` : ""}</p>
       <p>{wa.returnParts ? "Customer asked for replaced parts back, or to see them if they must be returned." : "Replaced parts were not requested."}</p>
       {wa.extras.length > 0 ? (
         <ul>

@@ -65,7 +65,7 @@ function FeesPage() {
         }}
       >
         <Field label="Fee">
-          <input className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Tire disposal" />
+          <input className="field" maxLength={80} value={name} onChange={(event) => setName(event.target.value)} placeholder="Tire disposal" />
         </Field>
         <Field label="Amount">
           <input className="field tabular-nums" type="number" min={0} step={0.01} value={amount} onChange={(event) => setAmount(event.target.value)} />

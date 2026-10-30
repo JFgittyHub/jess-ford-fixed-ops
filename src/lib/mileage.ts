@@ -39,20 +39,43 @@ function sameVin(left: string, right: string) {
   return isFullVin(a) && isFullVin(b) && a === b;
 }
 
-/** UTC milliseconds. A saved UTC stamp wins. A legacy row is the opened date plus its RO number, so two same-day rows are ordered and neither is earlier than the other both ways. */
+function pacificOffsetHours(utcMs: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    timeZoneName: "shortOffset",
+  }).formatToParts(new Date(utcMs));
+  const name = parts.find((part) => part.type === "timeZoneName")?.value ?? "GMT-8";
+  const match = /GMT([+-]\d{1,2})(?::(\d{2}))?/.exec(name);
+  if (!match) return -8;
+  const hours = Number(match[1]);
+  const minutes = match[2] ? Number(match[2]) : 0;
+  return hours + (hours < 0 ? -minutes : minutes) / 60;
+}
+
+/** Wall-clock time in America/Los_Angeles, as UTC milliseconds. */
+export function pacificWallToUtc(year: number, month: number, day: number, hour = 0, minute = 0, second = 0): number {
+  const guess = Date.UTC(year, month - 1, day, hour, minute, second);
+  return guess - pacificOffsetHours(guess) * 3_600_000;
+}
+
+/** UTC milliseconds. A zoned stamp is used as written. A stamp with no zone is Pacific local time. No stamp at all is the start of that date in Pacific time. */
 export function openedInstant(order: { openedOn?: string; openedAt?: string | null; number?: number }): number {
-  if (typeof order.openedAt === "string") {
+  if (typeof order.openedAt === "string" && order.openedAt.trim()) {
     const text = order.openedAt.trim();
     if (/Z$|[+-]\d{2}:\d{2}$/.test(text)) {
       const ms = Date.parse(text);
       if (Number.isFinite(ms)) return ms;
     }
+    const local = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/.exec(text);
+    if (local) return pacificWallToUtc(Number(local[1]), Number(local[2]), Number(local[3]), Number(local[4]), Number(local[5]), local[6] ? Number(local[6]) : 0);
   }
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(order.openedOn ?? "");
   if (!match) return 0;
-  const base = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 15, 0, 0);
-  const sequence = typeof order.number === "number" && Number.isFinite(order.number) ? Math.abs(Math.trunc(order.number)) % 80000 : 0;
-  return base + sequence * 1000;
+  return pacificWallToUtc(Number(match[1]), Number(match[2]), Number(match[3]), 0, 0, 0);
+}
+
+function orderNumber(order: { number?: number }): number {
+  return typeof order.number === "number" && Number.isFinite(order.number) ? order.number : 0;
 }
 
 export function utcOpenedAt(order: { openedOn?: string; openedAt?: string | null; number?: number }): string {
@@ -86,29 +109,30 @@ export function formatVisitDate(iso: string) {
 export function lastVisitMileage(
   shops: MileageShop[],
   vehicle: Pick<Vehicle, "id" | "vin"> | undefined,
-  options: { excludeOrderId?: string; openedAt?: string; openedOn?: string } = {},
+  options: { excludeOrderId?: string; openedAt?: string; openedOn?: string; number?: number } = {},
 ): MileageVisit | null {
   if (!vehicle) return null;
-  const cutoff = options.openedAt
-    ? Date.parse(options.openedAt)
-    : options.openedOn
-      ? Date.parse(`${options.openedOn}T23:59:59.999Z`)
-      : Number.POSITIVE_INFINITY;
+  const cutoffMs = openedInstant({ openedAt: options.openedAt, openedOn: options.openedAt ? undefined : options.openedOn });
+  const cutoffNumber = options.number;
   let bestStamp = -1;
+  let bestNumber = -1;
   let best: MileageVisit | null = null;
   for (const shop of shops) {
     const vinById = new Map(shop.vehicles.map((row) => [row.id, row.vin ?? ""]));
     for (const order of shop.orders) {
       if (options.excludeOrderId && order.id === options.excludeOrderId) continue;
       const stamp = openedInstant(order);
-      if (!Number.isFinite(stamp) || stamp <= 0 || stamp >= cutoff) continue;
+      const rank = orderNumber(order);
+      const laterInstant = stamp > cutoffMs || (stamp === cutoffMs && (cutoffNumber === undefined || rank >= cutoffNumber));
+      if (!Number.isFinite(stamp) || stamp <= 0 || laterInstant) continue;
       const reading = visitReading(order);
       if (reading <= 0) continue;
       const sameId = order.vehicleId === vehicle.id;
       const otherVin = vinById.get(order.vehicleId) ?? "";
       if (!sameId && !sameVin(vehicle.vin ?? "", otherVin)) continue;
-      if (!best || stamp > bestStamp || (stamp === bestStamp && reading > best.mileage)) {
+      if (!best || stamp > bestStamp || (stamp === bestStamp && rank > bestNumber)) {
         bestStamp = stamp;
+        bestNumber = rank;
         best = { mileage: reading, readingFrom: visitReadingFrom(order), date: order.openedOn || new Date(stamp).toISOString().slice(0, 10), orderId: order.id };
       }
     }

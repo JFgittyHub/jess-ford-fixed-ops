@@ -37,6 +37,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
   return (
     <section className="mt-4 card">
       <h3 className="font-display text-2xl leading-none">Washington authorization</h3>
+      {wa.choice ? null : <p className="mt-2 text-sm">Not captured</p>}
       <p className="mt-2 text-sm">
         You are entitled to a written price estimate for the repairs you have authorized. You are also entitled to require the repair facility to obtain your oral or written authorization to exceed the written price estimate. Your initials indicate your selection.
       </p>

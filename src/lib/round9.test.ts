@@ -213,15 +213,15 @@ describe("round 9", () => {
 
   it("lets the first advisor become a service manager, then only a service manager can change roles", () => {
     const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
-    assert.equal(shop.getState().addAdvisor({ number: "1", name: "Pat Reyes", base: 4000, laborPercent: 5, partsPercent: 2, role: "service-manager" }), true);
+    assert.equal(shop.getState().addAdvisor({ number: "1", name: "Pat Reyes", base: 4000, laborPercent: 5, partsPercent: 2 }), true);
     const manager = shop.getState().advisors.find((row) => row.name === "Pat Reyes");
-    assert.equal(manager?.role, "service-manager");
-    assert.equal(shop.getState().roleLog?.some((row) => row.after === "service-manager"), true);
-    shop.getState().setWorkingAs("marcus");
-    assert.equal(shop.getState().addAdvisor({ number: "2", name: "Alex Rivera", base: 4000, laborPercent: 5, partsPercent: 2, role: "service-manager" }), false);
     shop.getState().setWorkingAs(manager?.id ?? "");
-    assert.equal(shop.getState().updateAdvisor(manager?.id ?? "", { role: "advisor" }), true);
-    assert.equal(shop.getState().advisors.find((row) => row.id === manager?.id)?.role, "advisor");
+    assert.equal(shop.getState().appointFirstServiceManager(manager?.id ?? "").ok, true);
+    assert.equal(shop.getState().advisors.find((row) => row.id === manager?.id)?.role, "service-manager");
+    assert.equal(shop.getState().roleLog?.some((row) => row.after === "service-manager" && row.who === "Pat Reyes"), true);
+    assert.equal(shop.getState().addAdvisor({ number: "2", name: "Alex Rivera", base: 4000, laborPercent: 5, partsPercent: 2 }), true);
+    assert.equal(shop.getState().updateAdvisor(manager?.id ?? "", { role: "advisor" }), false);
+    assert.equal(shop.getState().advisors.find((row) => row.id === manager?.id)?.role, "service-manager");
   });
 });
 

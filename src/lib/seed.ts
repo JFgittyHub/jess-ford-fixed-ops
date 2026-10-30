@@ -796,7 +796,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
 
   const open = openSeeds.map((order, index) => {
     const [y, m, d] = order.openedOn.split("-").map(Number);
-    const openedAt = new Date(Date.UTC(y, m - 1, d, 22, Math.max(0, 50 - index), 0)).toISOString();
+    const openedAt = new Date(Date.UTC(y, m - 1, d, 16, 0, index)).toISOString();
     const floor = priorVisitReading(order.vehicleId, openedAt);
     const mileage = Math.max(order.mileage, floor > 0 ? floor : 0);
     return withJobIds({ ...order, openedAt, mileage, inspection: demoSheet(order.id) });

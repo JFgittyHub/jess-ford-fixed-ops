@@ -229,7 +229,7 @@ describe("round 6", () => {
     assert.equal(clocked.includes(".."), false);
     const open = shop.getState().timeLogs.find((row) => row.techId === "marcus" && row.endedAt === null);
     shop.setState({
-      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, status: "closed" as const } : row),
+      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, status: "closed" as const, closedAt: "2026-10-31T23:00:00.000Z" } : row),
     });
     const before = shop.getState().orders.find((row) => row.id === id);
     shop.getState().clockOut("marcus");

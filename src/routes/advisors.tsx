@@ -132,7 +132,7 @@ function AdvisorsPage() {
                 <td>
                   <Button small onClick={() => {
                     const result = removeAdvisor(advisor.id);
-                    setError(result === "ok" ? "" : `${advisor.name} is still on a repair order or appointment.`);
+                    setError(result === "ok" ? "" : result === "last" ? "The last service manager stays on the drive." : result === "role" ? "Only a service manager can remove an advisor." : `${advisor.name} is still on a repair order or appointment.`);
                   }}>Remove</Button>
                 </td>
               </tr>
@@ -140,6 +140,16 @@ function AdvisorsPage() {
           </tbody>
         </table>
       </div>
+      <section className="mt-4">
+        <h2 className="font-display text-2xl leading-none">Role changes</h2>
+        {(shop.roleLog ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">No role changes on this store.</p> : (
+          <ul className="mt-2 grid gap-1 text-sm">
+            {(shop.roleLog ?? []).map((row) => (
+              <li key={`${row.at}-${row.advisorId}-${row.after}`}>{row.who || "Unnamed"} changed {row.advisorId} from {row.before} to {row.after}.</li>
+            ))}
+          </ul>
+        )}
+      </section>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {shop.advisors.map((advisor) => {
