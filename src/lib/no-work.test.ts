@@ -6,7 +6,7 @@ import { NoWorkCloseForm } from "../components/order-editor.tsx";
 import { closedRoReinstateMessage } from "./cancel.ts";
 import { deskSeedFor } from "./booking.ts";
 import { digest, orderMoney } from "./metrics.ts";
-import { NO_WORK_BLOCKED, NO_WORK_NOTE_LONG, NO_WORK_NOTE_MAX, NO_WORK_NOTE_REQUIRED, NO_WORK_NOT_OPEN } from "./ro.ts";
+import { NO_WORK_NOTE_LONG, NO_WORK_NOTE_MAX, NO_WORK_NOTE_REQUIRED, NO_WORK_NOTE_SHORT, NO_WORK_NOT_OPEN } from "./ro.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { SHOP_PERSIST_VERSION, createShopStore, migrateSavedShop, type ShopState } from "./store.ts";
 import type { Appointment, RepairOrder } from "./types.ts";
@@ -91,6 +91,7 @@ describe("no-work close", () => {
     const id = blankOrder(shop);
     assert.equal(shop.getState().closeOrderWithNoWork(id, "   ").error, NO_WORK_NOTE_REQUIRED);
     assert.equal(order(shop, id).status, "open");
+    assert.equal(shop.getState().closeOrderWithNoWork(id, "short").error, NO_WORK_NOTE_SHORT);
     assert.equal(shop.getState().closeOrderWithNoWork(id, "x".repeat(NO_WORK_NOTE_MAX + 1)).error, NO_WORK_NOTE_LONG);
     assert.equal(order(shop, id).status, "open");
     assert.equal(shop.getState().closeOrderWithNoWork(id, "x".repeat(NO_WORK_NOTE_MAX)).ok, true);
@@ -103,6 +104,7 @@ describe("no-work close", () => {
     shop.getState().bookOrder(id);
     shop.getState().invoiceOrder(id);
     shop.getState().reopenOrder(id);
+    shop.getState().closeOrder(id);
     const locked = order(shop, id);
     assert.equal(locked.status, "closed");
     assert.equal(locked.concern, concern);
@@ -113,9 +115,9 @@ describe("no-work close", () => {
 
     const sold = blankOrder(shop);
     shop.setState({
-      orders: shop.getState().orders.map((row) => (row.id === sold ? { ...row, status: "invoiced" as const, closeType: "invoiced" as const } : row)),
+      orders: shop.getState().orders.map((row) => (row.id === sold ? { ...row, status: "closed" as const, closeType: "no_work" as const, closeNote: "Already closed up", closedBy: "Megan Cho", closedAt: "2026-10-29T12:00:00.000Z" } : row)),
     });
-    assert.equal(shop.getState().closeOrderWithNoWork(sold, "Too late").error, NO_WORK_NOT_OPEN);
+    assert.equal(shop.getState().closeOrderWithNoWork(sold, "Already closed once").error, NO_WORK_NOT_OPEN);
   });
 
   it("leaves month-close sales, hours, and hours per RO unchanged and counts the close", () => {
@@ -158,15 +160,22 @@ describe("no-work close", () => {
     assert.equal(order(shop, id).status, "closed");
   });
 
-  it("migrates an invoiced repair order without inventing a no-work close", () => {
-    assert.equal(SHOP_PERSIST_VERSION, 30);
+  it("migrates an invoiced repair order to booked and does not invent a no-work close", () => {
+    assert.equal(SHOP_PERSIST_VERSION, 31);
     const migrated = migrateSavedShop({
-      orders: [{ id: "ro-old", status: "invoiced", number: 12, labor: [], parts: [], concern: "Oil" }],
+      orders: [{ id: "ro-old", status: "invoiced", number: 12, labor: [], parts: [], concern: "Oil", closeType: "invoiced", closedBy: "Unknown" }],
+      closedHistory: [{ id: "h-old", orderId: "kept", number: 9, openedOn: "2026-09-01", closedOn: "2026-09-02", customerName: "Helen Cho", phone: "", address: "", plate: "", vin: "", vehicle: "", mileage: 1, mileageOut: null, concern: "Oil", opcodes: "", partNumbers: "", total: 10, beforeTax: 9, closeType: "invoiced", closedBy: "Unknown", closedAt: "Unknown" }],
     });
     const row = migrated.orders?.[0];
-    assert.equal(row?.closeType, "invoiced");
+    assert.equal(row?.closeType, null);
+    assert.equal(row?.closedBy, "");
     assert.deepEqual(row?.payments, []);
-    assert.equal(row?.status, "invoiced");
+    assert.equal(row?.status, "booked");
+    const history = migrated.closedHistory?.[0];
+    assert.equal(history?.closeType, null);
+    assert.equal(history?.closedBy, "");
+    assert.equal(history?.closedAt, null);
+    assert.equal(JSON.stringify(migrated).includes("\"Unknown\""), false);
   });
 
   it("shows the no-work note field and the card hint", () => {
@@ -187,14 +196,14 @@ function assertBlocked(shop: ReturnType<typeof createShopStore>, id: string) {
   const before = order(shop, id).status;
   const result = shop.getState().closeOrderWithNoWork(id, "Customer left");
   assert.equal(result.ok, false);
-  assert.equal(result.error, NO_WORK_BLOCKED);
+  assert.ok(result.error);
   assert.equal(order(shop, id).status, before);
 }
 
 function blankOrder(shop: ReturnType<typeof createShopStore>) {
   const state = shop.getState();
   const vehicle = state.vehicles[0];
-  return state.createOrder({
+  const id = state.createOrder({
     customerId: vehicle.customerId,
     vehicleId: vehicle.id,
     advisorId: state.advisors[0].id,
@@ -203,6 +212,8 @@ function blankOrder(shop: ReturnType<typeof createShopStore>) {
     promiseTime: "",
     labor: [],
   });
+  shop.getState().updateWa(id, { address: "10 Main Street" });
+  return id;
 }
 
 function order(shop: ReturnType<typeof createShopStore>, id: string): RepairOrder {

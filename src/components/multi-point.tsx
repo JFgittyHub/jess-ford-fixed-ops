@@ -27,7 +27,7 @@ export function MultiPointSheet({ orderId }: { orderId: string }) {
   const setInspectionPoint = useShop((state) => state.setInspectionPoint);
 
   if (!order) return null;
-  const locked = order.status === "invoiced" || order.status === "closed";
+  const locked = order.status === "closed";
   const sheet = order.inspection;
   const customer = customers.find((row) => row.id === order.customerId);
   const vehicle = vehicles.find((row) => row.id === order.vehicleId);
@@ -39,9 +39,9 @@ export function MultiPointSheet({ orderId }: { orderId: string }) {
         <h3 className="font-display text-2xl leading-none">Multi-point</h3>
         <p className="mt-2 text-sm text-muted">
           {locked
-            ? order.status === "closed"
+            ? order.closeType === "no_work"
               ? "This repair order was closed with no work."
-              : "This ticket was booked without a multi-point on it."
+              : "This repair order is closed."
             : "No inspection sheet on this repair order yet. Attach one and the tech marks it while the car is in the air."}
         </p>
         {locked ? null : (

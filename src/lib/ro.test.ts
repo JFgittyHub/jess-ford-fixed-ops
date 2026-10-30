@@ -6,13 +6,15 @@ import { partSell } from "./pay.ts";
 import {
   applyPartStock,
   bookRepairOrder,
+  closeRepairOrder,
   dropClosedHistory,
   invoiceRepairOrder,
   reopenRepairOrder,
   ticketBeforeTax,
   unbookRepairOrder,
 } from "./ro.ts";
-import type { Advisor, ClosedRecord, PartSku, RepairOrder, Tech, TimeLog } from "./types.ts";
+import type { Advisor, ClosedRecord, Customer, PartSku, RepairOrder, Tech, TimeLog, Vehicle } from "./types.ts";
+import { fullVin } from "./vin.ts";
 import type { WaRecord } from "./wa.ts";
 
 const advisor: Advisor = {
@@ -88,7 +90,7 @@ function ticket(wa: WaRecord, status: RepairOrder["status"] = "ready"): RepairOr
       { id: "l1", opcode: "BRK", description: "Brakes", hours: 1.5, rate: 189, payType: "cp", techId: tech.id },
     ],
     parts: [
-      { id: "p1", partId: "pads", number: "BL-BRK", description: "Pads", qty: 2, cost: 10, price: 41.95, payType: "cp" },
+      { id: "p1", partId: "pads", number: "BL-BRK", description: "Pads", qty: 2, cost: 10, price: 41.95, payType: "cp", condition: "new" },
     ],
     invoicedOn: null,
     stockApplied: false,
@@ -167,53 +169,70 @@ describe("RCW 46.71 authorization", () => {
     assert.equal(bookRepairOrder(waive)?.status, "booked");
   });
 
-  it("blocks booking and invoicing when the authorization is incomplete", () => {
-    const incomplete = ticket({ ...written(900), initials: "  " });
+  it("blocks booking and closing when the authorization is incomplete", () => {
+    const incomplete = closable(ticket({ ...written(900), initials: "  " }));
     assert.equal(bookRepairOrder(incomplete), null);
     const booked = { ...incomplete, status: "booked" as const };
-    assert.equal(invoiceRepairOrder(booked, [bin(4)], [tech], [advisor], [log], "2026-10-19"), null);
+    const refused = closeRepairOrder(booked, [bin(4)], closeContext(), who, at, "2026-10-19");
+    assert.ok("error" in refused);
+    assert.match(refused.error, /Estimate authorization/);
+    const month = invoiceRepairOrder(booked, [bin(4)], [tech], [advisor], [log], "2026-10-19");
+    assert.equal(month.order.status, "booked");
+    assert.equal(month.parts[0]?.onHand, 4);
   });
 });
 
 describe("status flow and parts stock", () => {
-  it("books, returns to ready, invoices, and reopens", () => {
-    const ready = ticket(written(400));
+  it("books, returns to ready, closes, and reopens without a month-close status change", () => {
+    const ready = closable(ticket(written(400)));
     const booked = bookRepairOrder(ready);
     assert.ok(booked);
     assert.equal(unbookRepairOrder(booked)?.status, "ready");
-    assert.equal(invoiceRepairOrder(ready, [bin(4)], [tech], [advisor], [log], "2026-10-19"), null);
+    const tooSoon = closeRepairOrder(ready, [bin(4)], closeContext(), who, at, "2026-10-19");
+    assert.ok("error" in tooSoon);
 
-    const closed = invoiceRepairOrder(booked, [bin(4)], [tech], [advisor], [log], "2026-10-19");
-    assert.ok(closed);
-    assert.equal(closed.order.status, "invoiced");
+    const month = invoiceRepairOrder(booked, [bin(4)], [tech], [advisor], [log], "2026-10-19");
+    assert.equal(month.order.status, "booked");
+    assert.equal(month.order, booked);
+    assert.equal(month.parts[0]?.onHand, 4);
+
+    const closed = closeRepairOrder(booked, [bin(4)], closeContext(), who, at, "2026-10-19");
+    assert.ok(!("error" in closed));
+    assert.equal(closed.order.status, "closed");
+    assert.equal(closed.order.closeNote, "Closed by the advisor.");
+    assert.equal(closed.order.closedBy, who.name);
+    assert.equal(closed.order.closedAt, at);
     assert.equal(closed.order.invoicedOn, "2026-10-19");
     assert.equal(closed.parts[0]?.onHand, 2);
     assert.equal(closed.parts[0]?.lastSale, "2026-10-19");
 
-    const again = invoiceRepairOrder(closed.order, closed.parts, [tech], [advisor], [log], "2026-10-19");
-    assert.equal(again, null);
+    const again = closeRepairOrder(closed.order, closed.parts, closeContext(), who, at, "2026-10-19");
+    assert.ok("error" in again);
 
     const reopened = reopenRepairOrder(closed.order, closed.parts);
-    assert.equal(reopened?.order.status, "ready");
+    assert.equal(reopened?.order.status, "booked");
     assert.equal(reopened?.order.invoicedOn, null);
+    assert.equal(reopened?.order.closedBy, "");
     assert.equal(reopened?.order.stockApplied, false);
     assert.equal(reopened?.parts[0]?.onHand, 4);
   });
 
   it("lets on-hand go negative so a reopen does not invent parts", () => {
-    const booked = bookRepairOrder(ticket(written(400)));
+    const booked = bookRepairOrder(closable(ticket(written(400))));
     assert.ok(booked);
-    const closed = invoiceRepairOrder(booked, [bin(1)], [tech], [advisor], [log], "2026-10-19");
-    assert.equal(closed?.parts[0]?.onHand, -1);
-    const reopened = reopenRepairOrder(closed!.order, closed!.parts);
+    const closed = closeRepairOrder(booked, [bin(1)], closeContext(), who, at, "2026-10-19");
+    assert.ok(!("error" in closed));
+    assert.equal(closed.parts[0]?.onHand, -1);
+    const reopened = reopenRepairOrder(closed.order, closed.parts);
     assert.equal(reopened?.parts[0]?.onHand, 1);
   });
 
   it("does not move stock twice", () => {
-    const booked = { ...ticket(written(400)), status: "booked" as const, stockApplied: true };
-    const closed = invoiceRepairOrder(booked, [bin(5)], [tech], [advisor], [log], "2026-10-19");
-    assert.equal(closed?.parts[0]?.onHand, 5);
-    const restored = applyPartStock(closed!.parts, { ...closed!.order, stockApplied: false }, 1, "2026-10-19");
+    const booked = { ...closable(ticket(written(400))), status: "booked" as const, stockApplied: true };
+    const closed = closeRepairOrder(booked, [bin(5)], closeContext(), who, at, "2026-10-19");
+    assert.ok(!("error" in closed));
+    assert.equal(closed.parts[0]?.onHand, 5);
+    const restored = applyPartStock(closed.parts, { ...closed.order, stockApplied: false }, 1, "2026-10-19");
     assert.equal(restored[0]?.onHand, 7);
   });
 
@@ -228,11 +247,40 @@ describe("status flow and parts stock", () => {
     );
   });
 
-  it("refuses to invoice without an advisor number, a tech number, or clock time", () => {
-    const booked = bookRepairOrder(ticket(written(400)));
+  it("refuses to close without an advisor number, a tech number, or clock time", () => {
+    const booked = bookRepairOrder(closable(ticket(written(400))));
     assert.ok(booked);
-    assert.equal(invoiceRepairOrder(booked, [bin(4)], [tech], [{ ...advisor, number: "" }], [log], "2026-10-19"), null);
-    assert.equal(invoiceRepairOrder(booked, [bin(4)], [{ ...tech, number: "" }], [advisor], [log], "2026-10-19"), null);
-    assert.equal(invoiceRepairOrder(booked, [bin(4)], [tech], [advisor], [], "2026-10-19"), null);
+    const noAdvisor = closeRepairOrder(booked, [bin(4)], closeContext({ advisors: [{ ...advisor, number: "" }] }), who, at, "2026-10-19");
+    const noTech = closeRepairOrder(booked, [bin(4)], closeContext({ techs: [{ ...tech, number: "" }] }), who, at, "2026-10-19");
+    const noClock = closeRepairOrder(booked, [bin(4)], closeContext({ logs: [] }), who, at, "2026-10-19");
+    assert.ok("error" in noAdvisor && "error" in noTech && "error" in noClock);
+    assert.match(noAdvisor.error, /advisor number/);
+    assert.match(noTech.error, /technician number/);
+    assert.match(noClock.error, /clock time/);
+    assert.equal(booked.status, "booked");
   });
 });
+
+const who = { id: advisor.id, name: advisor.name };
+const at = "2026-10-19T20:00:00.000Z";
+const customer: Customer = { id: "c", name: "Helen Cho", phone: "5095550101", mobile: "", email: "", noShows: 0 };
+const vehicle: Vehicle = {
+  id: "v",
+  customerId: "c",
+  year: 2019,
+  model: "F-150",
+  vin: fullVin({ prefix: "1FTEW1EP", year: 2019, plant: "A", serial: 123456 }),
+};
+
+function closeContext(patch: Partial<{ techs: Tech[]; advisors: Advisor[]; logs: TimeLog[] }> = {}) {
+  return { customer, vehicle, techs: patch.techs ?? [tech], advisors: patch.advisors ?? [advisor], logs: patch.logs ?? [log] };
+}
+
+function closable(order: RepairOrder): RepairOrder {
+  return {
+    ...order,
+    jobs: [{ id: "j", code: "A", concern: order.concern, cause: "The pads were worn.", correction: "Replaced the pads." }],
+    mileageOut: order.mileage + 4,
+    parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
+  };
+}

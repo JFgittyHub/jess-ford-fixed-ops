@@ -285,6 +285,7 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
       labor: order.labor.map((line) => ({ ...line, id: p(line.id), techId: p(line.techId) })),
       parts: order.parts.map((line) => ({ ...line, id: p(line.id), partId: line.partId ? p(line.partId) : null })),
       inspection: order.inspection ? { ...order.inspection, techId: p(order.inspection.techId) } : null,
+      closedById: order.closedById ? p(order.closedById) : "",
     })),
     closedHistory: shop.closedHistory.map((row) => ({ ...row, id: p(row.id), orderId: p(row.orderId) })),
     timeLogs: shop.timeLogs.map((row) => ({ ...row, id: p(row.id), techId: p(row.techId), orderId: p(row.orderId) })),
@@ -543,7 +544,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
         number: seq,
         openedOn: padDay(day),
         promiseTime: "",
-        status: "invoiced",
+        status: "closed",
         advisorId: advisorIds[Math.floor(rng() * advisorIds.length)],
         customerId: customers[customerIndex].id,
         vehicleId: vehicles[customerIndex].id,
@@ -842,13 +843,26 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     { id: "oh-utl", name: "Utilities", monthly: 9000 },
   ];
 
-  const finished = [...open, ...orders].map((order) => ({
-    ...order,
-    bay: bayFromStatus(order.status),
-    mileageOut: order.status === "invoiced" || order.status === "ready" ? order.mileage + 4 : null,
-    fees: settings.fees.map((line) => ({ ...line })),
-    taxRate: settings.taxRate,
-  }));
+  const finished = [...open, ...orders].map((order) => {
+    const advisor = advisors.find((row) => row.id === order.advisorId);
+    const closed = order.status === "closed";
+    return {
+      ...order,
+      bay: bayFromStatus(order.status),
+      mileageOut: closed || order.status === "ready" ? order.mileage + 4 : null,
+      fees: settings.fees.map((line) => ({ ...line })),
+      taxRate: settings.taxRate,
+      parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new" as const })),
+      closeType: null,
+      closeNote: closed ? "Closed by the advisor." : "",
+      closedBy: closed ? advisor?.name ?? "" : "",
+      closedById: closed ? order.advisorId : "",
+      closedAt: closed && order.invoicedOn ? `${order.invoicedOn}T20:00:00.000Z` : null,
+      droppedFeesNote: "",
+      history: [],
+      payments: [],
+    };
+  });
 
   return scopeShop({
     dataset: "sample",
@@ -864,7 +878,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     laborOps: laborCatalog(),
     payTypes: defaultPayTypes(settings),
     orders: finished,
-    closedHistory: finished.filter((order) => order.status === "invoiced").map((order) => closedRecord(
+    closedHistory: finished.filter((order) => order.status === "closed").map((order) => closedRecord(
       order,
       customers.find((row) => row.id === order.customerId),
       vehicles.find((row) => row.id === order.vehicleId),

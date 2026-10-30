@@ -6,6 +6,7 @@ import { confirmedDemoStaffAccess } from "./demo.ts";
 import { SCORECARD_STORAGE_KEY, SHOP_STORAGE_KEY, type ShopStorage } from "./shop-storage.ts";
 import { createShopStore, migrateSavedShop, mergeSavedShop, sampleLoadAllowed, useShop } from "./store.ts";
 import type { Advisor, RepairOrder, Tech, TimeLog } from "./types.ts";
+import { fullVin } from "./vin.ts";
 import type { WaRecord } from "./wa.ts";
 
 const advisor: Advisor = {
@@ -40,7 +41,7 @@ const wa: WaRecord = {
   cap: 0,
   returnParts: false,
   plate: "",
-  address: "",
+  address: "1 Main Street",
   extras: [],
 };
 
@@ -56,16 +57,16 @@ function bookedOrder(): RepairOrder {
     customerId: "c",
     vehicleId: "v",
     concern: "Brakes",
-    jobs: [],
+    jobs: [{ id: "j", code: "A", concern: "Brakes", cause: "The pads were worn.", correction: "Replaced the pads." }],
     mileage: 1000,
-    mileageOut: null,
+    mileageOut: 1004,
     fees: [],
-    taxRate: 0,
+    taxRate: 6.5,
     labor: [
       { id: "l1", opcode: "BRK", description: "Brakes", hours: 1, rate: 189, payType: "cp", techId: tech.id },
     ],
     parts: [
-      { id: "p1", partId: "pads", number: "BL", description: "Pads", qty: 2, cost: 10, price: 40, payType: "cp" },
+      { id: "p1", partId: "pads", number: "BL", description: "Pads", qty: 2, cost: 10, price: 40, payType: "cp", condition: "new" },
     ],
     invoicedOn: null,
     stockApplied: false,
@@ -109,18 +110,22 @@ describe("shop store", () => {
           source: "Factory",
         },
       ],
+      workingAsId: advisor.id,
+      customers: [{ id: "c", name: "Helen Cho", phone: "5095550100", mobile: "", email: "", noShows: 0 }],
+      vehicles: [{ id: "v", customerId: "c", year: 2018, model: "F-150", vin: fullVin({ prefix: "1FTEW1EP", year: 2018, plant: "A", serial: 100001 }) }],
       orders: [bookedOrder()],
       timeLogs: [log],
       closedHistory: [],
     });
-    useShop.getState().invoiceOrder("ro-1");
+    const closed = useShop.getState().closeOrder("ro-1");
+    assert.equal(closed.ok, true, closed.error ?? "");
     assert.equal(
       useShop.getState().closedHistory.some((row) => row.orderId === "ro-1"),
       true,
     );
     useShop.getState().reopenOrder("ro-1");
     const next = useShop.getState();
-    assert.equal(next.orders.find((order) => order.id === "ro-1")?.status, "ready");
+    assert.equal(next.orders.find((order) => order.id === "ro-1")?.status, "booked");
     assert.equal(
       next.closedHistory.some((row) => row.orderId === "ro-1"),
       false,

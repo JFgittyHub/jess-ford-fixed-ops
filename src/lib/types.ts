@@ -7,9 +7,19 @@ export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 export type PayType = string;
 export type PayKind = "customer" | "warranty" | "internal";
-export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "invoiced" | "closed";
-/** `invoiced` is a normal month close. `no_work` is a $0 close with no work on the ticket. */
-export type RoCloseType = "invoiced" | "no_work";
+/** Open work steps (`working`, `parts`, `ready`) are sub-states of Open. Booked still has the car open. Closed is an advisor close. */
+export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "closed";
+/** A $0 close with no work on the ticket. A normal advisor close leaves this empty. */
+export type RoCloseType = "no_work";
+
+/** A line taken off a repair order, or a note written when it closes. Who is empty until someone is recorded. */
+export interface RoHistoryEntry {
+  at: string;
+  who: string;
+  whoId: string;
+  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed";
+  text: string;
+}
 
 export interface RoPayment {
   id: string;
@@ -201,19 +211,24 @@ export interface RepairOrder {
   taxRate: number;
   labor: LaborLine[];
   parts: PartLine[];
+  /** Shop date of the close. Kept so month totals can find the day. */
   invoicedOn: string | null;
   stockApplied: boolean;
   inspection: MultiPoint | null;
   wa?: WaRecord;
   /** Set when the ticket is closed. Missing on older open tickets. */
   closeType?: RoCloseType | null;
-  /** Why a no-work close had no work. Empty on a normal close. */
+  /** Why the repair order was closed. Required on every close. */
   closeNote?: string;
-  /** Who closed a no-work repair order. */
+  /** Who closed the repair order. Empty until an advisor closes it. Never the word Unknown. */
   closedBy?: string;
   closedById?: string;
-  /** ISO time of a no-work close. */
+  /** ISO time of the close. Empty until an advisor closes it. */
   closedAt?: string | null;
+  /** Default fees a no-work close removed, listed for the history row. */
+  droppedFeesNote?: string;
+  /** Removed labor or parts, and close notes. */
+  history?: RoHistoryEntry[];
   /** Money already taken on this repair order. A nonzero amount blocks a no-work close. */
   payments?: RoPayment[];
 }
@@ -308,6 +323,10 @@ export interface ClosedRecord {
   beforeTax: number;
   closeType?: RoCloseType | null;
   closeNote?: string;
+  /** Empty when an older history row has no name. The screen shows Unknown. */
+  closedBy?: string;
+  closedAt?: string | null;
+  droppedFeesNote?: string;
 }
 
 export interface Campaign {

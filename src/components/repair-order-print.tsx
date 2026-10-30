@@ -36,7 +36,7 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
         </div>
         <div>
           <p>Opened {order.openedOn}</p>
-          <p>{order.closeType === "no_work" || order.status === "closed" ? "Closed — no work ($0)" : order.invoicedOn ? `Booked ${order.invoicedOn}` : roStatusLabel(order)}</p>
+          <p>{order.closeType === "no_work" && order.status === "closed" ? "Closed — no work ($0)" : order.status === "closed" ? `Closed ${order.invoicedOn ?? ""}`.trim() : roStatusLabel(order)}</p>
           {order.closeType === "no_work" && order.closeNote ? <p>{order.closeNote}</p> : null}
           <p>{order.promiseTime ? `Promise ${clockTime(order.promiseTime)}` : "No promise time"}</p>
           <p>Advisor {advisor?.name ?? "—"}</p>

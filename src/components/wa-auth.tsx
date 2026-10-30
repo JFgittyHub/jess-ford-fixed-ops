@@ -23,7 +23,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
   const [extra, setExtra] = useState({ date: "", time: "", employee: "", person: "", phone: "", work: "", amount: "" });
 
   if (!order) return null;
-  const locked = order.status === "invoiced" || order.status === "closed";
+  const locked = order.status === "closed";
   const wa = normalizeWa(order.wa);
   const money = orderMoney(order);
   const limit = waLimit(wa);

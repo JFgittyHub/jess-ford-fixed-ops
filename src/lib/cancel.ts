@@ -19,6 +19,11 @@ export function mayCancelAppointment(actor: DeskActor): boolean {
   return actor === "advisor" || actor === "service-manager";
 }
 
+/** Same desk roles that cancel. Working as an advisor is how the service manager acts today. */
+export function mayCloseRepairOrder(actor: DeskActor): boolean {
+  return actor === "advisor" || actor === "service-manager";
+}
+
 export function deskActor(state: {
   workingAsId: string;
   advisors: { id: string }[];
@@ -38,6 +43,11 @@ export function openRoCancelMessage(number: number | string) {
   return `RO ${number} is still open. Close the RO first.`;
 }
 
+/** Booked is not closed. The block keeps the RO number, the close instruction, and does not call the ticket still open. */
+export function bookedRoCancelMessage(number: number | string) {
+  return `Finish the work on RO ${number} and close it with an accurate invoice. Close the RO first.`;
+}
+
 export function closedRoReinstateMessage(number: number | string) {
   return `This visit's RO #${number} is closed. Book a new appointment instead.`;
 }
@@ -53,6 +63,11 @@ export function repairOrderCancelBlock(orderId: string | null | undefined, order
   if (!orderId) return null;
   if (!order) return MISSING_RO_CANCEL_BLOCKED;
   if (!openRepairOrderBlocksCancel(order)) return null;
+  if (order.status === "booked") {
+    return order.number == null
+      ? "Finish the work and close it with an accurate invoice. Close the RO first."
+      : bookedRoCancelMessage(order.number);
+  }
   return order.number == null ? "This repair order is still open. Close the RO first." : openRoCancelMessage(order.number);
 }
 
@@ -69,6 +84,17 @@ export function cancelReasonLabel(reason: string): string {
 }
 
 const SHOP_TZ = "America/Los_Angeles";
+
+/** Empty names are shown as Unknown. The word is not written back onto the repair order. */
+export function displayRecordedName(value?: string | null) {
+  const name = value?.trim() ?? "";
+  return name ? name : "Unknown";
+}
+
+export function displayRecordedWhen(value?: string | null) {
+  if (!value?.trim()) return "Unknown";
+  return shopWhen(value);
+}
 
 export function shopWhen(iso: string) {
   const date = new Date(iso);

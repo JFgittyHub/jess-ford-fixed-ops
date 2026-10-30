@@ -34,7 +34,7 @@ function PartsPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Parts</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Cash on the shelf</h1>
           <p className="mt-3 max-w-2xl text-muted">
-            {usd(view.agedCash)} in {view.agedCount} part numbers with no sale in 120 days. Sample costs, not the Ford price book. On-hand drops when you invoice a repair order.
+            {usd(view.agedCash)} in {view.agedCount} part numbers with no sale in 120 days. Sample costs, not the Ford price book. On-hand drops when an advisor closes a repair order.
           </p>
         </div>
         <Button tone="primary" onClick={() => setAdding((value) => !value)}>{adding ? "Close" : "Add part"}</Button>

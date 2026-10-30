@@ -1,6 +1,7 @@
 import { feeTotal } from "./format";
 import { closeGaps, orderMoney } from "./metrics";
-import type { Advisor, ClosedRecord, PartSku, RepairOrder, Tech, TimeLog } from "./types";
+import type { Advisor, ClosedRecord, Customer, FeeLine, PartSku, RepairOrder, Tech, TimeLog, Vehicle } from "./types";
+import { isFullVin } from "./vin";
 import { normalizeWa, waLimit } from "./wa";
 
 /** Cent tolerance so a ticket that rounds onto the cap still books. */
@@ -52,9 +53,18 @@ export function applyPartStock(parts: PartSku[], order: RepairOrder, direction: 
   });
 }
 
+/** Booked means hours, a technician, and a dollar cost are on the ticket. The car is still open. */
+export function hasBookedWork(order: Pick<RepairOrder, "labor" | "parts">) {
+  const hours = order.labor.some((line) => line.hours > 0);
+  const tech = order.labor.some((line) => line.techId.trim());
+  const cost = laborAmount(order) + partsAmount(order) > 0;
+  return hours && tech && cost;
+}
+
 export function bookRepairOrder(order: RepairOrder): RepairOrder | null {
-  if (order.status === "invoiced" || order.status === "booked" || order.status === "closed") return null;
+  if (order.status === "booked" || order.status === "closed") return null;
   if (!withinAuthorization(order)) return null;
+  if (!hasBookedWork(order)) return null;
   return { ...order, status: "booked" };
 }
 
@@ -63,31 +73,28 @@ export function unbookRepairOrder(order: RepairOrder): RepairOrder | null {
   return { ...order, status: "ready" };
 }
 
+/**
+ * Month close only counts repair orders an advisor already closed.
+ * It does not set, change, or relabel a status.
+ */
 export function invoiceRepairOrder(
   order: RepairOrder,
   parts: PartSku[],
-  techs: Tech[],
-  advisors: Advisor[],
-  logs: TimeLog[],
-  invoicedOn: string,
-): { order: RepairOrder; parts: PartSku[] } | null {
-  if (order.status !== "booked") return null;
-  if (!withinAuthorization(order)) return null;
-  if (closeGaps(order, techs, advisors, logs).length > 0) return null;
-  const nextParts = order.stockApplied ? parts : applyPartStock(parts, order, -1, invoicedOn);
-  return {
-    order: { ...order, status: "invoiced", closeType: "invoiced", invoicedOn, stockApplied: true },
-    parts: nextParts,
-  };
+  _techs?: Tech[],
+  _advisors?: Advisor[],
+  _logs?: TimeLog[],
+  _closedOn?: string,
+): { order: RepairOrder; parts: PartSku[] } {
+  return { order, parts };
 }
 
 export function reopenRepairOrder(order: RepairOrder, parts: PartSku[]): { order: RepairOrder; parts: PartSku[] } | null {
-  if (order.status !== "invoiced") return null;
+  if (order.status !== "closed" || order.closeType === "no_work") return null;
   const nextParts = order.stockApplied ? applyPartStock(parts, order, 1, order.invoicedOn ?? "") : parts;
   return {
     order: {
       ...order,
-      status: "ready",
+      status: "booked",
       closeType: null,
       closeNote: "",
       closedBy: "",
@@ -95,6 +102,7 @@ export function reopenRepairOrder(order: RepairOrder, parts: PartSku[]): { order
       closedAt: null,
       invoicedOn: null,
       stockApplied: false,
+      droppedFeesNote: "",
     },
     parts: nextParts,
   };
@@ -103,45 +111,111 @@ export function reopenRepairOrder(order: RepairOrder, parts: PartSku[]): { order
 /** Cent tolerance for a $0 ticket. */
 const CENT = 0.009;
 
-export const NO_WORK_BLOCKED = "Work or charges are on this RO — close it with an accurate invoice.";
 export const NO_WORK_NOTE_MAX = 500;
+export const NO_WORK_NOTE_MIN = 10;
 export const NO_WORK_NOTE_REQUIRED = "Add a note explaining why no work was done.";
+export const NO_WORK_NOTE_SHORT = "Explain why no work was done in at least 10 characters.";
 export const NO_WORK_NOTE_LONG = "Keep the note to 500 characters.";
 export const NO_WORK_NOT_OPEN = "Only an open or booked repair order can close with no work.";
+export const CLOSE_ROLE_REQUIRED = "Only an advisor or service manager can close a repair order.";
+export const ADVISOR_CLOSE_NOTE = "Closed by the advisor.";
 
 /**
  * Fees copied onto every open ticket from shop settings. A no-work close drops
- * them so an abandoned RO is stored at $0. Any other fee is a charge.
+ * shop, misc, hazmat, and disposal. Any other fee is a charge.
  */
-const STANDARD_FEE_IDS = new Set(["shop", "hazmat", "disposal"]);
+const DEFAULT_FEE_IDS = new Set(["shop", "misc", "hazmat", "disposal"]);
 
 const NO_WORK_STATUSES = new Set(["open", "working", "parts", "ready", "booked"]);
 
-function nonzero(value: number) {
-  return Math.abs(value) > CENT;
+const DEFAULT_FEE_NAMES = new Set([
+  "misc shop fee",
+  "miscellaneous shop fee",
+  "shop fee",
+  "misc",
+  "hazmat",
+  "hazmat fee",
+  "disposal",
+  "disposal fee",
+]);
+
+export function isDefaultShopFee(fee: Pick<FeeLine, "id" | "name">) {
+  if (DEFAULT_FEE_IDS.has(fee.id)) return true;
+  return DEFAULT_FEE_NAMES.has(fee.name.trim().toLowerCase());
 }
 
-/** Parts, labor dollars, flagged hours, clock punches, payments, or a non-standard fee. */
-export function orderHasNoWorkCharges(order: RepairOrder, logs: TimeLog[]): boolean {
-  if (order.parts.length > 0) return true;
-  if (order.labor.some((line) => nonzero(line.hours * line.rate))) return true;
-  if (order.labor.some((line) => line.hours > CENT)) return true;
-  if (logs.some((log) => log.orderId === order.id)) return true;
-  if ((order.payments ?? []).some((pay) => nonzero(pay.amount))) return true;
-  const extraFees = (order.fees ?? []).filter((fee) => !STANDARD_FEE_IDS.has(fee.id));
-  return nonzero(orderMoney({ ...order, fees: extraFees }).total);
+function lineCountLabel(count: number, noun: string) {
+  return `${count} ${noun} ${count === 1 ? "line" : "lines"}`;
 }
 
-export function noWorkCloseError(order: RepairOrder, logs: TimeLog[], note: string): string | null {
+function inspectionHasResults(order: RepairOrder) {
+  const items = order.inspection?.items ?? [];
+  return items.some((item) => item.status !== null || item.reading.trim() !== "" || item.note.trim() !== "");
+}
+
+/** What is in the way of a $0 close. Each line names the blocker. */
+export function noWorkBlockers(
+  order: RepairOrder,
+  logs: TimeLog[],
+  identity?: { customer?: Customer; vehicle?: Vehicle },
+): string[] {
+  const blocks: string[] = [];
+  if (order.labor.length > 0) {
+    const names = order.labor.map((line) => line.opcode || line.description || "labor").join(", ");
+    blocks.push(`Remove ${lineCountLabel(order.labor.length, "labor")} (${names})`);
+  }
+  if (order.parts.length > 0) {
+    const names = order.parts.map((line) => line.number || line.description || "part").join(", ");
+    blocks.push(`Remove ${lineCountLabel(order.parts.length, "part")} (${names})`);
+  }
+  for (const job of order.jobs ?? []) {
+    if (job.cause.trim()) blocks.push(`Clear the cause on line ${job.code}`);
+    if (job.correction.trim()) blocks.push(`Clear the correction on line ${job.code}`);
+  }
+  if (inspectionHasResults(order)) blocks.push("Clear the multi-point results");
+  const extraFees = (order.fees ?? []).filter((fee) => !isDefaultShopFee(fee));
+  if (extraFees.length === 1) blocks.push(`Remove the ${extraFees[0].name} fee`);
+  else if (extraFees.length > 1) blocks.push(`Remove ${extraFees.length} fees (${extraFees.map((fee) => fee.name).join(", ")})`);
+  if (logs.some((log) => log.orderId === order.id)) blocks.push("Clear the technician clock time");
+  if ((order.payments ?? []).some((pay) => Math.abs(pay.amount) > CENT)) blocks.push("A payment is on this repair order");
+  const removed = (order.history ?? []).filter((entry) => entry.kind === "labor-removed" || entry.kind === "part-removed");
+  if (removed.length > 0) {
+    const names = removed.map((entry) => entry.text.replace(/^Removed (?:labor|part) line /, "").split(" — ")[0]).join(", ");
+    blocks.push(`Labor or parts were removed after work started (${names})`);
+  }
+  if (!identity?.customer?.name.trim()) blocks.push("Add the customer name");
+  if (!normalizeWa(order.wa).address.trim()) blocks.push("Add the address");
+  if (!identity?.customer?.phone.trim()) blocks.push("Add the customer phone");
+  const vehicle = identity?.vehicle;
+  if (!vehicle || !vehicle.year || !vehicle.model.trim()) blocks.push("Add the year, make, and model");
+  if (!Number.isFinite(order.mileage) || order.mileage < 0) blocks.push("Add the mileage in");
+  return blocks;
+}
+
+export function noWorkCloseError(
+  order: RepairOrder,
+  logs: TimeLog[],
+  note: string,
+  identity?: { customer?: Customer; vehicle?: Vehicle },
+): string | null {
   if (!NO_WORK_STATUSES.has(order.status)) return NO_WORK_NOT_OPEN;
-  if (orderHasNoWorkCharges(order, logs)) return NO_WORK_BLOCKED;
+  const blocks = noWorkBlockers(order, logs, identity);
+  if (blocks.length > 0) return blocks.join(". ");
   const trimmed = note.trim();
+  const nonSpace = trimmed.replace(/\s/g, "");
   if (!trimmed) return NO_WORK_NOTE_REQUIRED;
+  if (nonSpace.length < NO_WORK_NOTE_MIN) return NO_WORK_NOTE_SHORT;
   if (trimmed.length > NO_WORK_NOTE_MAX) return NO_WORK_NOTE_LONG;
   return null;
 }
 
-/** Status becomes Closed. Fees are cleared so the stored total is $0. The RO number stays. */
+export function droppedFeeNote(fees: FeeLine[]) {
+  const dropped = fees.filter((fee) => isDefaultShopFee(fee));
+  if (dropped.length === 0) return "";
+  return `Dropped default fees: ${dropped.map((fee) => fee.name).join(", ")}.`;
+}
+
+/** Status becomes Closed. Default fees are cleared so the stored total is $0. The RO number stays. */
 export function closeRepairOrderWithNoWork(
   order: RepairOrder,
   note: string,
@@ -149,6 +223,18 @@ export function closeRepairOrderWithNoWork(
   closedAt: string,
   closedOn: string,
 ): RepairOrder {
+  const dropped = droppedFeeNote(order.fees ?? []);
+  const history = [...(order.history ?? [])];
+  if (dropped) {
+    history.push({ at: closedAt, who: who.name, whoId: who.id, kind: "fees-dropped", text: dropped });
+  }
+  history.push({
+    at: closedAt,
+    who: who.name,
+    whoId: who.id,
+    kind: "closed",
+    text: note.trim().slice(0, NO_WORK_NOTE_MAX),
+  });
   return {
     ...order,
     status: "closed",
@@ -159,7 +245,87 @@ export function closeRepairOrderWithNoWork(
     closedAt,
     invoicedOn: closedOn,
     fees: [],
+    droppedFeesNote: dropped,
+    history,
     stockApplied: false,
+  };
+}
+
+export interface AdvisorCloseContext {
+  customer?: Customer;
+  vehicle?: Vehicle;
+  techs: Tech[];
+  advisors: Advisor[];
+  logs: TimeLog[];
+}
+
+/** Exact list of fields still missing before an advisor can close a booked repair order. */
+export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): string[] {
+  const gaps: string[] = [];
+  const jobs = order.jobs ?? [];
+  const concern = (order.concern || jobs.map((job) => job.concern).join(" ")).trim();
+  if (!concern) gaps.push("Concern");
+  if (!jobs.some((job) => job.cause.trim())) gaps.push("Cause");
+  if (!jobs.some((job) => job.correction.trim())) gaps.push("Correction");
+  if (!Number.isFinite(order.mileage) || order.mileage < 0) gaps.push("Mileage in");
+  if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut < 0) gaps.push("Mileage out");
+  if (!isFullVin(ctx.vehicle?.vin ?? "")) gaps.push("VIN");
+  const nameParts = (ctx.customer?.name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (nameParts.length < 2) gaps.push("Customer first and last name");
+  if (!normalizeWa(order.wa).address.trim()) gaps.push("Address");
+  if (!ctx.customer?.phone.trim()) gaps.push("Customer phone");
+  if (!ctx.vehicle?.year || !ctx.vehicle.model.trim()) gaps.push("Year, make, and model");
+  for (const line of order.parts) {
+    const label = line.number || line.description || "a part";
+    if (!line.number.trim()) gaps.push(`Part number on ${label}`);
+    if (line.condition !== "new" && line.condition !== "used" && line.condition !== "rebuilt") {
+      gaps.push(`New, used, or rebuilt on ${label}`);
+    }
+    if (!Number.isFinite(line.price) || line.price < 0) gaps.push(`Part price on ${label}`);
+  }
+  if (order.labor.some((line) => line.hours < 0)) gaps.push("Labor hours cannot be negative");
+  const money = orderMoney(order);
+  if (!Number.isFinite(money.labor)) gaps.push("Labor charge");
+  if (!Number.isFinite(money.parts)) gaps.push("Parts charge");
+  if (!Number.isFinite(money.total)) gaps.push("Total charge");
+  if (!Number.isFinite(order.taxRate) || !Number.isFinite(money.tax)) gaps.push("Sales tax");
+  if (waLimit(normalizeWa(order.wa)) === null) gaps.push("Estimate authorization");
+  gaps.push(...closeGaps(order, ctx.techs, ctx.advisors, ctx.logs));
+  return gaps;
+}
+
+/** Booked becomes Closed only when the required fields are complete. Records who, when, and a note. */
+export function closeRepairOrder(
+  order: RepairOrder,
+  parts: PartSku[],
+  ctx: AdvisorCloseContext,
+  who: { id: string; name: string },
+  closedAt: string,
+  closedOn: string,
+): { order: RepairOrder; parts: PartSku[] } | { error: string } {
+  if (order.status !== "booked") return { error: "Only a booked repair order can be closed." };
+  if (!who.id || !who.name.trim()) return { error: CLOSE_ROLE_REQUIRED };
+  const gaps = advisorCloseGaps(order, ctx);
+  if (gaps.length > 0) return { error: gaps.join("\n") };
+  const nextParts = order.stockApplied ? parts : applyPartStock(parts, order, -1, closedOn);
+  const history = [
+    ...(order.history ?? []),
+    { at: closedAt, who: who.name, whoId: who.id, kind: "closed" as const, text: ADVISOR_CLOSE_NOTE },
+  ];
+  return {
+    order: {
+      ...order,
+      status: "closed",
+      closeType: null,
+      closeNote: ADVISOR_CLOSE_NOTE,
+      closedBy: who.name,
+      closedById: who.id,
+      closedAt,
+      invoicedOn: closedOn,
+      stockApplied: true,
+      history,
+    },
+    parts: nextParts,
   };
 }
 

@@ -86,7 +86,7 @@ function ReportsPage() {
         </table>
         <p className="mt-3 text-sm text-muted">
           Forecast if sales and controllable bills keep this pace, with a full month of overhead: {pct(view.forecastAbsorption)} on {usd(view.forecastGross)} gross and {usd(view.forecastExpense)} expense.
-          Flat-rate technician pay is matched to booked repair orders. Hourly pay follows the clock, including work still open.
+          Flat-rate technician pay is matched to closed repair orders. Hourly pay follows the clock, including work still open.
           Policy sits in controllable expense, not as a contra to customer-pay labor.
         </p>
       </section>
@@ -105,7 +105,7 @@ function ReportsPage() {
         <article className="card">
           <p className="text-sm text-muted">Internal</p>
           <p className="font-display text-3xl tabular-nums">{usd(view.laborI)}</p>
-          <p className="text-sm text-muted">{num(view.hoursI, 1)} hours · {num(view.hoursPerRo, 2)} hours per booked RO</p>
+          <p className="text-sm text-muted">{num(view.hoursI, 1)} hours · {num(view.hoursPerRo, 2)} hours per closed RO</p>
         </article>
         <article className="card">
           <p className="text-sm text-muted">No-work closes</p>

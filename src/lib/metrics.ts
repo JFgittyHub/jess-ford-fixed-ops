@@ -107,16 +107,35 @@ export interface Digest {
   noWorkCloses: number;
 }
 
-export function isSold(order: RepairOrder) {
-  return order.status === "invoiced" && (order.invoicedOn ?? "").startsWith(monthKey());
+/** Shop date used for month totals. `invoicedOn` is that date; the status is Closed. */
+export function closeDay(order: Pick<RepairOrder, "invoicedOn" | "closedAt">) {
+  if (order.invoicedOn) return order.invoicedOn;
+  if (order.closedAt && order.closedAt.length >= 10) return order.closedAt.slice(0, 10);
+  return "";
 }
 
+/** An advisor closed this ticket. Empty who and when do not count. */
+export function isAdvisorClosed(order: Pick<RepairOrder, "status" | "closedBy" | "closedAt">) {
+  return order.status === "closed" && Boolean(order.closedBy?.trim() || order.closedAt);
+}
+
+/** Open, including in bay, parts, and ready. Booked and Closed are separate. */
+export function isWorkOpen(order: Pick<RepairOrder, "status">) {
+  return order.status === "open" || order.status === "working" || order.status === "parts" || order.status === "ready";
+}
+
+/** Sales, sold hours, and flat-rate pay. No-work closes stay out. */
+export function isSold(order: RepairOrder) {
+  return order.status === "closed" && order.closeType !== "no_work" && closeDay(order).startsWith(monthKey());
+}
+
+/** Still in the shop: open work and booked tickets. Closed is out. */
 export function isOpen(order: RepairOrder) {
-  return order.status !== "invoiced" && order.status !== "closed";
+  return order.status !== "closed";
 }
 
 export function isNoWorkClose(order: RepairOrder) {
-  return order.status === "closed" || order.closeType === "no_work";
+  return order.status === "closed" && order.closeType === "no_work";
 }
 
 function lineLabor(hours: number, rate: number) {
@@ -169,9 +188,18 @@ export function closedRecord(order: RepairOrder, customer?: Customer, vehicle?: 
     partNumbers: order.parts.map((line) => `${line.number} ${line.description}`).join(" "),
     total: money.total,
     beforeTax: money.ticket,
-    closeType: order.closeType ?? (order.status === "closed" ? "no_work" : order.status === "invoiced" ? "invoiced" : undefined),
+    closeType: order.closeType === "no_work" ? "no_work" : null,
     closeNote: order.closeNote?.trim() ?? "",
+    closedBy: cleanRecorded(order.closedBy),
+    closedAt: cleanRecorded(order.closedAt) || null,
+    droppedFeesNote: order.droppedFeesNote ?? "",
   };
+}
+
+function cleanRecorded(value?: string | null) {
+  const text = value?.trim() ?? "";
+  if (!text || text.toLowerCase() === "unknown") return "";
+  return text;
 }
 
 function hoursOf(order: RepairOrder, kind?: PayKind, payTypes?: ShopData["payTypes"]) {
@@ -311,7 +339,7 @@ export function digest(data: ShopData): Digest {
 
   const byDay = new Map<string, { labor: number; parts: number }>();
   for (const order of sold) {
-    const key = order.invoicedOn ?? order.openedOn;
+    const key = closeDay(order) || order.openedOn;
     const bucket = byDay.get(key) ?? { labor: 0, parts: 0 };
     bucket.labor += laborOf(order);
     bucket.parts += order.parts.reduce((s, line) => s + line.qty * line.price, 0);
@@ -492,7 +520,7 @@ export function digest(data: ShopData): Digest {
     oldWip,
     insights,
     hoursPerRo: safeDiv(hoursSold, sold.length),
-    noWorkCloses: data.orders.filter((order) => isNoWorkClose(order) && (order.invoicedOn ?? "").startsWith(monthKey())).length,
+    noWorkCloses: data.orders.filter((order) => isNoWorkClose(order) && closeDay(order).startsWith(monthKey())).length,
   };
 }
 

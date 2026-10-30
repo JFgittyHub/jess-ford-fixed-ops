@@ -46,9 +46,11 @@ describe("appointment actions", () => {
     assert.equal(shop.getState().appointments.find((row) => row.id === target.id)?.status, "arrived");
 
     shop.getState().linkAppointment(target.id, "open-helen");
+    assert.equal(shop.getState().appointments.find((row) => row.id === target.id)?.orderId, null);
+    shop.getState().linkAppointment(target.id, "open-ruth");
     const linked = shop.getState().appointments.find((row) => row.id === target.id);
     assert.equal(linked?.status, "in_shop");
-    assert.equal(linked?.orderId, "open-helen");
+    assert.equal(linked?.orderId, "open-ruth");
   });
 
   it("keeps a VIN edit on the appointment and leaves the vehicle record alone", () => {

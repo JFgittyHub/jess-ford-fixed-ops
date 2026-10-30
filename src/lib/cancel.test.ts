@@ -14,6 +14,7 @@ import {
   CANCEL_REASONS,
   CANCELLED_LOCKED,
   MISSING_RO_CANCEL_BLOCKED,
+  bookedRoCancelMessage,
   closedRoReinstateMessage,
   openRoCancelMessage,
   activeCancellation,
@@ -484,28 +485,37 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().appointments.some((row) => row.id === saved.appointmentId), true);
   });
 
-  it("blocks cancel until the repair order is closed, including booked and invoiced", () => {
+  it("blocks cancel until the repair order is closed, and a booked ticket names the invoice", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
     const visit = book(shop.getState(), "On a repair order");
-    const order = shop.getState().orders.find((row) => row.status !== "invoiced" && row.status !== "closed");
+    const vehicle = shop.getState().vehicles[0];
+    const orderId = shop.getState().createOrder({
+      customerId: vehicle.customerId,
+      vehicleId: vehicle.id,
+      advisorId: shop.getState().advisors[0].id,
+      lines: [{ concern: "Linked visit" }],
+      mileage: 12,
+      promiseTime: "",
+    });
+    const order = shop.getState().orders.find((row) => row.id === orderId);
     assert.ok(order);
-    const orderId = order.id;
     shop.getState().linkAppointment(visit.appointmentId, orderId);
     const blocked = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
     assert.equal(blocked.ok, false);
     assert.equal(blocked.error, openRoCancelMessage(order.number));
     assert.match(blocked.error ?? "", /Close the RO first/);
     assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "in_shop");
-    for (const status of ["booked", "invoiced"] as const) {
-      shop.setState({
-        orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status } : row)),
-      });
-      const still = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
-      assert.equal(still.ok, false, status);
-      assert.equal(still.error, openRoCancelMessage(order.number));
-      assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "in_shop");
-    }
+    shop.setState({
+      orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status: "booked" as const } : row)),
+    });
+    const still = shop.getState().cancelAppointment(visit.appointmentId, { reason: "rescheduled" });
+    assert.equal(still.ok, false);
+    assert.equal(still.error, bookedRoCancelMessage(order.number));
+    assert.match(still.error ?? "", /Close the RO first/);
+    assert.match(still.error ?? "", /accurate invoice/);
+    assert.equal((still.error ?? "").includes("still open"), false);
+    assert.equal(shop.getState().appointments.find((row) => row.id === visit.appointmentId)?.status, "in_shop");
     shop.setState({
       orders: shop.getState().orders.map((row) => (row.id === orderId ? { ...row, status: "closed" as const, closeType: "no_work" as const } : row)),
     });
@@ -520,7 +530,11 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().orders.find((row) => row.id === orderId)?.status, "closed");
 
     const dangling = book(shop.getState(), "Missing repair order");
-    shop.getState().linkAppointment(dangling.appointmentId, "ro-not-on-this-store");
+    shop.setState({
+      appointments: shop.getState().appointments.map((row) => (
+        row.id === dangling.appointmentId ? { ...row, status: "in_shop" as const, orderId: "ro-not-on-this-store" } : row
+      )),
+    });
     const missing = shop.getState().cancelAppointment(dangling.appointmentId, { reason: "customer-request" });
     assert.equal(missing.ok, false);
     assert.equal(missing.error, MISSING_RO_CANCEL_BLOCKED);

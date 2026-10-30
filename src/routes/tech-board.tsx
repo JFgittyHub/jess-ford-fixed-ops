@@ -19,7 +19,7 @@ function useNow() {
 }
 
 function assignedOpen(techId: string, orders: RepairOrder[]) {
-  return orders.filter((order) => order.status !== "invoiced" && order.status !== "closed" && order.labor.some((line) => line.techId === techId));
+  return orders.filter((order) => order.status !== "closed" && order.labor.some((line) => line.techId === techId));
 }
 
 function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, now: number) {

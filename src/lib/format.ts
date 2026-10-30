@@ -125,15 +125,16 @@ export const STATUS_LABEL = {
   parts: "Waiting parts",
   ready: "Ready",
   booked: "Booked",
-  invoiced: "Booked",
   closed: "Closed",
 } as const;
 
-/** Badge and history label. A no-work close is not the Booked month-close status. */
+/** Badge label. Work steps stay Open. A no-work close is named on its own. */
 export function roStatusLabel(order: { status: string; closeType?: string | null }) {
-  if (order.status === "closed" || order.closeType === "no_work") return "Closed — no work ($0)";
-  if (order.status in STATUS_LABEL) return STATUS_LABEL[order.status as keyof typeof STATUS_LABEL];
-  return order.status;
+  if (order.status === "closed" && order.closeType === "no_work") return "Closed — no work ($0)";
+  if (order.status === "closed") return "Closed";
+  if (order.status === "booked") return "Booked";
+  if (order.status === "open" || order.status === "working" || order.status === "parts" || order.status === "ready") return "Open";
+  return "Open";
 }
 
 export const BAY_LABEL = {
@@ -150,7 +151,7 @@ export const BAY_LABEL = {
 export function bayFromStatus(status: string) {
   if (status === "working") return "working" as const;
   if (status === "parts") return "parts" as const;
-  if (status === "ready" || status === "invoiced") return "ready" as const;
+  if (status === "ready" || status === "booked" || status === "closed") return "ready" as const;
   return "dispatch" as const;
 }
 
