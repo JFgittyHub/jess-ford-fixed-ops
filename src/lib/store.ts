@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
-import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, mayAmendClosedOrder, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
+import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
@@ -16,9 +16,10 @@ import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normali
 import { fullVin } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
-import { AMEND_ROLE_REQUIRED, amendReasonError, applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, noWorkCloseError, reopenRepairOrder, unbookRepairOrder, workHadStarted } from "./ro";
-import { closedRecord } from "./metrics";
-import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, ShopData, StoreId, Tech, TechBoard, WeekdayIndex } from "./types";
+import { highestPriorMileage, mileageFloorMessage } from "./mileage";
+import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, noWorkCloseError, unbookRepairOrder } from "./ro";
+import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
+import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -41,17 +42,6 @@ export interface NewCustomerInput {
   email?: string;
 }
 
-export type ClosedAmendment =
-  | { field: "concern" | "closeNote" | "promiseTime" | "advisorId"; value: string }
-  | { field: "mileage" | "mileageOut"; value: number }
-  | { field: "bay"; value: RepairOrder["bay"] }
-  | { field: "reopen" }
-  | { field: "labor"; lineId: string; key: "hours" | "description" | "opcode" | "rate"; value: string | number }
-  | { field: "part"; lineId: string; key: "qty" | "price" | "description" | "number"; value: string | number }
-  | { field: "fee"; lineId: string; key: "name" | "amount"; value: string | number }
-  | { field: "job"; jobId: string; key: "concern" | "cause" | "correction"; value: string }
-  | { field: "wa"; key: "address" | "estimate" | "initials" | "plate"; value: string | number };
-
 interface ShopActions {
   focusOrderId: string | null;
   activeStoreId: StoreId;
@@ -69,7 +59,6 @@ interface ShopActions {
   addTransportOption: (name: string) => boolean;
   renameTransportOption: (id: string, name: string) => boolean;
   removeTransportOption: (id: string) => boolean;
-  clockTech: (techId: string, hours: number) => void;
   addTech: (input: Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">) => boolean;
   updateTech: (id: string, patch: Partial<Pick<Tech, "number" | "name" | "skill" | "payStyle" | "flagRate" | "hourlyRate" | "board">>) => boolean;
   removeTech: (id: string) => "ok" | "used" | "appointments";
@@ -86,14 +75,10 @@ interface ShopActions {
   invoiceOrder: (orderId: string) => void;
   bookOrder: (orderId: string) => void;
   unbookOrder: (orderId: string) => void;
-  /** Advisor close. Booked becomes Closed only when the required fields are complete. */
+  /** Advisor close. Booked becomes Closed only when the required fields are complete. Closing is final. */
   closeOrder: (orderId: string) => { ok: boolean; error: string | null };
   /** $0 close for an open or booked repair order with no work. The RO number stays. */
   closeOrderWithNoWork: (orderId: string, note: string) => { ok: boolean; error: string | null };
-  /** Service manager only. Reason required. The closed-history row stays. */
-  reopenOrder: (orderId: string, reason: string) => { ok: boolean; error: string | null };
-  /** Service manager change to a closed repair order. Appends a history entry. Never edits older entries. */
-  amendClosedOrder: (orderId: string, reason: string, change: ClosedAmendment) => { ok: boolean; error: string | null };
   addLabor: (orderId: string, line: Omit<LaborLine, "id">) => void;
   updateLabor: (orderId: string, lineId: string, patch: Partial<LaborLine>) => void;
   removeLabor: (orderId: string, lineId: string) => void;
@@ -180,10 +165,8 @@ function uid(prefix: string) {
 
 function actingStaff(state: ShopData): { id: string; name: string } {
   const picked = state.advisors.find((advisor) => advisor.id === state.workingAsId)
-    ?? state.techs.find((tech) => tech.id === state.workingAsId)
-    ?? state.advisors[0]
-    ?? state.techs[0];
-  if (!picked) return { id: "", name: "Desk" };
+    ?? state.techs.find((tech) => tech.id === state.workingAsId);
+  if (!picked) return { id: "", name: "" };
   return { id: picked.id, name: picked.name };
 }
 
@@ -266,8 +249,9 @@ function createDesk(demoMode: boolean): { activeStoreId: StoreId; stores: Record
 
 const OPEN_STATUS_PATCH = new Set<RoStatus>(["open", "working", "parts", "ready"]);
 
-function isHeld(status: RoStatus) {
-  return status === "closed";
+/** Closed, or a saved reopen from an older visit. Nothing may change it. */
+function lockedOrder(order: RepairOrder) {
+  return order.status === "closed" || Boolean(order.authorizationLocked);
 }
 
 function isSealed(status: RoStatus) {
@@ -328,9 +312,15 @@ function migrateHistoryRow(row: ClosedRecord): ClosedRecord {
 }
 
 function closingAdvisor(state: ShopData): { id: string; name: string } | null {
-  if (!mayCloseRepairOrder(deskActor(state))) return null;
   const advisor = state.advisors.find((row) => row.id === state.workingAsId);
+  const tech = state.techs.find((row) => row.id === state.workingAsId);
+  if (tech && !advisor) {
+    if (!mayCloseRepairOrder("technician")) return null;
+    return { id: tech.id, name: tech.name };
+  }
   if (!advisor) return null;
+  const actor = advisor.role === "service-manager" ? "service-manager" : "advisor";
+  if (!mayCloseRepairOrder(actor)) return null;
   return { id: advisor.id, name: advisor.name };
 }
 
@@ -342,13 +332,6 @@ function matchedStaff(state: ShopData): { id: string; name: string } | null {
   return null;
 }
 
-function serviceManager(state: ShopData): { id: string; name: string } | null {
-  if (!mayAmendClosedOrder(deskActor(state))) return null;
-  const advisor = state.advisors.find((row) => row.id === state.workingAsId && row.role === "service-manager");
-  if (!advisor) return null;
-  return { id: advisor.id, name: advisor.name };
-}
-
 function entry(who: { id: string; name: string } | null, fields: Omit<RoHistoryEntry, "at" | "who" | "whoId">): RoHistoryEntry {
   return { at: now().toISOString(), who: who?.name ?? "", whoId: who?.id ?? "", ...fields };
 }
@@ -357,26 +340,71 @@ function appendHistory(order: RepairOrder, row: RoHistoryEntry): RepairOrder {
   return { ...order, history: [...(order.history ?? []), row] };
 }
 
+function identitySnapshot(order: RepairOrder, customer?: Customer, vehicle?: Vehicle): CloseSnapshot {
+  const wa = normalizeWa(order.wa);
+  return {
+    customerName: customer?.name ?? "",
+    phone: customer?.phone ?? "",
+    address: wa.address,
+    plate: wa.plate,
+    vin: vehicle?.vin ?? "",
+    year: vehicle?.year ?? 0,
+    make: vehicle?.make ?? "",
+    model: vehicle?.model ?? "",
+  };
+}
+
+function withSnapshot(order: RepairOrder, customer?: Customer, vehicle?: Vehicle) {
+  if (order.closeSnapshot) return order;
+  return { ...order, closeSnapshot: identitySnapshot(order, customer, vehicle) };
+}
+
+function applySnapshot(copy: ClosedRecord, order: RepairOrder) {
+  const snap = order.closeSnapshot;
+  if (!snap) return copy;
+  return {
+    ...copy,
+    customerName: snap.customerName,
+    phone: snap.phone,
+    address: snap.address,
+    plate: snap.plate,
+    vin: snap.vin,
+    vehicle: vehicleTitle(snap.year, snap.make, snap.model),
+  };
+}
+
+function appendClosedVersion(history: ClosedRecord[], order: RepairOrder, customer?: Customer, vehicle?: Vehicle) {
+  if (order.closeType === "no_work" && history.some((row) => row.orderId === order.id && row.closeType === "no_work")) return history;
+  const copy = applySnapshot(closedRecord(order, customer, vehicle), order);
+  const versions = history.filter((row) => row.orderId === order.id).map((row) => row.version ?? 0);
+  copy.version = (versions.length ? Math.max(...versions) : 0) + 1;
+  copy.id = uid("hist");
+  return [copy, ...history];
+}
+
 function feeList(fees: FeeLine[]) {
-  return fees.map((fee) => `${fee.name} ${fee.amount}${fee.basis === "percent" ? "%" : ""}`).join(", ");
+  return fees.map((fee) => `${fee.name} ${fee.amount}${fee.basis === "percent" ? "%" : ""} cap ${fee.cap ?? 0}`).join(", ");
 }
 
 function applyFeeChange(order: RepairOrder, fees: FeeLine[], who: { id: string; name: string } | null, text: string): RepairOrder {
-  if (isHeld(order.status)) return order;
+  if (lockedOrder(order)) return order;
   const before = feeList(order.fees ?? []);
   const after = feeList(fees);
   if (before === after) return order;
   return appendHistory({ ...order, fees }, entry(who, { kind: "fee-changed", field: "fees", before, after, text: `${text}. ${before} → ${after}` }));
 }
 
-function closedEditGate(state: ShopData, order: RepairOrder | undefined, reason: string): { ok: false; error: string } | { ok: true; who: { id: string; name: string } } {
-  if (!order) return { ok: false, error: "That repair order is not on this store." };
-  if (order.status !== "closed") return { ok: false, error: "That repair order is not closed." };
-  const who = serviceManager(state);
-  if (!who) return { ok: false, error: AMEND_ROLE_REQUIRED };
-  const reasonError = amendReasonError(reason);
-  if (reasonError) return { ok: false, error: reasonError };
-  return { ok: true, who };
+function shopsFrom(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }) {
+  const stores = state.stores ? Object.values(state.stores) : [];
+  const shops = stores
+    .filter((shop) => shop && Array.isArray(shop.orders) && Array.isArray(shop.vehicles))
+    .map((shop) => ({ orders: shop.orders ?? [], vehicles: shop.vehicles ?? [] }));
+  return shops.length > 0 ? shops : [{ orders: state.orders, vehicles: state.vehicles }];
+}
+
+function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: RepairOrder) {
+  const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
+  return highestPriorMileage(shopsFrom(state), vehicle, order.id);
 }
 
 function normalizePayments(value: unknown): RoPayment[] {
@@ -395,20 +423,90 @@ function normalizePayments(value: unknown): RoPayment[] {
   return rows;
 }
 
+const HISTORY_KINDS = new Set<string>([
+  "labor-removed",
+  "part-removed",
+  "fees-dropped",
+  "closed",
+  "reopened",
+  "amended",
+  "job-removed",
+  "diagnosis-cleared",
+  "fee-changed",
+]);
+
+function normalizeHistory(value: unknown): RoHistoryEntry[] {
+  if (!Array.isArray(value)) return [];
+  const rows: RoHistoryEntry[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as RoHistoryEntry;
+    if (typeof entry.text !== "string") continue;
+    const kind = typeof entry.kind === "string" && entry.kind
+      ? (HISTORY_KINDS.has(entry.kind) ? entry.kind : entry.kind) as RoHistoryEntry["kind"]
+      : "closed";
+    const row: RoHistoryEntry = {
+      at: cleanRecordedWhen(entry.at) ?? "",
+      who: cleanRecordedName(entry.who),
+      whoId: typeof entry.whoId === "string" ? entry.whoId : "",
+      kind,
+      text: entry.text,
+    };
+    if (typeof entry.field === "string") row.field = entry.field;
+    if (typeof entry.before === "string") row.before = entry.before;
+    if (typeof entry.after === "string") row.after = entry.after;
+    if (typeof entry.reason === "string") row.reason = entry.reason;
+    if (entry.blocksNoWork === true) row.blocksNoWork = true;
+    rows.push(row);
+  }
+  return rows;
+}
+
+function normalizeLaterAuth(value: unknown): DatedAuthorization[] {
+  if (!Array.isArray(value)) return [];
+  const rows: DatedAuthorization[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<DatedAuthorization>;
+    rows.push({
+      id: typeof row.id === "string" && row.id ? row.id : `auth-${rows.length + 1}`,
+      at: typeof row.at === "string" ? row.at : "",
+      who: cleanRecordedName(row.who),
+      whoId: typeof row.whoId === "string" ? row.whoId : "",
+      reason: typeof row.reason === "string" ? row.reason : "",
+      address: typeof row.address === "string" ? row.address : "",
+      initials: typeof row.initials === "string" ? row.initials : "",
+      estimate: typeof row.estimate === "number" && Number.isFinite(row.estimate) ? row.estimate : 0,
+      plate: typeof row.plate === "string" ? row.plate : "",
+    });
+  }
+  return rows;
+}
+
+function normalizeSnapshot(value: unknown): CloseSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Partial<CloseSnapshot>;
+  return {
+    customerName: typeof row.customerName === "string" ? row.customerName : "",
+    phone: typeof row.phone === "string" ? row.phone : "",
+    address: typeof row.address === "string" ? row.address : "",
+    plate: typeof row.plate === "string" ? row.plate : "",
+    vin: typeof row.vin === "string" ? row.vin : "",
+    year: typeof row.year === "number" && Number.isFinite(row.year) ? row.year : 0,
+    make: typeof row.make === "string" ? row.make : "",
+    model: typeof row.model === "string" ? row.model : "",
+  };
+}
+
 function normalizeCloseFields(prior: RepairOrder, inClosedHistory = false) {
+  const closeSnapshot = normalizeSnapshot(prior.closeSnapshot);
   return {
     ...migrateOrderRecord(prior, inClosedHistory),
     payments: normalizePayments(prior.payments),
     droppedFeesNote: typeof prior.droppedFeesNote === "string" ? prior.droppedFeesNote : "",
-    history: Array.isArray(prior.history)
-      ? prior.history.filter((entry) => entry && typeof entry === "object" && typeof entry.text === "string").map((entry) => ({
-          at: cleanRecordedWhen(entry.at) ?? "",
-          who: cleanRecordedName(entry.who),
-          whoId: typeof entry.whoId === "string" ? entry.whoId : "",
-          kind: entry.kind === "labor-removed" || entry.kind === "part-removed" || entry.kind === "fees-dropped" || entry.kind === "closed" ? entry.kind : "closed",
-          text: entry.text,
-        }))
-      : [],
+    history: normalizeHistory(prior.history),
+    laterAuthorizations: normalizeLaterAuth(prior.laterAuthorizations),
+    ...(closeSnapshot ? { closeSnapshot } : {}),
   };
 }
 
@@ -592,7 +690,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         : total > 0
           ? { ...blankWa(), choice: "written" as const, initials: "on file", date: prior.openedOn, time: "08:00", estimate: money2(total) }
           : wa;
-      return {
+      const built: RepairOrder = {
         ...prior,
         jobs,
         concern: concernFromJobs(jobs) || prior.concern,
@@ -614,6 +712,18 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         stockApplied: (prior.status as string) === "invoiced" && !historyIds.has(prior.id) ? false : Boolean(prior.stockApplied),
         authorizationLocked: prior.status === "closed" || ((prior.status as string) === "invoiced" && historyIds.has(prior.id)) ? true : Boolean(prior.authorizationLocked),
       };
+      const previouslyClosed = Boolean(prior.authorizationLocked)
+        || (Array.isArray(prior.history) && prior.history.some((entry) => entry && (entry.kind === "closed" || entry.kind === "reopened" || entry.kind === "amended")));
+      if (previouslyClosed) {
+        built.status = "closed";
+        built.authorizationLocked = true;
+      }
+      if (built.status === "closed" && !built.closeSnapshot) {
+        const customer = (Array.isArray(saved.customers) ? saved.customers : []).find((row) => row.id === prior.customerId);
+        const vehicle = vehicleList.find((row) => row.id === prior.vehicleId);
+        built.closeSnapshot = identitySnapshot(built, customer, vehicle);
+      }
+      return built;
     }),
     laborOps: Array.isArray(saved.laborOps) && saved.laborOps.length > 0 ? saved.laborOps : laborCatalog(),
     payTypes: Array.isArray(saved.payTypes) && saved.payTypes.length > 0 ? saved.payTypes : defaultPayTypes(saved.settings),
@@ -717,8 +827,8 @@ export interface ShopStoreOptions {
   storage?: ShopStorage;
 }
 
-/** Bumped so invoiced sales that already have closed history stay Closed, and other invoiced rows return to Booked. */
-export const SHOP_PERSIST_VERSION = 32;
+/** Bumped so a reload keeps every history field and closed-history version. */
+export const SHOP_PERSIST_VERSION = 33;
 
 export function createShopStore(options: ShopStoreOptions = {}) {
   const demoMode = options.demoMode ?? isDemoMode();
@@ -785,15 +895,44 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       setFocus: (id) => set({ focusOrderId: id }),
       updateSettings: (patch) =>
         set((state) => {
-          const fees = Array.isArray(patch.fees) ? patch.fees.map((line) => ({ ...line })) : state.settings.fees;
-          const taxRate = patch.taxRate === undefined ? state.settings.taxRate : Math.max(0, Number(patch.taxRate) || 0);
-          const settings = { ...state.settings, ...patch, fees, taxRate };
-          const stamp = Array.isArray(patch.fees) || patch.taxRate !== undefined;
+          const settings = { ...state.settings };
+          if (typeof patch.storeName === "string") settings.storeName = patch.storeName;
+          if (typeof patch.city === "string") settings.city = patch.city;
+          if (typeof patch.phone === "string") settings.phone = patch.phone;
+          if (typeof patch.address === "string") settings.address = patch.address;
+          if (typeof patch.cpRate === "number" && Number.isFinite(patch.cpRate)) settings.cpRate = Math.max(0, patch.cpRate);
+          if (typeof patch.warrantyRate === "number" && Number.isFinite(patch.warrantyRate)) settings.warrantyRate = Math.max(0, patch.warrantyRate);
+          if (typeof patch.internalRate === "number" && Number.isFinite(patch.internalRate)) settings.internalRate = Math.max(0, patch.internalRate);
+          if (typeof patch.targetAbsorption === "number" && Number.isFinite(patch.targetAbsorption)) settings.targetAbsorption = Math.max(0, patch.targetAbsorption);
+          if (typeof patch.targetElr === "number" && Number.isFinite(patch.targetElr)) settings.targetElr = Math.max(0, patch.targetElr);
+          if (typeof patch.policyGuide === "number" && Number.isFinite(patch.policyGuide)) settings.policyGuide = Math.max(0, patch.policyGuide);
+          const fees = Array.isArray(patch.fees) ? patch.fees.map((line) => ({ ...line })) : settings.fees;
+          const taxRate = patch.taxRate === undefined || !Number.isFinite(Number(patch.taxRate)) ? settings.taxRate : Math.max(0, Number(patch.taxRate) || 0);
+          settings.fees = fees;
+          settings.taxRate = taxRate;
+          const who = matchedStaff(state);
           return {
             settings,
-            orders: stamp
-              ? state.orders.map((order) => (isHeld(order.status) ? order : { ...order, fees, taxRate }))
-              : state.orders,
+            orders: state.orders.map((order) => {
+              if (lockedOrder(order)) return order;
+              let next = order;
+              if (patch.taxRate !== undefined && taxRate !== order.taxRate) {
+                const beforeTax = orderMoney(order).tax;
+                next = { ...next, taxRate };
+                const afterTax = orderMoney(next).tax;
+                if (beforeTax !== afterTax) {
+                  next = appendHistory(next, entry(who, {
+                    kind: "fee-changed",
+                    field: "taxRate",
+                    before: String(order.taxRate),
+                    after: String(taxRate),
+                    text: `Sales tax ${order.taxRate}% → ${taxRate}%`,
+                  }));
+                }
+              }
+              if (Array.isArray(patch.fees)) return applyFeeChange(next, fees, who, "Updated shop fees");
+              return next;
+            }),
           };
         }),
       updateDayHours: (weekday, patch) =>
@@ -872,18 +1011,6 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         });
         return removed;
       },
-      clockTech: (techId, hours) =>
-        set((state) => ({
-          techs: state.techs.map((tech) =>
-            tech.id === techId
-              ? {
-                  ...tech,
-                  clockedHoursMonth: money2(Math.max(0, tech.clockedHoursMonth + hours)),
-                  clockedToday: money2(Math.max(0, tech.clockedToday + hours)),
-                }
-              : tech,
-          ),
-        })),
       addTech: (input) => {
         const name = input.name.trim();
         const number = input.number.trim();
@@ -924,9 +1051,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               tech.id === id
                 ? {
                     ...dropStaffPassword(tech),
-                    ...patch,
                     number,
                     name,
+                    skill: patch.skill === undefined ? tech.skill : patch.skill,
+                    payStyle: patch.payStyle === undefined ? tech.payStyle : patch.payStyle,
+                    board: patch.board === undefined ? tech.board : patch.board,
                     flagRate: patch.flagRate === undefined ? tech.flagRate : money2(Math.max(0, patch.flagRate)),
                     hourlyRate: patch.hourlyRate === undefined ? tech.hourlyRate : money2(Math.max(0, patch.hourlyRate)),
                   }
@@ -986,9 +1115,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               advisor.id === id
                 ? {
                     ...dropStaffPassword(advisor),
-                    ...patch,
                     number,
                     name,
+                    role: advisor.role,
                     base: patch.base === undefined ? advisor.base : money2(Math.max(0, patch.base)),
                     laborPercent: patch.laborPercent === undefined ? advisor.laborPercent : Math.max(0, patch.laborPercent),
                     partsPercent: patch.partsPercent === undefined ? advisor.partsPercent : Math.max(0, patch.partsPercent),
@@ -1014,15 +1143,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       updateOrder: (orderId, patch) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (order.status === "closed") return order;
+            if (lockedOrder(order)) return order;
             const status = patch.status && OPEN_STATUS_PATCH.has(patch.status) && order.status !== "booked" ? patch.status : order.status;
+            let mileage = order.mileage;
+            if (patch.mileage !== undefined && Number.isFinite(patch.mileage) && patch.mileage > 0) {
+              const blocked = mileageFloorMessage(patch.mileage, lastVisitFor(state, order));
+              if (!blocked) mileage = patch.mileage;
+            }
             return {
               ...order,
               concern: patch.concern !== undefined ? patch.concern : order.concern,
-              mileage: patch.mileage !== undefined ? patch.mileage : order.mileage,
+              mileage,
               mileageOut: patch.mileageOut !== undefined ? patch.mileageOut : order.mileageOut,
               promiseTime: patch.promiseTime !== undefined ? patch.promiseTime : order.promiseTime,
-              advisorId: patch.advisorId !== undefined ? patch.advisorId : order.advisorId,
+              advisorId: patch.advisorId !== undefined && state.advisors.some((row) => row.id === patch.advisorId) ? patch.advisorId : order.advisorId,
               bay: patch.bay !== undefined ? patch.bay : order.bay,
               status,
             };
@@ -1033,10 +1167,18 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const who = matchedStaff(state);
           return {
             orders: mapOrder(state.orders, orderId, (order) => {
-              if (isHeld(order.status)) return order;
+              if (lockedOrder(order)) return order;
               const current = order.jobs ?? [];
               const previous = current.find((job) => job.id === jobId);
-              const jobs = current.map((job) => (job.id === jobId ? { ...job, ...patch } : job));
+              const jobs = current.map((job) => {
+                if (job.id !== jobId) return job;
+                return {
+                  ...job,
+                  concern: typeof patch.concern === "string" ? patch.concern : job.concern,
+                  cause: typeof patch.cause === "string" ? patch.cause : job.cause,
+                  correction: typeof patch.correction === "string" ? patch.correction : job.correction,
+                };
+              });
               let next = { ...order, jobs, concern: concernFromJobs(jobs) };
               if (previous) {
                 const cleared: string[] = [];
@@ -1060,7 +1202,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       addJob: (orderId) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (isHeld(order.status)) return order;
+            if (lockedOrder(order)) return order;
             const current = order.jobs ?? [];
             const jobs = [...current, jobLine(uid("jb"), nextLineCode(current))];
             return { ...order, jobs, concern: concernFromJobs(jobs) };
@@ -1072,11 +1214,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return {
             orders: mapOrder(state.orders, orderId, (order) => {
               const current = order.jobs ?? [];
-              if (isHeld(order.status) || current.length < 2) return order;
+              if (lockedOrder(order) || current.length < 2) return order;
               const removed = current.find((job) => job.id === jobId);
               if (!removed) return order;
               const jobs = current.filter((job) => job.id !== jobId);
-              const started = workHadStarted(order, state.timeLogs) || Boolean(removed.cause.trim() || removed.correction.trim());
+              const started = diagnosisOnRecord(order) || Boolean(removed.cause.trim() || removed.correction.trim());
               return appendHistory(
                 { ...order, jobs, concern: concernFromJobs(jobs) },
                 entry(who, {
@@ -1094,7 +1236,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       updateWa: (orderId, patch) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) =>
-            isHeld(order.status) || order.authorizationLocked
+            lockedOrder(order) || order.authorizationLocked
               ? order
               : { ...order, wa: { ...normalizeWa(order.wa), ...patch, extras: normalizeWa(order.wa).extras } },
           ),
@@ -1102,7 +1244,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       addExtraAuth: (orderId, input) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (isHeld(order.status)) return order;
+            if (lockedOrder(order)) return order;
             if (!input.date || !input.time || !input.employee.trim() || !input.person.trim() || input.amount <= 0) return order;
             const wa = normalizeWa(order.wa);
             const extra: ExtraAuth = {
@@ -1125,40 +1267,39 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const state = get();
         const order = state.orders.find((row) => row.id === orderId);
         if (!order) return { ok: false, error: "That repair order is not on this store." };
+        if (order.authorizationLocked && order.status !== "closed") return { ok: false, error: "This repair order is closed and can't be changed." };
         const who = closingAdvisor(state);
         if (!who) return { ok: false, error: "Only an advisor or service manager can close a repair order." };
+        const customer = state.customers.find((row) => row.id === order.customerId);
+        const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
         const result = closeRepairOrder(
           order,
           state.parts,
           {
-            customer: state.customers.find((row) => row.id === order.customerId),
-            vehicle: state.vehicles.find((row) => row.id === order.vehicleId),
+            customer,
+            vehicle,
             techs: state.techs,
             advisors: state.advisors,
             logs: state.timeLogs,
+            lastVisit: lastVisitFor(state, order),
           },
           who,
           now().toISOString(),
           today(),
         );
         if ("error" in result) return { ok: false, error: result.error };
-        const copy = closedRecord(
-          result.order,
-          state.customers.find((row) => row.id === order.customerId),
-          state.vehicles.find((row) => row.id === order.vehicleId),
-        );
-        copy.id = uid("hist");
+        const stamped = withSnapshot({ ...result.order, authorizationLocked: true }, customer, vehicle);
         set((current) => ({
           parts: result.parts,
-          closedHistory: [copy, ...current.closedHistory.filter((row) => row.orderId !== orderId)],
-          orders: mapOrder(current.orders, orderId, () => result.order),
+          closedHistory: appendClosedVersion(current.closedHistory, stamped, customer, vehicle),
+          orders: mapOrder(current.orders, orderId, () => stamped),
         }));
         return { ok: true, error: null };
       },
       bookOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order) return state;
+          if (!order || lockedOrder(order)) return state;
           const next = bookRepairOrder(order);
           if (!next) return state;
           return { orders: mapOrder(state.orders, orderId, () => next) };
@@ -1166,125 +1307,29 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       unbookOrder: (orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order) return state;
+          if (!order || lockedOrder(order)) return state;
           const next = unbookRepairOrder(order);
           if (!next) return state;
           return { orders: mapOrder(state.orders, orderId, () => next) };
         }),
-      reopenOrder: (orderId, reason) => {
-        const state = get();
-        const order = state.orders.find((row) => row.id === orderId);
-        const gate = closedEditGate(state, order, reason);
-        if (!gate.ok) return gate;
-        const result = reopenRepairOrder(order!, state.parts);
-        if (!result) return { ok: false, error: "That repair order cannot be reopened." };
-        const row = entry(gate.who, {
-          kind: "reopened",
-          field: "status",
-          before: `closed${order!.closedBy ? ` by ${order!.closedBy}` : ""}${order!.closedAt ? ` at ${order!.closedAt}` : ""}`,
-          after: "booked",
-          reason: reason.trim(),
-          text: `Reopened. ${reason.trim()}`,
-        });
-        set((current) => ({
-          parts: result.parts,
-          orders: mapOrder(current.orders, orderId, () => appendHistory(result.order, row)),
-        }));
-        return { ok: true, error: null };
-      },
-      amendClosedOrder: (orderId, reason, change) => {
-        const state = get();
-        const order = state.orders.find((row) => row.id === orderId);
-        const gate = closedEditGate(state, order, reason);
-        if (!gate.ok) return gate;
-        if (change.field === "reopen") return get().reopenOrder(orderId, reason);
-        const current = order!;
-        let next = current;
-        let field: string = change.field;
-        let before = "";
-        let after = "";
-        if (change.field === "concern" || change.field === "closeNote" || change.field === "promiseTime" || change.field === "advisorId") {
-          before = String(current[change.field] ?? "");
-          after = change.value;
-          next = { ...current, [change.field]: change.value };
-          if (change.field === "concern") next = { ...next, jobs: (current.jobs ?? []).map((job, index) => index === 0 ? { ...job, concern: change.value } : job) };
-        } else if (change.field === "mileage" || change.field === "mileageOut") {
-          before = String(current[change.field] ?? "");
-          after = String(change.value);
-          next = { ...current, [change.field]: change.value };
-        } else if (change.field === "bay") {
-          before = current.bay;
-          after = change.value;
-          next = { ...current, bay: change.value };
-        } else if (change.field === "labor") {
-          const line = current.labor.find((row) => row.id === change.lineId);
-          if (!line) return { ok: false, error: "That labor line is not on this repair order." };
-          if (change.key === "hours" && !(Number(change.value) >= 0)) return { ok: false, error: "Labor hours cannot be negative." };
-          before = String(line[change.key] ?? "");
-          after = String(change.value);
-          field = `labor ${line.opcode} ${change.key}`;
-          next = { ...current, labor: current.labor.map((row) => row.id === change.lineId ? { ...row, [change.key]: change.value } : row) };
-        } else if (change.field === "part") {
-          const line = current.parts.find((row) => row.id === change.lineId);
-          if (!line) return { ok: false, error: "That part line is not on this repair order." };
-          before = String(line[change.key] ?? "");
-          after = String(change.value);
-          field = `part ${line.number} ${change.key}`;
-          next = { ...current, parts: current.parts.map((row) => row.id === change.lineId ? { ...row, [change.key]: change.value } : row) };
-        } else if (change.field === "fee") {
-          const line = (current.fees ?? []).find((row) => row.id === change.lineId);
-          if (!line) return { ok: false, error: "That fee is not on this repair order." };
-          before = String(line[change.key] ?? "");
-          after = String(change.value);
-          field = `fee ${line.name} ${change.key}`;
-          next = { ...current, fees: current.fees.map((row) => row.id === change.lineId ? { ...row, [change.key]: change.key === "amount" ? Number(change.value) : change.value } : row) };
-        } else if (change.field === "job") {
-          const line = (current.jobs ?? []).find((row) => row.id === change.jobId);
-          if (!line) return { ok: false, error: "That line is not on this repair order." };
-          before = line[change.key];
-          after = change.value;
-          field = `line ${line.code} ${change.key}`;
-          const jobs = (current.jobs ?? []).map((row) => row.id === change.jobId ? { ...row, [change.key]: change.value } : row);
-          next = { ...current, jobs, concern: concernFromJobs(jobs) };
-        } else if (change.field === "wa") {
-          const wa = normalizeWa(current.wa);
-          before = String(wa[change.key] ?? "");
-          after = String(change.value);
-          field = `authorization ${change.key}`;
-          next = { ...current, wa: { ...wa, [change.key]: change.value }, authorizationLocked: true };
-        }
-        if (before === after) return { ok: true, error: null };
-        const row = entry(gate.who, {
-          kind: "amended",
-          field,
-          before,
-          after,
-          reason: reason.trim(),
-          text: `${field}: ${before} → ${after}. ${reason.trim()}`,
-        });
-        set((shop) => ({ orders: mapOrder(shop.orders, orderId, (live) => appendHistory({ ...next, history: live.history }, row)) }));
-        return { ok: true, error: null };
-      },
       closeOrderWithNoWork: (orderId, note) => {
         const state = get();
         const order = state.orders.find((row) => row.id === orderId);
         if (!order) return { ok: false, error: "That repair order is not on this store." };
+        if (order.authorizationLocked && order.status !== "closed") return { ok: false, error: "This repair order is closed and can't be changed." };
         const who = closingAdvisor(state);
         if (!who) return { ok: false, error: "Only an advisor or service manager can close a repair order." };
+        const customer = state.customers.find((row) => row.id === order.customerId);
+        const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
         const error = noWorkCloseError(order, state.timeLogs, note, {
-          customer: state.customers.find((row) => row.id === order.customerId),
-          vehicle: state.vehicles.find((row) => row.id === order.vehicleId),
+          customer,
+          vehicle,
+          lastVisit: lastVisitFor(state, order),
         });
         if (error) return { ok: false, error };
-        const next = closeRepairOrderWithNoWork(order, note, who, now().toISOString(), today());
-        const copy = closedRecord(
-          next,
-          state.customers.find((row) => row.id === order.customerId),
-          state.vehicles.find((row) => row.id === order.vehicleId),
-        );
-        copy.id = uid("hist");
+        const next = withSnapshot({ ...closeRepairOrderWithNoWork(order, note, who, now().toISOString(), today()), authorizationLocked: true }, customer, vehicle);
         set((current) => ({
-          closedHistory: [copy, ...current.closedHistory],
+          closedHistory: appendClosedVersion(current.closedHistory, next, customer, vehicle),
           orders: mapOrder(current.orders, orderId, () => next),
         }));
         return { ok: true, error: null };
@@ -1292,16 +1337,34 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       addLabor: (orderId, line) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (isHeld(order.status) || !(line.hours >= 0)) return order;
+            if (lockedOrder(order) || !(line.hours >= 0)) return order;
             return { ...order, labor: [...order.labor, { ...line, id: uid("lb") }] };
           }),
         })),
       updateLabor: (orderId, lineId, patch) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (isHeld(order.status)) return order;
-            if (patch.hours !== undefined && !(patch.hours >= 0)) return order;
-            return { ...order, labor: order.labor.map((line) => (line.id === lineId ? { ...line, ...patch } : line)) };
+            if (lockedOrder(order)) return order;
+            return {
+              ...order,
+              labor: order.labor.map((line) => {
+                if (line.id !== lineId) return line;
+                const next = { ...line };
+                if (typeof patch.opcode === "string") next.opcode = patch.opcode;
+                if (typeof patch.description === "string") next.description = patch.description;
+                if (typeof patch.payType === "string") next.payType = patch.payType;
+                if (typeof patch.techId === "string") next.techId = patch.techId;
+                if (patch.hours !== undefined) {
+                  if (!Number.isFinite(patch.hours) || patch.hours < 0) return line;
+                  next.hours = patch.hours;
+                }
+                if (patch.rate !== undefined) {
+                  if (!Number.isFinite(patch.rate) || patch.rate < 0) return line;
+                  next.rate = patch.rate;
+                }
+                return next;
+              }),
+            };
           }),
         })),
       removeLabor: (orderId, lineId) =>
@@ -1309,7 +1372,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const who = matchedStaff(state);
           return {
             orders: mapOrder(state.orders, orderId, (order) => {
-              if (isHeld(order.status)) return order;
+              if (lockedOrder(order)) return order;
               const line = order.labor.find((row) => row.id === lineId);
               if (!line) return order;
               const entry: RoHistoryEntry = {
@@ -1320,7 +1383,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 field: line.opcode || "labor",
                 before: `${line.opcode} ${line.hours}h`,
                 after: "",
-                blocksNoWork: workHadStarted(order, state.timeLogs),
+                blocksNoWork: diagnosisOnRecord(order),
                 text: `Removed labor line ${line.opcode || "labor"}${line.description ? ` — ${line.description}` : ""}`,
               };
               return { ...order, labor: order.labor.filter((row) => row.id !== lineId), history: [...(order.history ?? []), entry] };
@@ -1330,7 +1393,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       clockIn: (techId, orderId) =>
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
-          if (!order || isSealed(order.status)) return state;
+          if (!order || lockedOrder(order) || isSealed(order.status)) return state;
           if (!order.labor.some((line) => line.techId === techId)) return state;
           const now = localStamp();
           const open = state.timeLogs.find((row) => row.techId === techId && row.endedAt === null && row.orderId === orderId);
@@ -1344,22 +1407,52 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }),
       clockOut: (techId) =>
         set((state) => {
-          const now = localStamp();
-          if (!state.timeLogs.some((row) => row.techId === techId && row.endedAt === null)) return state;
-          return { timeLogs: state.timeLogs.map((row) => (row.techId === techId && row.endedAt === null ? { ...row, endedAt: now } : row)) };
+          const open = state.timeLogs.filter((row) => row.techId === techId && row.endedAt === null);
+          if (open.length === 0) return state;
+          const onClosed = open.some((row) => {
+            const order = state.orders.find((item) => item.id === row.orderId);
+            return Boolean(order && lockedOrder(order));
+          });
+          if (onClosed) return state;
+          const stamp = localStamp();
+          return { timeLogs: state.timeLogs.map((row) => (row.techId === techId && row.endedAt === null ? { ...row, endedAt: stamp } : row)) };
         }),
       addPartLine: (orderId, line) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (isHeld(order.status)) return order;
+            if (lockedOrder(order)) return order;
             return { ...order, parts: [...order.parts, { ...line, condition: line.condition ?? "new", id: uid("pt") }] };
           }),
         })),
       updatePartLine: (orderId, lineId, patch) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (isHeld(order.status)) return order;
-            return { ...order, parts: order.parts.map((line) => (line.id === lineId ? { ...line, ...patch } : line)) };
+            if (lockedOrder(order)) return order;
+            return {
+              ...order,
+              parts: order.parts.map((line) => {
+                if (line.id !== lineId) return line;
+                const next = { ...line };
+                if (typeof patch.partId === "string" || patch.partId === null) next.partId = patch.partId;
+                if (typeof patch.number === "string") next.number = patch.number;
+                if (typeof patch.description === "string") next.description = patch.description;
+                if (typeof patch.payType === "string") next.payType = patch.payType;
+                if (patch.condition === "new" || patch.condition === "used" || patch.condition === "rebuilt") next.condition = patch.condition;
+                if (patch.qty !== undefined) {
+                  if (!Number.isFinite(patch.qty) || patch.qty < 1) return line;
+                  next.qty = patch.qty;
+                }
+                if (patch.cost !== undefined) {
+                  if (!Number.isFinite(patch.cost) || patch.cost < 0) return line;
+                  next.cost = patch.cost;
+                }
+                if (patch.price !== undefined) {
+                  if (!Number.isFinite(patch.price) || patch.price < 0) return line;
+                  next.price = patch.price;
+                }
+                return next;
+              }),
+            };
           }),
         })),
       removePartLine: (orderId, lineId) =>
@@ -1367,7 +1460,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const who = matchedStaff(state);
           return {
             orders: mapOrder(state.orders, orderId, (order) => {
-              if (isHeld(order.status)) return order;
+              if (lockedOrder(order)) return order;
               const line = order.parts.find((row) => row.id === lineId);
               if (!line) return order;
               const entry: RoHistoryEntry = {
@@ -1378,7 +1471,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 field: line.number || "part",
                 before: `${line.number} ${line.qty}`,
                 after: "",
-                blocksNoWork: workHadStarted(order, state.timeLogs),
+                blocksNoWork: diagnosisOnRecord(order),
                 text: `Removed part line ${line.number || line.description || "part"}${line.description ? ` — ${line.description}` : ""}`,
               };
               return { ...order, parts: order.parts.filter((row) => row.id !== lineId), history: [...(order.history ?? []), entry] };
@@ -1483,7 +1576,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       attachInspection: (orderId) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) =>
-            order.inspection || isHeld(order.status)
+            order.inspection || lockedOrder(order)
               ? order
               : { ...order, inspection: blankSheet(order.labor[0]?.techId || state.techs[0]?.id || "") },
           ),
@@ -1491,7 +1584,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       setInspectionTech: (orderId, techId) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) =>
-            !order.inspection || isHeld(order.status) ? order : { ...order, inspection: { ...order.inspection, techId } },
+            !order.inspection || lockedOrder(order) ? order : { ...order, inspection: { ...order.inspection, techId } },
           ),
         })),
       setInspectionPoint: (orderId, pointId, patch) =>
@@ -1499,7 +1592,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const who = matchedStaff(state);
           return {
             orders: mapOrder(state.orders, orderId, (order) => {
-              if (!order.inspection || isHeld(order.status)) return order;
+              if (!order.inspection || lockedOrder(order)) return order;
               const previous = order.inspection.items.find((item) => item.id === pointId);
               const items = order.inspection.items.map((item) => (item.id === pointId ? { ...item, ...patch } : item));
               let next: RepairOrder = { ...order, inspection: { ...order.inspection, items } };
@@ -1521,6 +1614,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           };
         }),
       createOrder: (input) => {
+        const state = get();
+        const vehicle = state.vehicles.find((row) => row.id === input.vehicleId);
+        const lastVisit = highestPriorMileage(shopsFrom(state), vehicle);
+        if (!Number.isFinite(input.mileage) || input.mileage <= 0 || mileageFloorMessage(input.mileage, lastVisit)) return "";
         const id = uid("ro");
         set((state) => {
           const number = nextOrderNumber(state);

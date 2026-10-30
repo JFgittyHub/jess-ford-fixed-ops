@@ -1,4 +1,5 @@
 import { feeTotal } from "./format";
+import { mileageFloorMessage, type MileageVisit } from "./mileage";
 import { closeGaps, orderMoney } from "./metrics";
 import type { Advisor, ClosedRecord, Customer, FeeLine, PartSku, RepairOrder, Tech, TimeLog, Vehicle } from "./types";
 import { isFullVin } from "./vin";
@@ -88,24 +89,9 @@ export function invoiceRepairOrder(
   return { order, parts };
 }
 
-export function reopenRepairOrder(order: RepairOrder, parts: PartSku[]): { order: RepairOrder; parts: PartSku[] } | null {
-  if (order.status !== "closed") return null;
-  const nextParts = order.stockApplied ? applyPartStock(parts, order, 1, order.invoicedOn ?? "") : parts;
-  return {
-    order: {
-      ...order,
-      status: "booked",
-      closeType: null,
-      closeNote: "",
-      closedBy: "",
-      closedById: "",
-      closedAt: null,
-      invoicedOn: null,
-      stockApplied: false,
-      droppedFeesNote: "",
-    },
-    parts: nextParts,
-  };
+/** Closing is final. A closed repair order stays closed, including for a service manager. */
+export function reopenRepairOrder(_order: RepairOrder, _parts: PartSku[]): null {
+  return null;
 }
 
 /** Cent tolerance for a $0 ticket. */
@@ -153,15 +139,35 @@ function inspectionHasResults(order: RepairOrder) {
   return items.some((item) => item.status !== null || item.reading.trim() !== "" || item.note.trim() !== "");
 }
 
-/** Clock time, cause, correction, or a multi-point result means work started. */
-export function workHadStarted(order: RepairOrder, logs: TimeLog[]) {
-  if (logs.some((log) => log.orderId === order.id)) return true;
+/** Cause, correction, a multi-point result, or a logged removal. Clock time is separate. */
+export function diagnosisOnRecord(order: RepairOrder) {
   if ((order.jobs ?? []).some((job) => job.cause.trim() || job.correction.trim())) return true;
   if (inspectionHasResults(order)) return true;
   return (order.history ?? []).some((entry) => entry.kind === "diagnosis-cleared" || entry.blocksNoWork);
 }
 
-export const DIAGNOSIS_BLOCK = "Inspection or diagnosis is recorded — close it with an accurate invoice.";
+/** Clock time, cause, correction, or a multi-point result means work started. */
+export function workHadStarted(order: RepairOrder, logs: TimeLog[]) {
+  if (logs.some((log) => log.orderId === order.id)) return true;
+  return diagnosisOnRecord(order);
+}
+
+function recordedAddress(order: RepairOrder) {
+  const own = normalizeWa(order.wa).address.trim();
+  if (own) return own;
+  for (const row of order.laterAuthorizations ?? []) {
+    if (row.address.trim()) return row.address.trim();
+  }
+  return "";
+}
+
+function estimateAuthorized(order: RepairOrder) {
+  if (waLimit(normalizeWa(order.wa)) !== null) return true;
+  return (order.laterAuthorizations ?? []).some((row) => row.initials.trim() && Number(row.estimate) > 0);
+}
+
+export const DIAGNOSIS_BLOCK = "Inspection or diagnosis is recorded — close it with an accurate invoice";
+export const CLOCK_BLOCK = "Clock time is on this repair order — close it with an accurate invoice";
 export const AMEND_REASON_SHORT = "Add a reason of at least 10 characters.";
 export const AMEND_ROLE_REQUIRED = "Only a service manager can change a closed repair order.";
 
@@ -173,7 +179,7 @@ export function amendReasonError(reason: string) {
 export function noWorkBlockers(
   order: RepairOrder,
   logs: TimeLog[],
-  identity?: { customer?: Customer; vehicle?: Vehicle },
+  identity?: { customer?: Customer; vehicle?: Vehicle; lastVisit?: MileageVisit | null },
 ): string[] {
   const blocks: string[] = [];
   if (order.labor.length > 0) {
@@ -184,22 +190,23 @@ export function noWorkBlockers(
     const names = order.parts.map((line) => line.number || line.description || "part").join(", ");
     blocks.push(`Remove ${lineCountLabel(order.parts.length, "part")} (${names})`);
   }
-  const diagnosis =
-    (order.jobs ?? []).some((job) => job.cause.trim() || job.correction.trim())
-    || inspectionHasResults(order)
-    || (order.history ?? []).some((entry) => entry.kind === "diagnosis-cleared" || (entry.blocksNoWork && (entry.kind === "labor-removed" || entry.kind === "part-removed" || entry.kind === "job-removed")));
-  if (diagnosis) blocks.push(DIAGNOSIS_BLOCK);
+  if (diagnosisOnRecord(order)) blocks.push(DIAGNOSIS_BLOCK);
   const extraFees = (order.fees ?? []).filter((fee) => !isDefaultShopFee(fee));
   if (extraFees.length === 1) blocks.push(`Remove the ${extraFees[0].name} fee`);
   else if (extraFees.length > 1) blocks.push(`Remove ${extraFees.length} fees (${extraFees.map((fee) => fee.name).join(", ")})`);
-  if (logs.some((log) => log.orderId === order.id)) blocks.push("Clear the technician clock time");
+  if (logs.some((log) => log.orderId === order.id)) blocks.push(CLOCK_BLOCK);
   if ((order.payments ?? []).some((pay) => Math.abs(pay.amount) > CENT)) blocks.push("A payment is on this repair order");
   if (!identity?.customer?.name.trim()) blocks.push("Add the customer name");
-  if (!normalizeWa(order.wa).address.trim()) blocks.push("Add the address");
+  if (!recordedAddress(order)) blocks.push("Add the address");
   if (!identity?.customer?.phone.trim()) blocks.push("Add the customer phone");
   const vehicle = identity?.vehicle;
   if (!vehicle || !vehicle.year || !vehicle.model.trim() || !vehicle.make?.trim()) blocks.push("Add the year, make, and model");
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) blocks.push("Add the mileage in");
+  const belowLast = mileageFloorMessage(order.mileage, identity?.lastVisit ?? null);
+  if (belowLast) blocks.push(belowLast);
+  if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut <= 0 || order.mileageOut < order.mileage) {
+    blocks.push("Add the mileage out");
+  }
   return blocks;
 }
 
@@ -207,7 +214,7 @@ export function noWorkCloseError(
   order: RepairOrder,
   logs: TimeLog[],
   note: string,
-  identity?: { customer?: Customer; vehicle?: Vehicle },
+  identity?: { customer?: Customer; vehicle?: Vehicle; lastVisit?: MileageVisit | null },
 ): string | null {
   if (!NO_WORK_STATUSES.has(order.status)) return NO_WORK_NOT_OPEN;
   const blocks = noWorkBlockers(order, logs, identity);
@@ -269,6 +276,7 @@ export interface AdvisorCloseContext {
   techs: Tech[];
   advisors: Advisor[];
   logs: TimeLog[];
+  lastVisit?: MileageVisit | null;
 }
 
 /** Exact list of fields still missing before an advisor can close a booked repair order. */
@@ -277,14 +285,26 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   const jobs = order.jobs ?? [];
   const concern = (order.concern || jobs.map((job) => job.concern).join(" ")).trim();
   if (!concern) gaps.push("Concern");
-  if (!jobs.some((job) => job.cause.trim())) gaps.push("Cause");
-  if (!jobs.some((job) => job.correction.trim())) gaps.push("Correction");
+  const hasWork = order.labor.length > 0 || order.parts.length > 0;
+  if (hasWork) {
+    for (const job of jobs) {
+      if (!job.concern.trim()) gaps.push(`Concern on line ${job.code}`);
+      if (!job.cause.trim()) gaps.push(`Cause on line ${job.code}`);
+      if (!job.correction.trim()) gaps.push(`Correction on line ${job.code}`);
+    }
+  } else {
+    if (!jobs.some((job) => job.concern.trim() || job.cause.trim())) gaps.push("Concern");
+    if (!jobs.some((job) => job.cause.trim())) gaps.push("Cause");
+    if (!jobs.some((job) => job.correction.trim())) gaps.push("Correction");
+  }
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) gaps.push("Mileage in");
+  const belowLast = mileageFloorMessage(order.mileage, ctx.lastVisit ?? null);
+  if (belowLast) gaps.push(belowLast);
   if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut < order.mileage) gaps.push("Mileage out");
   if (!isFullVin(ctx.vehicle?.vin ?? "")) gaps.push("VIN");
   const nameParts = (ctx.customer?.name ?? "").trim().split(/\s+/).filter(Boolean);
   if (nameParts.length < 2) gaps.push("Customer first and last name");
-  if (!normalizeWa(order.wa).address.trim()) gaps.push("Address");
+  if (!recordedAddress(order)) gaps.push("Address");
   if (!ctx.customer?.phone.trim()) gaps.push("Customer phone");
   if (!ctx.vehicle?.year || !ctx.vehicle.model.trim()) gaps.push("Year, make, and model");
   if (!ctx.vehicle?.make?.trim()) gaps.push("Make");
@@ -302,7 +322,7 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   if (!Number.isFinite(money.parts)) gaps.push("Parts charge");
   if (!Number.isFinite(money.total)) gaps.push("Total charge");
   if (!Number.isFinite(order.taxRate) || !Number.isFinite(money.tax)) gaps.push("Sales tax");
-  if (waLimit(normalizeWa(order.wa)) === null) gaps.push("Estimate authorization");
+  if (!estimateAuthorized(order)) gaps.push("Estimate authorization");
   gaps.push(...closeGaps(order, ctx.techs, ctx.advisors, ctx.logs));
   return gaps;
 }
@@ -316,7 +336,7 @@ export function closeRepairOrder(
   closedAt: string,
   closedOn: string,
 ): { order: RepairOrder; parts: PartSku[] } | { error: string } {
-  if (order.status !== "booked") return { error: "Only a booked repair order can be closed." };
+  if (order.status !== "booked" || order.authorizationLocked) return { error: "Only a booked repair order can be closed." };
   if (!who.id || !who.name.trim()) return { error: CLOSE_ROLE_REQUIRED };
   const gaps = advisorCloseGaps(order, ctx);
   if (gaps.length > 0) return { error: gaps.join("\n") };

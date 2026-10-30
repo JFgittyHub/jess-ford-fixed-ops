@@ -160,7 +160,7 @@ describe("round 4 close rules", () => {
     shop.getState().setWorkingAs("megan");
     const id = blankOrder(shop);
     shop.setState({
-      orders: shop.getState().orders.map((row) => (row.id === id ? { ...row, status: "booked" as const } : row)),
+      orders: shop.getState().orders.map((row) => (row.id === id ? { ...row, status: "booked" as const, mileageOut: null } : row)),
     });
     const blocked = shop.getState().closeOrder(id);
     assert.equal(blocked.ok, false);
@@ -255,7 +255,8 @@ function blankOrder(shop: ReturnType<typeof createShopStore>) {
     vehicleId: vehicle.id,
     advisorId: state.advisors[0].id,
     lines: [{ concern: "Never showed" }],
-    mileage: 10,
+    mileage: 250000,
+    mileageOut: 250000,
     promiseTime: "",
     labor: [],
   });

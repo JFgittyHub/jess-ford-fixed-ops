@@ -1,5 +1,5 @@
 import { clockTime, feeCharge, roStatusLabel, usd } from "@/lib/format";
-import { orderMoney } from "@/lib/metrics";
+import { orderMoney, vehicleTitle } from "@/lib/metrics";
 import { payLabel } from "@/lib/pay";
 import { useShop } from "@/lib/store";
 import { normalizeWa, vinTail, waLimit } from "@/lib/wa";
@@ -19,8 +19,11 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
   const advisor = useShop((state) => state.advisors.find((row) => row.id === order?.advisorId));
   const techs = useShop((state) => state.techs);
   const payTypes = useShop((state) => state.payTypes);
+  const closedRows = useShop((state) => state.closedHistory.filter((row) => row.orderId === orderId));
 
   if (!order) return null;
+  const snap = order.closeSnapshot;
+  const version = closedRows.reduce((max, row) => Math.max(max, row.version ?? 1), order.status === "closed" ? 1 : 0);
   const money = orderMoney(order);
   const wa = normalizeWa(order.wa);
   const limit = waLimit(wa);
@@ -36,7 +39,7 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
         </div>
         <div>
           <p>Opened {order.openedOn}</p>
-          <p>{order.closeType === "no_work" && order.status === "closed" ? "Closed — no work ($0)" : order.status === "closed" ? `Closed ${order.invoicedOn ?? ""}`.trim() : roStatusLabel(order)}</p>
+          <p>{order.closeType === "no_work" && order.status === "closed" ? "Closed — no work ($0)" : order.status === "closed" ? `Closed ${order.invoicedOn ?? ""}`.trim() : roStatusLabel(order)}{order.status === "closed" ? ` · Version ${version}` : ""}</p>
           {order.closeType === "no_work" && order.closeNote ? <p>{order.closeNote}</p> : null}
           <p>{order.promiseTime ? `Promise ${clockTime(order.promiseTime)}` : "No promise time"}</p>
           <p>Advisor {advisor?.name ?? "—"}</p>
@@ -46,14 +49,14 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
       <section className="ro-split">
         <div>
           <h2>Customer</h2>
-          <p>{customer?.name ?? "—"}</p>
-          <p>{customer?.phone}</p>
-          <p>{wa.address || "No address on the ticket"}</p>
+          <p>{snap?.customerName || customer?.name || "—"}</p>
+          <p>{snap?.phone || customer?.phone}</p>
+          <p>{(snap?.address ?? wa.address) || "No address on the ticket"}</p>
         </div>
         <div>
           <h2>Vehicle</h2>
-          <p>{vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "—"}</p>
-          <p>{wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : ""}</p>
+          <p>{snap ? vehicleTitle(snap.year, snap.make, snap.model) : vehicle ? vehicleTitle(vehicle.year, vehicle.make || "Ford", vehicle.model) : "—"}</p>
+          <p>{(snap?.plate || wa.plate) ? `Plate ${snap?.plate || wa.plate}` : (snap?.vin || vehicle?.vin) ? `VIN ${vinTail(snap?.vin || vehicle?.vin || "")}` : ""}</p>
           <p>In {order.mileage.toLocaleString("en-US")} miles</p>
           <p>Out {order.mileageOut != null ? `${order.mileageOut.toLocaleString("en-US")} miles` : "—"}</p>
         </div>

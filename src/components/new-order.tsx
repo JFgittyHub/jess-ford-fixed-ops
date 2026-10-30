@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
+import { highestPriorMileage, mileageFloorMessage } from "@/lib/mileage";
 import { rateFor } from "@/lib/pay";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { useShop } from "@/lib/store";
@@ -67,7 +68,8 @@ function NewOrderForm({
   const [promiseTime, setPromiseTime] = useState("16:00");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [year, setYear] = useState("2022");
+  const [year, setYear] = useState("");
+  const [formError, setFormError] = useState("");
   const [model, setModel] = useState("F-150 XLT");
 
   const seeded = preset?.lines?.map((line) => line.concern.trim()).filter(Boolean).join("\n") || preset?.concern || "";
@@ -94,17 +96,29 @@ function NewOrderForm({
           let nextCustomer = customerId;
           let nextVehicle = resolvedVehicle;
           if (mode === "new") {
-            if (!name.trim() || !model.trim()) return;
+            const parsedYear = Number(year);
+            if (!name.trim() || !model.trim() || !Number.isFinite(parsedYear) || parsedYear <= 0) return;
             const created = shop.createCustomer({
               name,
               phone,
-              year: Number(year) || 2022,
+              year: parsedYear,
               model,
             });
             nextCustomer = created.customerId;
             nextVehicle = created.vehicleId;
           }
           if (!nextCustomer || !nextVehicle || written.length === 0) return;
+          const miles = Number(mileage);
+          const vehicle = shop.vehicles.find((row) => row.id === nextVehicle);
+          const floor = mileageFloorMessage(miles, highestPriorMileage(Object.values(shop.stores ?? {}), vehicle));
+          if (!Number.isFinite(miles) || miles <= 0) {
+            setFormError("Mileage in has to be greater than zero.");
+            return;
+          }
+          if (floor) {
+            setFormError(floor);
+            return;
+          }
           const booked = preset?.appointmentId
             ? shop.appointments.find((row) => row.id === preset.appointmentId)
             : undefined;
@@ -130,6 +144,11 @@ function NewOrderForm({
               }];
             }),
           });
+          if (!id) {
+            setFormError(floor ?? "Mileage in has to be greater than zero.");
+            return;
+          }
+          setFormError("");
           if (preset?.appointmentId) shop.linkAppointment(preset.appointmentId, id);
           onClose();
         }}
@@ -160,7 +179,7 @@ function NewOrderForm({
             <Field label="Name"><input className="field" value={name} onChange={(event) => setName(event.target.value)} required /></Field>
             <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 010-0142" /></Field>
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Year"><input className="field tabular-nums" type="number" min={1990} max={2027} value={year} onChange={(event) => setYear(event.target.value)} /></Field>
+              <Field label="Year"><input className="field tabular-nums" type="number" min={1990} max={2027} placeholder="Year" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
               <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} /></Field>
             </div>
           </>
@@ -202,6 +221,7 @@ function NewOrderForm({
             </select>
           </Field>
         </div>
+        {formError ? <p role="alert" className="text-sm text-[#8a3b2a]">{formError}</p> : null}
         <Button tone="primary" type="submit">Open the RO</Button>
       </form>
     </Modal>

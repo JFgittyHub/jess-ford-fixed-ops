@@ -36,9 +36,9 @@ export function deskActor(state: {
   return "customer";
 }
 
-/** Brandon, Oct 30 2026: only a service manager may change a closed repair order. */
-export function mayAmendClosedOrder(actor: DeskActor): boolean {
-  return actor === "service-manager";
+/** Closing is final. No role, including a service manager, may change a closed repair order. */
+export function mayAmendClosedOrder(_actor: DeskActor): boolean {
+  return false;
 }
 
 export const CANCEL_NOTE_MAX = 500;

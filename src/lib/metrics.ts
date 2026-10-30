@@ -166,6 +166,16 @@ export function closeGaps(order: RepairOrder, techs: Tech[], advisors: Advisor[]
   return gaps;
 }
 
+/** Year, make, and model. A model that already starts with the make is not repeated. */
+export function vehicleTitle(year: number | string, make: string, model: string) {
+  const makeText = make.trim();
+  let modelText = model.trim();
+  if (makeText && modelText.toLowerCase().startsWith(`${makeText.toLowerCase()} `)) {
+    modelText = modelText.slice(makeText.length).trim();
+  }
+  return [year || "", makeText, modelText].filter((part) => String(part).trim()).join(" ");
+}
+
 export function closedRecord(order: RepairOrder, customer?: Customer, vehicle?: Vehicle): ClosedRecord {
   const money = orderMoney(order);
   const wa = normalizeWa(order.wa);
@@ -180,7 +190,7 @@ export function closedRecord(order: RepairOrder, customer?: Customer, vehicle?: 
     address: wa.address,
     plate: wa.plate,
     vin: vehicle?.vin ?? "",
-    vehicle: vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "",
+    vehicle: vehicle ? vehicleTitle(vehicle.year, vehicle.make || "Ford", vehicle.model) : "",
     mileage: order.mileage,
     mileageOut: order.mileageOut ?? null,
     concern: order.concern,

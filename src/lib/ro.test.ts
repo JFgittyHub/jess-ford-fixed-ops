@@ -209,12 +209,9 @@ describe("status flow and parts stock", () => {
     const again = closeRepairOrder(closed.order, closed.parts, closeContext(), who, at, "2026-10-19");
     assert.ok("error" in again);
 
-    const reopened = reopenRepairOrder(closed.order, closed.parts);
-    assert.equal(reopened?.order.status, "booked");
-    assert.equal(reopened?.order.invoicedOn, null);
-    assert.equal(reopened?.order.closedBy, "");
-    assert.equal(reopened?.order.stockApplied, false);
-    assert.equal(reopened?.parts[0]?.onHand, 4);
+    assert.equal(reopenRepairOrder(closed.order, closed.parts), null);
+    assert.equal(closed.order.status, "closed");
+    assert.equal(closed.parts[0]?.onHand, 2);
   });
 
   it("lets on-hand go negative so a reopen does not invent parts", () => {
@@ -223,8 +220,8 @@ describe("status flow and parts stock", () => {
     const closed = closeRepairOrder(booked, [bin(1)], closeContext(), who, at, "2026-10-19");
     assert.ok(!("error" in closed));
     assert.equal(closed.parts[0]?.onHand, -1);
-    const reopened = reopenRepairOrder(closed.order, closed.parts);
-    assert.equal(reopened?.parts[0]?.onHand, 1);
+    assert.equal(reopenRepairOrder(closed.order, closed.parts), null);
+    assert.equal(closed.parts[0]?.onHand, -1);
   });
 
   it("does not move stock twice", () => {

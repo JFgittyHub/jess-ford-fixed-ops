@@ -63,7 +63,8 @@ describe("round 5", () => {
       vehicleId: seed.vehicleId,
       advisorId: "megan",
       lines: [{ concern: "Oil and leave" }],
-      mileage: 12000,
+      mileage: 250000,
+      mileageOut: 250000,
       promiseTime: "",
       labor: [{ opcode: op.opcode, description: op.description, hours: op.hours, rate: 189, payType: op.payType, techId: seed.techId }],
     });
@@ -81,77 +82,42 @@ describe("round 5", () => {
     assert.equal(cancelled.ok, true, cancelled.error ?? "");
   });
 
-  it("refuses reopen to an advisor and a technician, and logs a service manager reopen", () => {
+  it("leaves a closed repair order closed for an advisor, a technician, and a service manager", () => {
     pinClock("2026-10-20T19:00:00.000Z");
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
     const id = readyBlank(shop);
     assert.equal(shop.getState().closeOrderWithNoWork(id, "Customer left before any work").ok, true);
     const historyId = shop.getState().closedHistory.find((row) => row.orderId === id)?.id;
-    const address = shop.getState().orders.find((row) => row.id === id)?.wa?.address;
-    assert.equal(shop.getState().reopenOrder(id, "The customer came back later").ok, false);
-    shop.getState().setWorkingAs("marcus");
-    assert.equal(shop.getState().reopenOrder(id, "The customer came back later").ok, false);
-    assert.equal(shop.getState().orders.find((row) => row.id === id)?.status, "closed");
-    shop.getState().setWorkingAs("derek");
-    assert.equal(shop.getState().reopenOrder(id, "short").ok, false);
-    const opened = shop.getState().reopenOrder(id, "The customer came back later");
-    assert.equal(opened.ok, true, opened.error ?? "");
+    const before = JSON.stringify(shop.getState().orders.find((row) => row.id === id));
+    for (const who of ["megan", "marcus", "derek"]) {
+      shop.getState().setWorkingAs(who);
+      shop.getState().updateOrder(id, { mileage: 1, concern: "Changed" });
+      shop.getState().updateWa(id, { address: "Changed after close" });
+    }
     const order = shop.getState().orders.find((row) => row.id === id);
-    assert.equal(order?.status, "booked");
-    assert.equal(order?.authorizationLocked, true);
+    assert.equal(order?.status, "closed");
+    assert.equal(JSON.stringify(order), before);
+    assert.equal("reopenOrder" in shop.getState(), false);
+    assert.equal("amendClosedOrder" in shop.getState(), false);
     assert.equal(shop.getState().closedHistory.find((row) => row.orderId === id)?.id, historyId);
-    const note = order?.history?.find((row) => row.kind === "reopened");
-    assert.equal(note?.who, "Derek Lang");
-    assert.equal(note?.field, "status");
-    assert.match(note?.reason ?? "", /came back/);
-    shop.getState().updateWa(id, { address: "Changed after reopen" });
-    assert.equal(shop.getState().orders.find((row) => row.id === id)?.wa?.address, address);
-  });
-
-  it("logs a service manager edit with the old and new values and refuses everyone else", () => {
-    pinClock("2026-10-20T19:00:00.000Z");
-    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    shop.getState().setWorkingAs("megan");
-    const id = readyBlank(shop);
-    assert.equal(shop.getState().closeOrderWithNoWork(id, "Customer left before any work").ok, true);
-    const beforeHistory = shop.getState().orders.find((row) => row.id === id)?.history?.length ?? 0;
-    assert.equal(shop.getState().amendClosedOrder(id, "Mileage was written down wrong", { field: "mileage", value: 13000 }).ok, false);
-    shop.getState().setWorkingAs("marcus");
-    assert.equal(shop.getState().amendClosedOrder(id, "Mileage was written down wrong", { field: "mileage", value: 13000 }).ok, false);
-    (shop.getState().updateOrder as (orderId: string, patch: { mileage: number; history: unknown[] }) => void)(id, { mileage: 1, history: [] });
-    assert.equal(shop.getState().orders.find((row) => row.id === id)?.mileage, 12000);
-    assert.equal(shop.getState().orders.find((row) => row.id === id)?.history?.length, beforeHistory);
-    shop.getState().setWorkingAs("derek");
-    const saved = shop.getState().amendClosedOrder(id, "Mileage was written down wrong", { field: "mileage", value: 13000 });
-    assert.equal(saved.ok, true, saved.error ?? "");
-    const order = shop.getState().orders.find((row) => row.id === id);
-    assert.equal(order?.mileage, 13000);
-    const note = order?.history?.find((row) => row.kind === "amended");
-    assert.equal(note?.who, "Derek Lang");
-    assert.equal(note?.field, "mileage");
-    assert.equal(note?.before, "12000");
-    assert.equal(note?.after, "13000");
-    assert.equal(note?.reason, "Mileage was written down wrong");
-    assert.equal(order?.history?.length, beforeHistory + 1);
-    shop.getState().amendClosedOrder(id, "Correct the note on the close", { field: "closeNote", value: "Customer left the drive" });
-    const again = shop.getState().orders.find((row) => row.id === id);
-    assert.equal(again?.history?.length, beforeHistory + 2);
-    assert.equal(again?.history?.[0]?.text, order?.history?.[0]?.text);
   });
 
   it("blocks a close when mileage out is below mileage in, mileage in is zero, or make is blank", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
     const id = readyBlank(shop);
-    shop.getState().updateOrder(id, { mileage: 0 });
-    assert.match(shop.getState().closeOrderWithNoWork(id, "Customer left before any work").error ?? "", /mileage in/i);
-    shop.getState().updateOrder(id, { mileage: 100, mileageOut: 40 });
     shop.setState({
-      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, status: "booked" as const } : row),
+      orders: shop.getState().orders.map((row) => (row.id === id ? { ...row, mileage: 0 } : row)),
+    });
+    assert.match(shop.getState().closeOrderWithNoWork(id, "Customer left before any work").error ?? "", /mileage in/i);
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, mileage: 250000, mileageOut: 40, status: "booked" as const } : row),
     });
     assert.match(shop.getState().closeOrder(id).error ?? "", /Mileage out/);
-    shop.getState().updateOrder(id, { mileageOut: 100 });
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, mileageOut: 250000 } : row),
+    });
     const vehicleId = shop.getState().orders.find((row) => row.id === id)?.vehicleId ?? "";
     shop.setState({
       vehicles: shop.getState().vehicles.map((row) => row.id === vehicleId ? { ...row, make: "" } : row),
@@ -332,7 +298,8 @@ function readyBlank(shop: ReturnType<typeof createShopStore>) {
     vehicleId: vehicle.id,
     advisorId: state.advisors[0].id,
     lines: [{ concern: "Never showed" }],
-    mileage: 12000,
+    mileage: 250000,
+    mileageOut: 250000,
     promiseTime: "",
   });
   shop.getState().updateWa(id, { address: "10 Main Street" });

@@ -244,6 +244,35 @@ export interface RepairOrder {
   payments?: RoPayment[];
   /** Set when the ticket is closed. Reopen does not unlock the signed estimate. */
   authorizationLocked?: boolean;
+  /** Customer and vehicle at close. Print uses this, not the live record. */
+  closeSnapshot?: CloseSnapshot;
+  /** Consent recorded after a reopen. It never overwrites the original authorization. */
+  laterAuthorizations?: DatedAuthorization[];
+}
+
+/** Frozen customer and vehicle for a closed repair order. */
+export interface CloseSnapshot {
+  customerName: string;
+  phone: string;
+  address: string;
+  plate: string;
+  vin: string;
+  year: number;
+  make: string;
+  model: string;
+}
+
+/** A new consent after reopen. The original authorization fields stay as they were. */
+export interface DatedAuthorization {
+  id: string;
+  at: string;
+  who: string;
+  whoId: string;
+  reason: string;
+  address: string;
+  initials: string;
+  estimate: number;
+  plate: string;
 }
 
 export interface AppointmentLine {
@@ -340,6 +369,8 @@ export interface ClosedRecord {
   closedBy?: string;
   closedAt?: string | null;
   droppedFeesNote?: string;
+  /** 1 on the first close. A later close or service-manager change adds the next number. */
+  version?: number;
 }
 
 export interface Campaign {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { usd } from "@/lib/format";
 import { orderMoney } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
+import { vehicleTitle } from "@/lib/metrics";
 import { normalizeWa, vinTail, waLimit, type WaChoice } from "@/lib/wa";
 import { Button, Field } from "./ui";
 
@@ -23,7 +24,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
   const [extra, setExtra] = useState({ date: "", time: "", employee: "", person: "", phone: "", work: "", amount: "" });
 
   if (!order) return null;
-  const locked = order.status === "closed";
+  const locked = order.status === "closed" || Boolean(order.authorizationLocked);
   const wa = normalizeWa(order.wa);
   const money = orderMoney(order);
   const limit = waLimit(wa);
@@ -146,7 +147,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
         <p className="mt-2 text-sm">{settings.storeName}</p>
         <p className="text-sm text-muted">{[settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || "Add the street and phone in Settings. The invoice has to show them."}</p>
         <p className="mt-2 text-sm">{customer?.name} · {customer?.phone}{wa.address ? ` · ${wa.address}` : ""}</p>
-        <p className="text-sm">{vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
+        <p className="text-sm">{vehicle ? vehicleTitle(vehicle.year, vehicle.make || "Ford", vehicle.model) : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
         <p className="mt-2 text-sm">{order.jobs.map((job) => `${job.code}. ${job.concern}`).join(" · ")}</p>
         <p className="mt-2 text-sm">Labor {usd(money.labor)} · Parts {usd(money.parts)} · Total before tax {usd(money.ticket)}</p>
         <ul className="mt-1 text-sm text-muted">

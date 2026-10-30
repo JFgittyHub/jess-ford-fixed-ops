@@ -495,7 +495,7 @@ describe("cancel an appointment", () => {
       vehicleId: vehicle.id,
       advisorId: shop.getState().advisors[0].id,
       lines: [{ concern: "Linked visit" }],
-      mileage: 12,
+      mileage: 250000,
       promiseTime: "",
     });
     const order = shop.getState().orders.find((row) => row.id === orderId);

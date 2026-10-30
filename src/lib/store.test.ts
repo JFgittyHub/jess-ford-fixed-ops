@@ -89,7 +89,7 @@ describe("shop store", () => {
     useShop.setState({ ...createEmptyShop(), focusOrderId: null });
   });
 
-  it("drops the closed-history row when a repair order is reopened", () => {
+  it("keeps a closed repair order closed and keeps its history row", () => {
     pinClock("2026-10-19T19:00:00.000Z");
     const empty = createEmptyShop();
     useShop.setState({
@@ -123,15 +123,14 @@ describe("shop store", () => {
       useShop.getState().closedHistory.some((row) => row.orderId === "ro-1"),
       true,
     );
-    const reopened = useShop.getState().reopenOrder("ro-1", "Customer came back for the same repair");
-    assert.equal(reopened.ok, true, reopened.error ?? "");
     const next = useShop.getState();
-    assert.equal(next.orders.find((order) => order.id === "ro-1")?.status, "booked");
+    assert.equal("reopenOrder" in next, false);
+    assert.equal(next.orders.find((order) => order.id === "ro-1")?.status, "closed");
     assert.equal(
       next.closedHistory.some((row) => row.orderId === "ro-1"),
       true,
     );
-    assert.equal(next.parts.find((part) => part.id === "pads")?.onHand, 4);
+    assert.equal(next.parts.find((part) => part.id === "pads")?.onHand, 2);
   });
 
   it("keeps settings when the shop is cleared or the sample month is loaded", () => {
