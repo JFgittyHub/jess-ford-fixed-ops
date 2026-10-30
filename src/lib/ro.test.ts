@@ -275,6 +275,7 @@ function closable(order: RepairOrder): RepairOrder {
     ...order,
     jobs: [{ id: "j", code: "A", concern: order.concern, cause: "The pads were worn.", correction: "Replaced the pads." }],
     mileageOut: order.mileage + 4,
-    parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new" })),
+    labor: order.labor.map((line) => ({ ...line, jobId: line.jobId || "j" })),
+    parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new", jobId: line.jobId || "j" })),
   };
 }

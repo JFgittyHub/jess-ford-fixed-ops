@@ -193,13 +193,10 @@ describe("round 6", () => {
     shop.getState().setWorkingAs("megan");
     const id = openOrder(shop);
     const order = shop.getState().orders.find((row) => row.id === id)!;
+    shop.getState().addLabor(id, { opcode: "LOF", description: "Oil", hours: 1, rate: 189, payType: "cp", techId: "marcus" });
+    shop.getState().updateJob(id, order.jobs[0].id, { concern: "", cause: "Worn", correction: "Replaced" });
     shop.setState({
-      orders: shop.getState().orders.map((row) => row.id === id ? {
-        ...row,
-        status: "booked" as const,
-        jobs: [{ ...row.jobs[0], concern: "", cause: "Worn", correction: "Replaced" }],
-        labor: [{ id: "lb", opcode: "LOF", description: "Oil", hours: 1, rate: 189, payType: "cp", techId: "marcus" }],
-      } : row),
+      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, status: "booked" as const } : row),
       timeLogs: [{ id: "clk", techId: "marcus", orderId: id, startedAt: "2026-10-20T15:00:00", endedAt: "2026-10-20T16:00:00" }],
     });
     const gaps = advisorCloseGaps(shop.getState().orders.find((row) => row.id === id)!, {
@@ -234,8 +231,15 @@ describe("round 6", () => {
     shop.setState({
       orders: shop.getState().orders.map((row) => row.id === id ? { ...row, status: "closed" as const } : row),
     });
+    const before = shop.getState().orders.find((row) => row.id === id);
     shop.getState().clockOut("marcus");
-    assert.equal(shop.getState().timeLogs.find((row) => row.id === open?.id)?.endedAt, null);
+    const punch = shop.getState().timeLogs.find((row) => row.id === open?.id);
+    const after = shop.getState().orders.find((row) => row.id === id);
+    assert.equal(typeof punch?.endedAt, "string");
+    assert.notEqual(punch?.endedAt, null);
+    assert.equal(after?.status, "closed");
+    assert.equal(after?.labor.length, before?.labor.length);
+    assert.equal(after?.mileage, before?.mileage);
   });
 
   it("kills the close-role, first-advisor, last-name, and removed-line gaps", () => {

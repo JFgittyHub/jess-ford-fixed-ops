@@ -1,5 +1,6 @@
 import { feeTotal } from "./format";
-import { mileageFloorMessage, mileageTooHigh, type MileageVisit } from "./mileage";
+import { jobLine, nextLineCode } from "./jobs";
+import { mileageFloorMessage, mileageOutGapMessage, mileageTooHigh, preparedReason, type MileageVisit } from "./mileage";
 import { closeGaps, orderMoney } from "./metrics";
 import type { Advisor, ClosedRecord, Customer, FeeLine, PartSku, RepairOrder, Tech, TimeLog, Vehicle } from "./types";
 import { isFullVin } from "./vin";
@@ -165,18 +166,49 @@ export const DIAGNOSIS_BLOCK = "Inspection or diagnosis is recorded — close it
 export const CLOCK_BLOCK = "Clock time is on this repair order — close it with an accurate invoice";
 export const MILEAGE_REASON_SHORT = "Add a reason of at least 10 characters.";
 
-export function mileageReasonError(reason: string) {
-  return reason.trim().length < 10 ? MILEAGE_REASON_SHORT : null;
+export function mileageReasonError(reason: unknown) {
+  const prepared = preparedReason(reason);
+  return "error" in prepared ? prepared.error : null;
 }
 
-/** A logged service-manager exception for this exact mileage in. */
-export function mileageOverrideAllows(order: RepairOrder, mileage: number) {
-  return (order.history ?? []).some((entry) => entry.kind === "mileage-override" && Number(entry.after) === mileage);
+/** A logged service-manager exception for this exact mileage in or mileage out. */
+export function mileageOverrideAllows(order: RepairOrder, mileage: number, field: "mileage" | "mileageOut" = "mileage") {
+  return (order.history ?? []).some((entry) => entry.kind === "mileage-override" && (entry.field ?? "mileage") === field && Number(entry.after) === mileage);
 }
 
-function jobHasWork(order: RepairOrder, jobId: string, index: number) {
-  const onJob = <T extends { jobId?: string }>(lines: T[]) => lines.some((line) => (line.jobId ? line.jobId === jobId : index === 0));
-  return onJob(order.labor) || onJob(order.parts);
+function onThisJob<T extends { jobId?: string }>(lines: T[], jobId: string) {
+  return lines.some((line) => line.jobId === jobId);
+}
+
+function jobHasWork(order: RepairOrder, jobId: string) {
+  return onThisJob(order.labor, jobId) || onThisJob(order.parts, jobId);
+}
+
+function looseLine(line: { jobId?: string }, jobIds: Set<string>) {
+  return !line.jobId || !jobIds.has(line.jobId);
+}
+
+/** Put labor and parts that have no line onto the only line, or onto a line the advisor must assign. */
+export function linkLaborAndParts(order: RepairOrder): RepairOrder {
+  const jobs = [...(order.jobs ?? [])];
+  const known = new Set(jobs.map((job) => job.id));
+  const looseLabor = order.labor.some((line) => looseLine(line, known));
+  const looseParts = order.parts.some((line) => looseLine(line, known));
+  if (!looseLabor && !looseParts) return order;
+  let nextJobs = jobs;
+  let target = jobs.length === 1 ? jobs[0].id : "";
+  if (jobs.length !== 1) {
+    target = `${order.id || "ro"}-assign`;
+    if (known.has(target)) target = `${target}-2`;
+    nextJobs = [...jobs, { ...jobLine(target, nextLineCode(jobs)), needsAssignment: true }];
+  }
+  const place = <T extends { jobId?: string }>(line: T): T => (looseLine(line, known) ? { ...line, jobId: target } : line);
+  return {
+    ...order,
+    jobs: nextJobs,
+    labor: order.labor.map(place),
+    parts: order.parts.map(place),
+  };
 }
 
 export function clockedInNames(orderId: string, logs: TimeLog[], techs: Tech[]) {
@@ -186,8 +218,9 @@ export function clockedInNames(orderId: string, logs: TimeLog[], techs: Tech[]) 
 
 export function clockedInMessage(names: string[]) {
   if (names.length === 0) return null;
-  if (names.length === 1) return `${names[0]} is still clocked in on this repair order`;
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)} are still clocked in on this repair order`;
+  const who = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  const verb = names.length === 1 ? "is" : "are";
+  return `${who} ${verb} still clocked in on this repair order — clock them out before closing`;
 }
 
 /** What is in the way of a $0 close. Each line names the blocker. */
@@ -224,6 +257,9 @@ export function noWorkBlockers(
   if (belowLast) blocks.push(belowLast);
   if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut <= 0 || order.mileageOut < order.mileage) {
     blocks.push("Add the mileage out");
+  } else if (!mileageOverrideAllows(order, order.mileageOut, "mileageOut")) {
+    const gap = mileageOutGapMessage(order.mileage, order.mileageOut);
+    if (gap) blocks.push(gap);
   }
   return blocks;
 }
@@ -303,10 +339,16 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   const jobs = order.jobs ?? [];
   const concern = (order.concern || jobs.map((job) => job.concern).join(" ")).trim();
   if (!concern) gaps.push("Concern");
-  // Labor and parts are not tied to a line, so they count on the first line.
-  // Any other line is a note and does not need cause or correction.
-  jobs.forEach((job, index) => {
-    if (!jobHasWork(order, job.id, index)) return;
+  const jobIds = new Set(jobs.map((job) => job.id));
+  if (order.labor.some((line) => looseLine(line, jobIds)) || order.parts.some((line) => looseLine(line, jobIds))) {
+    gaps.push("Labor or parts are not on a job line");
+  }
+  jobs.forEach((job) => {
+    if (job.needsAssignment && jobHasWork(order, job.id)) {
+      gaps.push(`Assign the labor and parts on line ${job.code}`);
+      return;
+    }
+    if (!jobHasWork(order, job.id)) return;
     if (!job.concern.trim()) gaps.push(`Concern on line ${job.code}`);
     if (!job.cause.trim()) gaps.push(`Cause on line ${job.code}`);
     if (!job.correction.trim()) gaps.push(`Correction on line ${job.code}`);
@@ -318,6 +360,10 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   const stillIn = clockedInMessage(clockedInNames(order.id, ctx.logs, ctx.techs));
   if (stillIn) gaps.push(stillIn);
   if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut < order.mileage) gaps.push("Mileage out");
+  else if (!mileageOverrideAllows(order, order.mileageOut, "mileageOut")) {
+    const gap = mileageOutGapMessage(order.mileage, order.mileageOut);
+    if (gap) gaps.push(gap);
+  }
   if (!isFullVin(ctx.vehicle?.vin ?? "")) gaps.push("VIN");
   const nameParts = (ctx.customer?.name ?? "").trim().split(/\s+/).filter(Boolean);
   if (nameParts.length < 2) gaps.push("Customer first and last name");

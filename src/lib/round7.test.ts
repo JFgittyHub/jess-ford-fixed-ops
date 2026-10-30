@@ -60,7 +60,7 @@ describe("round 7", () => {
     assert.notEqual(row?.history?.[0]?.kind, "closed");
   });
 
-  it("uses the higher of mileage in and mileage out on the most recent earlier visit", () => {
+  it("uses the last visit's mileage out as the floor", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
     const created = shop.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford" });
@@ -184,8 +184,8 @@ describe("round 7", () => {
     assert.ok(id);
     const note = shop.getState().orders.find((row) => row.id === id)?.history?.find((row) => row.kind === "mileage-override");
     assert.equal(note?.who, "Derek Lang");
-    assert.equal(note?.before, "50010");
     assert.equal(note?.after, "12000");
+    assert.equal(note?.text, "Mileage in set to 12,000, below last visit 50,010 (Sep 2, 2026), service manager override: Cluster replaced");
     assert.match(note?.reason ?? "", /Cluster replaced/);
     shop.getState().updateWa(id, { address: "10 Main Street" });
     const blocked = shop.getState().closeOrderWithNoWork(id, "Customer left before any work").error ?? "";
@@ -251,17 +251,15 @@ describe("round 7", () => {
       promiseTime: "",
     });
     const jobs = shop.getState().orders.find((row) => row.id === id)?.jobs ?? [];
+    shop.getState().updateJob(id, jobs[0].id, { cause: "Worn", correction: "Replaced" });
+    shop.getState().addLabor(id, { opcode: "CHK", description: "Check", hours: 0, rate: 0, payType: "cp", techId: "marcus", jobId: jobs[1].id });
+    shop.getState().addPartLine(id, { partId: null, number: "BL", description: "Bolt", qty: 1, cost: 0, price: 0, payType: "cp", condition: "new", jobId: jobs[1].id });
+    const placed = shop.getState().orders.find((row) => row.id === id);
+    assert.equal(placed?.labor[0]?.jobId, jobs[1].id);
+    assert.equal(placed?.parts[0]?.jobId, jobs[1].id);
+    shop.getState().updateWa(id, { address: "10 Main Street" });
     shop.setState({
-      orders: shop.getState().orders.map((row) => row.id === id ? {
-        ...row,
-        status: "booked" as const,
-        jobs: [
-          { ...jobs[0], cause: "Worn", correction: "Replaced" },
-          { ...jobs[1], cause: "", correction: "" },
-        ],
-        labor: [{ id: "lb", opcode: "CHK", description: "Check", hours: 0, rate: 0, payType: "cp", techId: "marcus", jobId: jobs[1].id }],
-        parts: [{ id: "pt", partId: null, number: "BL", description: "Bolt", qty: 1, cost: 0, price: 0, payType: "cp", condition: "new" as const, jobId: jobs[1].id }],
-      } : row),
+      orders: shop.getState().orders.map((row) => row.id === id ? { ...row, status: "booked" as const } : row),
       timeLogs: [{ id: "clk", techId: "marcus", orderId: id, startedAt: "2026-10-30T15:00:00", endedAt: "2026-10-30T16:00:00" }],
     });
     const error = shop.getState().closeOrder(id).error ?? "";
@@ -357,7 +355,7 @@ describe("round 7", () => {
           continue;
         }
         const vehicle = shop.vehicles.find((row) => row.id === order.vehicleId);
-        const last = lastVisitMileage(view, vehicle, { excludeOrderId: order.id, openedOn: order.openedOn });
+        const last = lastVisitMileage(view, vehicle, { excludeOrderId: order.id, openedAt: order.openedAt });
         if (last) assert.ok(order.mileage >= last.mileage, `${order.number} ${order.mileage} < ${last.mileage}`);
       }
     }

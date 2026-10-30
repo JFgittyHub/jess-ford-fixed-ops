@@ -175,7 +175,7 @@ export interface LaborLine {
   rate: number;
   payType: PayType;
   techId: string;
-  /** Which job line this labor belongs to. Missing means the first line. */
+  /** Which job line this labor belongs to. Close refuses labor that is not on a line. */
   jobId?: string;
 }
 
@@ -204,7 +204,7 @@ export interface PartLine {
   price: number;
   payType: PayType;
   condition?: "new" | "rebuilt" | "used";
-  /** Which job line this part belongs to. Missing means the first line. */
+  /** Which job line this part belongs to. Close refuses a part that is not on a line. */
   jobId?: string;
 }
 
@@ -212,6 +212,8 @@ export interface RepairOrder {
   id: string;
   number: number;
   openedOn: string;
+  /** When the repair order was opened. Mileage compares this, not the calendar date. */
+  openedAt?: string;
   promiseTime: string;
   status: RoStatus;
   bay: BayStatus;

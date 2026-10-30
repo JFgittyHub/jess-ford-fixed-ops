@@ -86,6 +86,9 @@ function TechBoardPage() {
           <p className="text-sm text-muted">Status</p>
           <p className="mt-1 font-display text-3xl leading-none">{open ? "On the clock" : "Off the clock"}</p>
           <p className="mt-2 text-sm text-muted">{current ? `RO ${current.number}` : "No repair order punched"}</p>
+          {open && current?.status === "closed" ? (
+            <Button onClick={() => shop.clockOut(tech.id)}>Clock out {tech.name}</Button>
+          ) : null}
         </article>
         <article className="card">
           <p className="text-sm text-muted">Clocked today</p>
@@ -127,7 +130,7 @@ function TechBoardPage() {
               <p className="mt-2 text-sm">{order.concern}</p>
               <div className="mt-4 flex flex-wrap gap-2">
                 {onThis ? (
-                  <Button onClick={() => shop.clockOut(tech.id)}>Clock out</Button>
+                  <Button onClick={() => shop.clockOut(tech.id)}>Clock out {tech.name}</Button>
                 ) : (
                   <Button tone="primary" onClick={() => shop.clockIn(tech.id, order.id)}>{open ? "Move clock here" : "Clock in"}</Button>
                 )}

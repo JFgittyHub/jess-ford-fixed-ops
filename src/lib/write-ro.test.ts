@@ -673,6 +673,33 @@ describe("RO editor", () => {
       }
     }
   });
+
+  it("renders Pullman for Tara Singh, a technician, and a booked repair order", async () => {
+    const { OrderEditor } = await import("../components/order-editor.tsx");
+    const { createSeed } = await import("./seed.ts");
+    const seed = createSeed("pullman");
+    const source = seed.orders.find((row) => row.status !== "closed" && row.labor.some((line) => line.techId));
+    assert.ok(source);
+    const tech = seed.techs.find((row) => row.id === source.labor.find((line) => line.techId)?.techId);
+    assert.ok(tech);
+    useShop.setState({
+      ...seed,
+      focusOrderId: null,
+      orders: seed.orders.map((row) => (row.id === source.id ? { ...row, status: "booked" as const } : row)),
+    });
+    useShop.getState().setWorkingAs("derek");
+    const host = (document as unknown as { createElement: (tag: string) => { textContent: string } }).createElement("div");
+    (document as unknown as { body: { appendChild: (node: unknown) => void } }).body.appendChild(host);
+    const root = createRoot(host as unknown as Element);
+    await act(async () => {
+      root.render(createElement(OrderEditor, { orderId: source.id, onClose() {} }));
+    });
+    const text = (document as unknown as { body: { textContent: string } }).body.textContent;
+    assert.match(text, /Tara Singh/);
+    assert.match(text, new RegExp(tech.name));
+    assert.match(text, /Booked/);
+    await act(async () => root.unmount());
+  });
 });
 
 function tech(id: string, number: string, name: string): Tech {

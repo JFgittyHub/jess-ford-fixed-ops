@@ -87,7 +87,7 @@ function EstimatesPage() {
     }
     const miles = Number(mileage);
     const vehicle = shop.vehicles.find((row) => row.id === vehicleOk);
-    const floor = mileageFloorMessage(miles, lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedOn: today() }));
+    const floor = mileageFloorMessage(miles, lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedAt: new Date().toISOString() }));
     if (!String(mileage).trim() || !Number.isFinite(miles) || miles <= 0) {
       setError("Mileage in has to be greater than zero.");
       return;
@@ -107,15 +107,24 @@ function EstimatesPage() {
       lines: written.length > 0 ? written.map((concern) => ({ concern })) : [{ concern: "Estimate" }],
       mileage: miles,
       promiseTime: "",
-      labor: labor.map((line) => ({
+    });
+    if (!id) {
+      setError(floor ?? "That repair order was not opened.");
+      return;
+    }
+    const opened = shop.orders.find((row) => row.id === id);
+    const jobId = opened?.jobs[0]?.id ?? "";
+    for (const line of labor) {
+      shop.addLabor(id, {
         opcode: line.opcode,
         description: line.description,
         hours: line.hours,
         rate: line.rate,
         payType: line.payType,
         techId: "",
-      })),
-    });
+        jobId,
+      });
+    }
     for (const line of parts) {
       shop.addPartLine(id, {
         partId: line.partId,
@@ -126,11 +135,8 @@ function EstimatesPage() {
         price: line.price,
         payType: "cp",
         condition: "new",
+        jobId,
       });
-    }
-    if (!id) {
-      setError(floor ?? "That repair order was not opened.");
-      return;
     }
     shop.updateWa(id, { choice: "written", estimate: beforeTax, date: today(), time: "08:00" });
     navigate({ to: "/orders" });

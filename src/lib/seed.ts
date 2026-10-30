@@ -282,8 +282,8 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
       customerId: p(order.customerId),
       vehicleId: p(order.vehicleId),
       jobs: order.jobs.map((job) => ({ ...job, id: p(job.id) })),
-      labor: order.labor.map((line) => ({ ...line, id: p(line.id), techId: p(line.techId) })),
-      parts: order.parts.map((line) => ({ ...line, id: p(line.id), partId: line.partId ? p(line.partId) : null })),
+      labor: order.labor.map((line) => ({ ...line, id: p(line.id), techId: p(line.techId), jobId: line.jobId ? p(line.jobId) : line.jobId })),
+      parts: order.parts.map((line) => ({ ...line, id: p(line.id), partId: line.partId ? p(line.partId) : null, jobId: line.jobId ? p(line.jobId) : line.jobId })),
       inspection: order.inspection ? { ...order.inspection, techId: p(order.inspection.techId) } : null,
       closedById: order.closedById ? p(order.closedById) : "",
     })),
@@ -519,9 +519,11 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       const roKey = `h${seq}`;
       const labor: LaborLine[] = [];
       const partLines: PartLine[] = [];
+      const openedAt = `${padDay(day)}T${String(7 + Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}:00`;
       jobs.forEach((item, index) => {
         const techId = item.techs[Math.floor(rng() * item.techs.length)];
         const hours = money2(item.hours * (0.86 + rng() * 0.28));
+        const jobId = `${roKey}-j${index}`;
         labor.push({
           id: `${roKey}-l${index}`,
           opcode: item.opcode,
@@ -530,8 +532,9 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
           rate: rateFor(item.payType, settings.cpRate, settings.warrantyRate, settings.internalRate),
           payType: item.payType,
           techId,
+          jobId,
         });
-        partLines.push(...lineParts(item, sku, item.payType, `${roKey}-${index}`));
+        partLines.push(...lineParts(item, sku, item.payType, `${roKey}-${index}`).map((line) => ({ ...line, jobId })));
       });
       const story = jobs.map((item, index) => jobLine(
         `${roKey}-j${index}`,
@@ -544,6 +547,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
         id: roKey,
         number: seq,
         openedOn: padDay(day),
+        openedAt,
         promiseTime: "",
         status: "closed",
         advisorId: advisorIds[Math.floor(rng() * advisorIds.length)],
@@ -628,13 +632,13 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       ],
       mileage: 30110,
       labor: [
-        { id: "op-l1", opcode: "LOF", description: "Engine oil and filter", hours: 0.6, rate: 189, payType: "cp", techId: "luis" },
-        { id: "op-l2", opcode: "CABIN", description: "Cabin and engine air filters", hours: 0.4, rate: 189, payType: "cp", techId: "luis" },
+        { id: "op-l1", opcode: "LOF", description: "Engine oil and filter", hours: 0.6, rate: 189, payType: "cp", techId: "luis", jobId: "op-a" },
+        { id: "op-l2", opcode: "CABIN", description: "Cabin and engine air filters", hours: 0.4, rate: 189, payType: "cp", techId: "luis", jobId: "op-b" },
       ],
       parts: [
-        { id: "op-p1", partId: "oil", number: "BL-5W30-5", description: "Synthetic blend 5W-30, 5 qt", qty: 1, cost: 22.4, price: 41.95, payType: "cp" },
-        { id: "op-p2", partId: "filter", number: "BL-FIL-500", description: "Spin-on oil filter", qty: 1, cost: 4.15, price: 11.49, payType: "cp" },
-        { id: "op-p3", partId: "cabin", number: "BL-CAB-79", description: "Cabin air filter", qty: 1, cost: 8.4, price: 24.5, payType: "cp" },
+        { id: "op-p1", partId: "oil", number: "BL-5W30-5", description: "Synthetic blend 5W-30, 5 qt", qty: 1, cost: 22.4, price: 41.95, payType: "cp", jobId: "op-a" },
+        { id: "op-p2", partId: "filter", number: "BL-FIL-500", description: "Spin-on oil filter", qty: 1, cost: 4.15, price: 11.49, payType: "cp", jobId: "op-a" },
+        { id: "op-p3", partId: "cabin", number: "BL-CAB-79", description: "Cabin air filter", qty: 1, cost: 8.4, price: 24.5, payType: "cp", jobId: "op-b" },
       ],
       invoicedOn: null,
       stockApplied: false,
@@ -691,11 +695,11 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       ],
       mileage: 64002,
       labor: [
-        { id: "od-l1", opcode: "DSL", description: "Diesel diagnosis and service", hours: 2.5, rate: 189, payType: "cp", techId: "andre" },
+        { id: "od-l1", opcode: "DSL", description: "Diesel diagnosis and service", hours: 2.5, rate: 189, payType: "cp", techId: "andre", jobId: "od-a" },
       ],
       parts: [
-        { id: "od-p1", partId: "def", number: "BL-DEF-2", description: "Diesel exhaust fluid, 2.5 gal", qty: 1, cost: 11, price: 24.95, payType: "cp" },
-        { id: "od-p2", partId: "fuel", number: "BL-FUEL-67", description: "Diesel fuel filter kit", qty: 1, cost: 42, price: 98, payType: "cp" },
+        { id: "od-p1", partId: "def", number: "BL-DEF-2", description: "Diesel exhaust fluid, 2.5 gal", qty: 1, cost: 11, price: 24.95, payType: "cp", jobId: "od-a" },
+        { id: "od-p2", partId: "fuel", number: "BL-FUEL-67", description: "Diesel fuel filter kit", qty: 1, cost: 42, price: 98, payType: "cp", jobId: "od-b" },
       ],
       invoicedOn: null,
       stockApplied: false,
@@ -763,24 +767,37 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     },
   ];
 
-  function priorVisitReading(vehicleId: string, openedOn: string) {
-    let bestDate = "";
+  function priorVisitReading(vehicleId: string, openedAt: string) {
+    let bestStamp = "";
     let best = 0;
     for (const row of orders) {
-      if (row.vehicleId !== vehicleId || !row.openedOn || row.openedOn > openedOn) continue;
+      if (row.vehicleId !== vehicleId) continue;
+      const stamp = row.openedAt || `${row.openedOn}T00:00:00`;
+      if (!stamp || stamp >= openedAt) continue;
       const reading = row.mileage + 4;
-      if (row.openedOn > bestDate || (row.openedOn === bestDate && reading > best)) {
-        bestDate = row.openedOn;
+      if (stamp > bestStamp || (stamp === bestStamp && reading > best)) {
+        bestStamp = stamp;
         best = reading;
       }
     }
     return best;
   }
 
-  const open = openSeeds.map((order) => {
-    const floor = priorVisitReading(order.vehicleId, order.openedOn);
-    const mileage = Math.max(order.mileage, floor > 0 ? floor + 4 : 0);
-    return { ...order, mileage, mileageOut: mileage, inspection: demoSheet(order.id) };
+  function withJobIds<T extends { jobs: { id: string }[]; labor: LaborLine[]; parts: PartLine[] }>(order: T): T {
+    if (order.jobs.length !== 1) return order;
+    const jobId = order.jobs[0].id;
+    return {
+      ...order,
+      labor: order.labor.map((line) => ({ ...line, jobId: line.jobId || jobId })),
+      parts: order.parts.map((line) => ({ ...line, jobId: line.jobId || jobId })),
+    };
+  }
+
+  const open = openSeeds.map((order, index) => {
+    const openedAt = `${order.openedOn}T23:${String(50 - index).padStart(2, "0")}:00`;
+    const floor = priorVisitReading(order.vehicleId, openedAt);
+    const mileage = Math.max(order.mileage, floor > 0 ? floor : 0);
+    return withJobIds({ ...order, openedAt, mileage, mileageOut: mileage, inspection: demoSheet(order.id) });
   });
 
   function appt(

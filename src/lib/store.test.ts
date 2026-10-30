@@ -63,10 +63,10 @@ function bookedOrder(): RepairOrder {
     fees: [],
     taxRate: 6.5,
     labor: [
-      { id: "l1", opcode: "BRK", description: "Brakes", hours: 1, rate: 189, payType: "cp", techId: tech.id },
+      { id: "l1", opcode: "BRK", description: "Brakes", hours: 1, rate: 189, payType: "cp", techId: tech.id, jobId: "j" },
     ],
     parts: [
-      { id: "p1", partId: "pads", number: "BL", description: "Pads", qty: 2, cost: 10, price: 40, payType: "cp", condition: "new" },
+      { id: "p1", partId: "pads", number: "BL", description: "Pads", qty: 2, cost: 10, price: 40, payType: "cp", condition: "new", jobId: "j" },
     ],
     invoicedOn: null,
     stockApplied: false,
@@ -225,18 +225,25 @@ describe("shop store", () => {
     assert.equal(sampleLoadAllowed(empty, false), true);
     assert.equal(sampleLoadAllowed({ ...createSeed(), settings: empty.settings }, false), true);
 
-    useShop.setState({
+    const demo = createShopStore({ demoMode: true, storage: memoryStorage() });
+    demo.setState({
       ...withCustomer,
       settings: { ...empty.settings, storeName: "Coulee" },
     });
-    useShop.getState().resetDemo();
-    assert.equal(useShop.getState().customers.length, 1);
-    assert.equal(useShop.getState().dataset, "shop");
-    assert.equal(useShop.getState().settings.storeName, "Coulee");
-    useShop.getState().resetDemo(true);
-    assert.ok(useShop.getState().customers.length > 1);
-    assert.equal(useShop.getState().dataset, "sample");
-    assert.equal(useShop.getState().settings.storeName, "Coulee");
+    demo.getState().resetDemo();
+    assert.equal(demo.getState().customers.length, 1);
+    assert.equal(demo.getState().dataset, "shop");
+    assert.equal(demo.getState().settings.storeName, "Coulee");
+    demo.getState().resetDemo(true);
+    assert.ok(demo.getState().customers.length > 1);
+    assert.equal(demo.getState().dataset, "sample");
+    assert.equal(demo.getState().settings.storeName, "Coulee");
+
+    const live = createShopStore({ demoMode: false, storage: memoryStorage() });
+    live.setState({ ...withCustomer, orders: [bookedOrder()], settings: { ...empty.settings, storeName: "Coulee" } });
+    live.getState().resetDemo(true);
+    assert.equal(live.getState().orders.some((row) => row.id === "ro-1"), true);
+    assert.equal(live.getState().dataset === "sample", false);
   });
 
   it("keeps a demo visit in memory and drops it on reload", async () => {

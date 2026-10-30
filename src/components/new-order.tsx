@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { PROMISE_TIMES, clockTime, today } from "@/lib/format";
+import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lastVisitHint, lastVisitMileage, mileageFloorMessage } from "@/lib/mileage";
+import { phoneDigitError } from "@/lib/range";
+import { mileageReasonError } from "@/lib/ro";
 import { deskActor } from "@/lib/cancel";
 import { rateFor } from "@/lib/pay";
 import { noShowSuffix } from "@/lib/no-show-label";
@@ -74,6 +76,7 @@ function NewOrderForm({
   const [formError, setFormError] = useState("");
   const [model, setModel] = useState("");
   const [make, setMake] = useState("");
+  const [vin, setVin] = useState("");
   const [mileageReason, setMileageReason] = useState("");
 
   const seeded = preset?.lines?.map((line) => line.concern.trim()).filter(Boolean).join("\n") || preset?.concern || "";
@@ -87,7 +90,7 @@ function NewOrderForm({
 
   const resolvedVehicle = vehicles.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : vehicles[0]?.id ?? "";
   const pickedVehicle = shop.vehicles.find((row) => row.id === (mode === "new" ? "" : resolvedVehicle));
-  const visitHint = lastVisitHint(lastVisitMileage(Object.values(shop.stores ?? {}), pickedVehicle, { openedOn: today() }));
+  const visitHint = lastVisitHint(lastVisitMileage(Object.values(shop.stores ?? {}), pickedVehicle, { openedAt: new Date().toISOString() }));
   const canOverrideMileage = deskActor(shop) === "service-manager";
   const written = lines.map((line) => line.concern.trim()).filter(Boolean);
 
@@ -117,12 +120,22 @@ function NewOrderForm({
               setFormError("Add the customer name and model.");
               return;
             }
+            if (phone.trim() && phoneDigitError(phone)) {
+              setFormError(phoneDigitError(phone) ?? "");
+              return;
+            }
+            const cleanedVin = vin.trim().toUpperCase();
+            if (cleanedVin && cleanedVin.length !== 17) {
+              setFormError("VIN has to be 17 characters.");
+              return;
+            }
             const created = shop.createCustomer({
               name,
               phone,
               year: parsedYear,
               make: make.trim(),
               model,
+              vin: cleanedVin,
             });
             nextCustomer = created.customerId;
             nextVehicle = created.vehicleId;
@@ -130,7 +143,7 @@ function NewOrderForm({
           if (!nextCustomer || !nextVehicle || written.length === 0) return;
           const miles = Number(mileage);
           const vehicle = shop.vehicles.find((row) => row.id === nextVehicle);
-          const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedOn: today() });
+          const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedAt: new Date().toISOString() });
           const floor = mileageFloorMessage(miles, lastVisit);
           if (!mileage.trim() || !Number.isFinite(miles) || miles <= 0) {
             setFormError("Mileage in has to be greater than zero.");
@@ -140,7 +153,7 @@ function NewOrderForm({
             setFormError("Mileage in can't be over 999,999.");
             return;
           }
-          if (floor && (deskActor(shop) !== "service-manager" || mileageReason.trim().length < 10)) {
+          if (floor && (deskActor(shop) !== "service-manager" || mileageReasonError(mileageReason))) {
             setFormError(floor);
             return;
           }
@@ -203,12 +216,13 @@ function NewOrderForm({
         ) : (
           <>
             <Field label="Name"><input className="field" value={name} onChange={(event) => setName(event.target.value)} required /></Field>
-            <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 010-0142" /></Field>
+            <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} onBlur={() => { if (phone.trim()) setFormError(phoneDigitError(phone) ?? ""); }} placeholder="(555) 010-0142" /></Field>
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Year"><input className="field tabular-nums" type="number" min={1990} max={2027} placeholder="Year" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
               <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} placeholder="Ford" /></Field>
               <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="F-150" /></Field>
             </div>
+            <Field label="VIN"><input className="field font-mono uppercase" aria-label="VIN" maxLength={17} value={vin} onChange={(event) => setVin(event.target.value.toUpperCase())} placeholder="17 characters" /></Field>
           </>
         )}
         <Field label="Advisor">

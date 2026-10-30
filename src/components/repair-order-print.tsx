@@ -60,6 +60,9 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
           <p>{(snap?.plate || wa.plate) ? `Plate ${snap?.plate || wa.plate}` : (snap?.vin || vehicle?.vin) ? `VIN ${vinTail(snap?.vin || vehicle?.vin || "")}` : ""}</p>
           <p>In {order.mileage.toLocaleString("en-US")} miles</p>
           <p>Out {order.mileageOut != null ? `${order.mileageOut.toLocaleString("en-US")} miles` : "—"}</p>
+          {(order.history ?? []).filter((row) => row.kind === "mileage-override").map((row) => (
+            <p key={`${row.at}-${row.field ?? "mileage"}`}>{row.text}</p>
+          ))}
         </div>
       </section>
 
