@@ -1,5 +1,5 @@
 import { feeTotal } from "./format";
-import { mileageFloorMessage, type MileageVisit } from "./mileage";
+import { mileageFloorMessage, mileageTooHigh, type MileageVisit } from "./mileage";
 import { closeGaps, orderMoney } from "./metrics";
 import type { Advisor, ClosedRecord, Customer, FeeLine, PartSku, RepairOrder, Tech, TimeLog, Vehicle } from "./types";
 import { isFullVin } from "./vin";
@@ -89,11 +89,6 @@ export function invoiceRepairOrder(
   return { order, parts };
 }
 
-/** Closing is final. A closed repair order stays closed, including for a service manager. */
-export function reopenRepairOrder(_order: RepairOrder, _parts: PartSku[]): null {
-  return null;
-}
-
 /** Cent tolerance for a $0 ticket. */
 const CENT = 0.009;
 
@@ -168,18 +163,38 @@ function estimateAuthorized(order: RepairOrder) {
 
 export const DIAGNOSIS_BLOCK = "Inspection or diagnosis is recorded — close it with an accurate invoice";
 export const CLOCK_BLOCK = "Clock time is on this repair order — close it with an accurate invoice";
-export const AMEND_REASON_SHORT = "Add a reason of at least 10 characters.";
-export const AMEND_ROLE_REQUIRED = "Only a service manager can change a closed repair order.";
+export const MILEAGE_REASON_SHORT = "Add a reason of at least 10 characters.";
 
-export function amendReasonError(reason: string) {
-  return reason.trim().replace(/\s/g, "").length < 10 ? AMEND_REASON_SHORT : null;
+export function mileageReasonError(reason: string) {
+  return reason.trim().length < 10 ? MILEAGE_REASON_SHORT : null;
+}
+
+/** A logged service-manager exception for this exact mileage in. */
+export function mileageOverrideAllows(order: RepairOrder, mileage: number) {
+  return (order.history ?? []).some((entry) => entry.kind === "mileage-override" && Number(entry.after) === mileage);
+}
+
+function jobHasWork(order: RepairOrder, jobId: string, index: number) {
+  const onJob = <T extends { jobId?: string }>(lines: T[]) => lines.some((line) => (line.jobId ? line.jobId === jobId : index === 0));
+  return onJob(order.labor) || onJob(order.parts);
+}
+
+export function clockedInNames(orderId: string, logs: TimeLog[], techs: Tech[]) {
+  const ids = [...new Set(logs.filter((row) => row.orderId === orderId && row.endedAt === null).map((row) => row.techId))];
+  return ids.map((id) => techs.find((tech) => tech.id === id)?.name || "A technician");
+}
+
+export function clockedInMessage(names: string[]) {
+  if (names.length === 0) return null;
+  if (names.length === 1) return `${names[0]} is still clocked in on this repair order`;
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)} are still clocked in on this repair order`;
 }
 
 /** What is in the way of a $0 close. Each line names the blocker. */
 export function noWorkBlockers(
   order: RepairOrder,
   logs: TimeLog[],
-  identity?: { customer?: Customer; vehicle?: Vehicle; lastVisit?: MileageVisit | null },
+  identity?: { customer?: Customer; vehicle?: Vehicle; lastVisit?: MileageVisit | null; techs?: Tech[] },
 ): string[] {
   const blocks: string[] = [];
   if (order.labor.length > 0) {
@@ -195,6 +210,8 @@ export function noWorkBlockers(
   if (extraFees.length === 1) blocks.push(`Remove the ${extraFees[0].name} fee`);
   else if (extraFees.length > 1) blocks.push(`Remove ${extraFees.length} fees (${extraFees.map((fee) => fee.name).join(", ")})`);
   if (logs.some((log) => log.orderId === order.id)) blocks.push(CLOCK_BLOCK);
+  const stillIn = clockedInMessage(clockedInNames(order.id, logs, identity?.techs ?? []));
+  if (stillIn) blocks.push(stillIn);
   if ((order.payments ?? []).some((pay) => Math.abs(pay.amount) > CENT)) blocks.push("A payment is on this repair order");
   if (!identity?.customer?.name.trim()) blocks.push("Add the customer name");
   if (!recordedAddress(order)) blocks.push("Add the address");
@@ -202,7 +219,8 @@ export function noWorkBlockers(
   const vehicle = identity?.vehicle;
   if (!vehicle || !vehicle.year || !vehicle.model.trim() || !vehicle.make?.trim()) blocks.push("Add the year, make, and model");
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) blocks.push("Add the mileage in");
-  const belowLast = mileageFloorMessage(order.mileage, identity?.lastVisit ?? null);
+  if (mileageTooHigh(order.mileage)) blocks.push("Mileage in can't be over 999,999.");
+  const belowLast = mileageOverrideAllows(order, order.mileage) ? null : mileageFloorMessage(order.mileage, identity?.lastVisit ?? null);
   if (belowLast) blocks.push(belowLast);
   if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut <= 0 || order.mileageOut < order.mileage) {
     blocks.push("Add the mileage out");
@@ -214,7 +232,7 @@ export function noWorkCloseError(
   order: RepairOrder,
   logs: TimeLog[],
   note: string,
-  identity?: { customer?: Customer; vehicle?: Vehicle; lastVisit?: MileageVisit | null },
+  identity?: { customer?: Customer; vehicle?: Vehicle; lastVisit?: MileageVisit | null; techs?: Tech[] },
 ): string | null {
   if (!NO_WORK_STATUSES.has(order.status)) return NO_WORK_NOT_OPEN;
   const blocks = noWorkBlockers(order, logs, identity);
@@ -285,21 +303,20 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   const jobs = order.jobs ?? [];
   const concern = (order.concern || jobs.map((job) => job.concern).join(" ")).trim();
   if (!concern) gaps.push("Concern");
-  const hasWork = order.labor.length > 0 || order.parts.length > 0;
-  if (hasWork) {
-    for (const job of jobs) {
-      if (!job.concern.trim()) gaps.push(`Concern on line ${job.code}`);
-      if (!job.cause.trim()) gaps.push(`Cause on line ${job.code}`);
-      if (!job.correction.trim()) gaps.push(`Correction on line ${job.code}`);
-    }
-  } else {
-    if (!jobs.some((job) => job.concern.trim() || job.cause.trim())) gaps.push("Concern");
-    if (!jobs.some((job) => job.cause.trim())) gaps.push("Cause");
-    if (!jobs.some((job) => job.correction.trim())) gaps.push("Correction");
-  }
+  // Labor and parts are not tied to a line, so they count on the first line.
+  // Any other line is a note and does not need cause or correction.
+  jobs.forEach((job, index) => {
+    if (!jobHasWork(order, job.id, index)) return;
+    if (!job.concern.trim()) gaps.push(`Concern on line ${job.code}`);
+    if (!job.cause.trim()) gaps.push(`Cause on line ${job.code}`);
+    if (!job.correction.trim()) gaps.push(`Correction on line ${job.code}`);
+  });
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) gaps.push("Mileage in");
-  const belowLast = mileageFloorMessage(order.mileage, ctx.lastVisit ?? null);
+  if (mileageTooHigh(order.mileage)) gaps.push("Mileage in can't be over 999,999.");
+  const belowLast = mileageOverrideAllows(order, order.mileage) ? null : mileageFloorMessage(order.mileage, ctx.lastVisit ?? null);
   if (belowLast) gaps.push(belowLast);
+  const stillIn = clockedInMessage(clockedInNames(order.id, ctx.logs, ctx.techs));
+  if (stillIn) gaps.push(stillIn);
   if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut < order.mileage) gaps.push("Mileage out");
   if (!isFullVin(ctx.vehicle?.vin ?? "")) gaps.push("VIN");
   const nameParts = (ctx.customer?.name ?? "").trim().split(/\s+/).filter(Boolean);

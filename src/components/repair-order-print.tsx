@@ -19,7 +19,8 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
   const advisor = useShop((state) => state.advisors.find((row) => row.id === order?.advisorId));
   const techs = useShop((state) => state.techs);
   const payTypes = useShop((state) => state.payTypes);
-  const closedRows = useShop((state) => state.closedHistory.filter((row) => row.orderId === orderId));
+  const closedHistory = useShop((state) => state.closedHistory);
+  const closedRows = closedHistory.filter((row) => row.orderId === orderId);
 
   if (!order) return null;
   const snap = order.closeSnapshot;

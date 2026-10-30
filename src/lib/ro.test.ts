@@ -9,7 +9,6 @@ import {
   closeRepairOrder,
   dropClosedHistory,
   invoiceRepairOrder,
-  reopenRepairOrder,
   ticketBeforeTax,
   unbookRepairOrder,
 } from "./ro.ts";
@@ -208,8 +207,6 @@ describe("status flow and parts stock", () => {
 
     const again = closeRepairOrder(closed.order, closed.parts, closeContext(), who, at, "2026-10-19");
     assert.ok("error" in again);
-
-    assert.equal(reopenRepairOrder(closed.order, closed.parts), null);
     assert.equal(closed.order.status, "closed");
     assert.equal(closed.parts[0]?.onHand, 2);
   });
@@ -220,8 +217,7 @@ describe("status flow and parts stock", () => {
     const closed = closeRepairOrder(booked, [bin(1)], closeContext(), who, at, "2026-10-19");
     assert.ok(!("error" in closed));
     assert.equal(closed.parts[0]?.onHand, -1);
-    assert.equal(reopenRepairOrder(closed.order, closed.parts), null);
-    assert.equal(closed.parts[0]?.onHand, -1);
+    assert.equal(closed.order.status, "closed");
   });
 
   it("does not move stock twice", () => {

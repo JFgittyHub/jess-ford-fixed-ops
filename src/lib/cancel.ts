@@ -36,11 +36,6 @@ export function deskActor(state: {
   return "customer";
 }
 
-/** Closing is final. No role, including a service manager, may change a closed repair order. */
-export function mayAmendClosedOrder(_actor: DeskActor): boolean {
-  return false;
-}
-
 export const CANCEL_NOTE_MAX = 500;
 export const CANCELLED_LOCKED = "This appointment is cancelled. Reinstate it to change the date, customer, vehicle, or concern.";
 export const MISSING_RO_CANCEL_BLOCKED = "This visit is linked to a repair order that isn't on this store. The visit stays until that link is checked.";

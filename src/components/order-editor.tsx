@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, punchHours, roStatusLabel, usd } from "@/lib/format";
 import { NO_WORK_NOTE_MAX, advisorCloseGaps, hasBookedWork } from "@/lib/ro";
 import { deskActor, displayRecordedName, displayRecordedWhen, mayCloseRepairOrder } from "@/lib/cancel";
-import { highestPriorMileage } from "@/lib/mileage";
+import { lastVisitHint, lastVisitMileage, mileageFloorMessage } from "@/lib/mileage";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
@@ -111,13 +111,33 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const [noWorkNote, setNoWorkNote] = useState("");
   const [noWorkError, setNoWorkError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
+  const [mileageDraft, setMileageDraft] = useState("");
+  const [mileageError, setMileageError] = useState("");
+  const [overrideReason, setOverrideReason] = useState("");
+  const [phoneDraft, setPhoneDraft] = useState("");
+  const [addressDraft, setAddressDraft] = useState("");
 
   useEffect(() => {
     setTab("ticket");
     setNoWorkNote("");
     setNoWorkError(null);
     setCloseError(null);
+    setMileageError("");
+    setOverrideReason("");
   }, [orderId]);
+
+  const customerPhone = order ? (look.customer.get(order.customerId)?.phone ?? "") : "";
+  const waAddress = order ? normalizeWa(order.wa).address : "";
+  const mileageNow = order?.mileage ?? 0;
+  const orderKey = order?.id ?? "";
+  useEffect(() => {
+    if (!orderKey) return;
+    setMileageDraft(mileageNow ? String(mileageNow) : "");
+  }, [orderKey, mileageNow]);
+  useEffect(() => {
+    setPhoneDraft(customerPhone);
+    setAddressDraft(waAddress);
+  }, [order?.id, customerPhone, waAddress]);
 
   if (!order) {
     return <Modal open={orderId !== null} onClose={onClose} title="Repair order">That repair order is not in this month.</Modal>;
@@ -128,7 +148,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const booked = order.status === "booked";
   const actor = deskActor(shop);
   const canClose = mayCloseRepairOrder(actor);
-  const lastVisit = highestPriorMileage(Object.values(shop.stores ?? {}), look.vehicle.get(order.vehicleId), order.id);
+  const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), look.vehicle.get(order.vehicleId), { excludeOrderId: order.id, openedOn: order.openedOn });
   const gaps = advisorCloseGaps(order, {
     customer: look.customer.get(order.customerId),
     vehicle: look.vehicle.get(order.vehicleId),
@@ -196,9 +216,71 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             {BAYS.map((bay) => <option key={bay} value={bay}>{BAY_LABEL[bay]}</option>)}
           </select>
         </Field>
+        <Field label="Customer phone">
+          <input
+            className="field"
+            disabled={locked}
+            value={phoneDraft}
+            onChange={(event) => setPhoneDraft(event.target.value)}
+            onBlur={() => {
+              if (!locked) shop.updateOpenContact(order.id, { phone: phoneDraft });
+            }}
+          />
+        </Field>
+        <Field label="Address">
+          <input
+            className="field"
+            disabled={locked}
+            value={addressDraft}
+            onChange={(event) => setAddressDraft(event.target.value)}
+            onBlur={() => {
+              if (!locked) shop.updateOpenContact(order.id, { address: addressDraft });
+            }}
+          />
+        </Field>
         <Field label="Mileage in">
-          <input className="field tabular-nums" disabled={locked} type="number" min={1} value={order.mileage} onChange={(event) => shop.updateOrder(order.id, { mileage: Number(event.target.value) })} />
-          {lastVisit ? <p className="mt-1 text-sm text-muted">Last visit was {lastVisit.mileage.toLocaleString("en-US")} miles on {lastVisit.date}.</p> : null}
+          <input
+            className="field tabular-nums"
+            disabled={locked}
+            inputMode="numeric"
+            value={mileageDraft}
+            onChange={(event) => {
+              setMileageDraft(event.target.value);
+              setMileageError("");
+            }}
+            onBlur={() => {
+              if (locked) return;
+              const next = Number(mileageDraft);
+              if (!mileageDraft.trim() || !Number.isFinite(next) || next <= 0) {
+                setMileageError("Mileage in has to be greater than zero.");
+                return;
+              }
+              if (next > 999999) {
+                setMileageError("Mileage in can't be over 999,999.");
+                return;
+              }
+              const floor = mileageFloorMessage(next, lastVisit);
+              if (floor) {
+                setMileageError(floor);
+                return;
+              }
+              setMileageError("");
+              if (next !== order.mileage) shop.updateOrder(order.id, { mileage: next });
+            }}
+          />
+          {lastVisit ? <p className="mt-1 text-sm font-normal text-muted">{lastVisitHint(lastVisit)}</p> : null}
+          {mileageError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{mileageError}</p> : null}
+          {!locked && mileageError && actor === "service-manager" ? (
+            <div className="mt-2 grid gap-2">
+              <textarea className="field min-h-16" placeholder="Reason, at least 10 characters" value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />
+              <Button type="button" onClick={() => {
+                const next = Number(mileageDraft);
+                const result = shop.recordMileageOverride(order.id, next, overrideReason);
+                setMileageError(result.error ?? "");
+                if (result.ok) setOverrideReason("");
+              }}>Save mileage with a reason</Button>
+            </div>
+          ) : null}
         </Field>
         <Field label="Mileage out">
           <input className="field tabular-nums" disabled={sealed} type="number" min={0} value={order.mileageOut ?? ""} placeholder="When it leaves" onChange={(event) => shop.updateOrder(order.id, { mileageOut: event.target.value === "" ? null : Math.max(0, Number(event.target.value) || 0) })} />
@@ -227,13 +309,13 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
                 )}
               </div>
               <Field label="Concern">
-                <textarea className="field min-h-20" rows={2} disabled={locked} value={job.concern} onChange={(event) => shop.updateJob(order.id, job.id, { concern: event.target.value })} />
+                <textarea id={`job-${job.id}-concern`} className="field min-h-20" rows={2} disabled={locked} value={job.concern} onChange={(event) => shop.updateJob(order.id, job.id, { concern: event.target.value })} />
               </Field>
               <Field label="Cause">
-                <textarea className="field min-h-20" rows={2} disabled={locked} placeholder="What you found" value={job.cause} onChange={(event) => shop.updateJob(order.id, job.id, { cause: event.target.value })} />
+                <textarea id={`job-${job.id}-cause`} className="field min-h-20" rows={2} disabled={locked} placeholder="What you found" value={job.cause} onChange={(event) => shop.updateJob(order.id, job.id, { cause: event.target.value })} />
               </Field>
               <Field label="Correction">
-                <textarea className="field min-h-20" rows={2} disabled={locked} placeholder="What you did" value={job.correction} onChange={(event) => shop.updateJob(order.id, job.id, { correction: event.target.value })} />
+                <textarea id={`job-${job.id}-correction`} className="field min-h-20" rows={2} disabled={locked} placeholder="What you did" value={job.correction} onChange={(event) => shop.updateJob(order.id, job.id, { correction: event.target.value })} />
               </Field>
             </article>
           ))}
@@ -500,7 +582,27 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       {closeError ? <p role="alert" className="mt-2 whitespace-pre-line text-sm text-[#8a3b2a]">{closeError}</p> : null}
       {booked && gaps.length > 0 ? (
         <ul className="mt-2 grid gap-1 text-sm text-muted">
-          {gaps.map((gap) => <li key={gap}>{gap}</li>)}
+          {gaps.map((gap) => {
+            const match = /^(Concern|Cause|Correction) on line (\S+)/.exec(gap);
+            const job = match ? (order.jobs ?? []).find((row) => row.code === match[2]) : undefined;
+            if (!match || !job) return <li key={gap}>{gap}</li>;
+            const field = match[1].toLowerCase();
+            return (
+              <li key={gap}>
+                <button
+                  type="button"
+                  className="text-left underline"
+                  onClick={() => {
+                    const target = document.getElementById(`job-${job.id}-${field}`);
+                    target?.scrollIntoView({ block: "center" });
+                    target?.focus();
+                  }}
+                >
+                  {gap}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
       <WaAuth orderId={order.id} />

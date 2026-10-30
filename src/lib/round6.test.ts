@@ -185,7 +185,7 @@ describe("round 6", () => {
     });
     const error = shop.getState().closeOrderWithNoWork(id, "Customer left before any work").error ?? "";
     assert.match(error, /80,210/);
-    assert.match(error, /2026-09-02/);
+    assert.match(error, /Sep 2, 2026/);
   });
 
   it("blocks a close when a job line with work is missing its concern", () => {

@@ -16,8 +16,8 @@ import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normali
 import { fullVin } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
-import { highestPriorMileage, mileageFloorMessage } from "./mileage";
-import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, noWorkCloseError, unbookRepairOrder } from "./ro";
+import { lastVisitMileage, mileageFloorMessage } from "./mileage";
+import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, mileageOverrideAllows, mileageReasonError, noWorkCloseError, unbookRepairOrder } from "./ro";
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
 import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
 
@@ -28,6 +28,8 @@ export interface NewOrderInput {
   lines: { concern: string }[];
   mileage: number;
   mileageOut?: number | null;
+  /** Service manager only. Lets mileage in sit below the last visit. */
+  mileageReason?: string;
   promiseTime: string;
   labor?: Omit<LaborLine, "id">[];
 }
@@ -79,6 +81,10 @@ interface ShopActions {
   closeOrder: (orderId: string) => { ok: boolean; error: string | null };
   /** $0 close for an open or booked repair order with no work. The RO number stays. */
   closeOrderWithNoWork: (orderId: string, note: string) => { ok: boolean; error: string | null };
+  /** Service manager only. Saves a below-last-visit mileage in and logs the reason. */
+  recordMileageOverride: (orderId: string, mileage: number, reason: string) => { ok: boolean; error: string | null };
+  /** Phone and address on an open repair order. Locked once the repair order is closed. */
+  updateOpenContact: (orderId: string, patch: { phone?: string; address?: string }) => void;
   addLabor: (orderId: string, line: Omit<LaborLine, "id">) => void;
   updateLabor: (orderId: string, lineId: string, patch: Partial<LaborLine>) => void;
   removeLabor: (orderId: string, lineId: string) => void;
@@ -394,17 +400,26 @@ function applyFeeChange(order: RepairOrder, fees: FeeLine[], who: { id: string; 
   return appendHistory({ ...order, fees }, entry(who, { kind: "fee-changed", field: "fees", before, after, text: `${text}. ${before} → ${after}` }));
 }
 
-function shopsFrom(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }) {
-  const stores = state.stores ? Object.values(state.stores) : [];
-  const shops = stores
+function shopsFrom(state: { orders: RepairOrder[]; vehicles: Vehicle[]; activeStoreId?: string; stores?: Partial<Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }>> }) {
+  const activeId = state.activeStoreId === "pullman" ? "pullman" : "grand-coulee";
+  const stores = { ...(state.stores ?? {}) };
+  stores[activeId] = { ...(stores[activeId] ?? {}), orders: state.orders, vehicles: state.vehicles };
+  const shops = Object.values(stores)
     .filter((shop) => shop && Array.isArray(shop.orders) && Array.isArray(shop.vehicles))
     .map((shop) => ({ orders: shop.orders ?? [], vehicles: shop.vehicles ?? [] }));
   return shops.length > 0 ? shops : [{ orders: state.orders, vehicles: state.vehicles }];
 }
 
-function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: RepairOrder) {
+function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: Pick<RepairOrder, "id" | "vehicleId" | "openedOn">) {
   const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
-  return highestPriorMileage(shopsFrom(state), vehicle, order.id);
+  return lastVisitMileage(shopsFrom(state), vehicle, { excludeOrderId: order.id, openedOn: order.openedOn });
+}
+
+function serviceManager(state: ShopData): { id: string; name: string } | null {
+  if (deskActor(state) !== "service-manager") return null;
+  const advisor = state.advisors.find((row) => row.id === state.workingAsId && row.role === "service-manager");
+  if (!advisor) return null;
+  return { id: advisor.id, name: advisor.name };
 }
 
 function normalizePayments(value: unknown): RoPayment[] {
@@ -423,18 +438,6 @@ function normalizePayments(value: unknown): RoPayment[] {
   return rows;
 }
 
-const HISTORY_KINDS = new Set<string>([
-  "labor-removed",
-  "part-removed",
-  "fees-dropped",
-  "closed",
-  "reopened",
-  "amended",
-  "job-removed",
-  "diagnosis-cleared",
-  "fee-changed",
-]);
-
 function normalizeHistory(value: unknown): RoHistoryEntry[] {
   if (!Array.isArray(value)) return [];
   const rows: RoHistoryEntry[] = [];
@@ -442,9 +445,8 @@ function normalizeHistory(value: unknown): RoHistoryEntry[] {
     if (!item || typeof item !== "object") continue;
     const entry = item as RoHistoryEntry;
     if (typeof entry.text !== "string") continue;
-    const kind = typeof entry.kind === "string" && entry.kind
-      ? (HISTORY_KINDS.has(entry.kind) ? entry.kind : entry.kind) as RoHistoryEntry["kind"]
-      : "closed";
+    const rawKind = typeof entry.kind === "string" ? entry.kind.trim() : "";
+    const kind = (rawKind || "note") as RoHistoryEntry["kind"];
     const row: RoHistoryEntry = {
       at: cleanRecordedWhen(entry.at) ?? "",
       who: cleanRecordedName(entry.who),
@@ -712,9 +714,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         stockApplied: (prior.status as string) === "invoiced" && !historyIds.has(prior.id) ? false : Boolean(prior.stockApplied),
         authorizationLocked: prior.status === "closed" || ((prior.status as string) === "invoiced" && historyIds.has(prior.id)) ? true : Boolean(prior.authorizationLocked),
       };
-      const previouslyClosed = Boolean(prior.authorizationLocked)
-        || (Array.isArray(prior.history) && prior.history.some((entry) => entry && (entry.kind === "closed" || entry.kind === "reopened" || entry.kind === "amended")));
+      const previouslyClosed = Boolean(prior.authorizationLocked) || historyIds.has(prior.id);
       if (previouslyClosed) {
+        if (built.status !== "closed" && !built.stockApplied && built.parts.some((line) => line.partId && line.qty)) {
+          const nextShelf = applyPartStock(shelf, built, -1, typeof prior.invoicedOn === "string" ? prior.invoicedOn : "");
+          shelf.splice(0, shelf.length, ...nextShelf);
+          built.stockApplied = true;
+        }
         built.status = "closed";
         built.authorizationLocked = true;
       }
@@ -906,7 +912,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (typeof patch.targetAbsorption === "number" && Number.isFinite(patch.targetAbsorption)) settings.targetAbsorption = Math.max(0, patch.targetAbsorption);
           if (typeof patch.targetElr === "number" && Number.isFinite(patch.targetElr)) settings.targetElr = Math.max(0, patch.targetElr);
           if (typeof patch.policyGuide === "number" && Number.isFinite(patch.policyGuide)) settings.policyGuide = Math.max(0, patch.policyGuide);
-          const fees = Array.isArray(patch.fees) ? patch.fees.map((line) => ({ ...line })) : settings.fees;
+          const fees = Array.isArray(patch.fees) ? normalizeFees(patch.fees) : settings.fees;
           const taxRate = patch.taxRate === undefined || !Number.isFinite(Number(patch.taxRate)) ? settings.taxRate : Math.max(0, Number(patch.taxRate) || 0);
           settings.fees = fees;
           settings.taxRate = taxRate;
@@ -1056,8 +1062,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                     skill: patch.skill === undefined ? tech.skill : patch.skill,
                     payStyle: patch.payStyle === undefined ? tech.payStyle : patch.payStyle,
                     board: patch.board === undefined ? tech.board : patch.board,
-                    flagRate: patch.flagRate === undefined ? tech.flagRate : money2(Math.max(0, patch.flagRate)),
-                    hourlyRate: patch.hourlyRate === undefined ? tech.hourlyRate : money2(Math.max(0, patch.hourlyRate)),
+                    flagRate: patch.flagRate === undefined || !Number.isFinite(patch.flagRate) ? tech.flagRate : money2(Math.max(0, patch.flagRate)),
+                    hourlyRate: patch.hourlyRate === undefined || !Number.isFinite(patch.hourlyRate) ? tech.hourlyRate : money2(Math.max(0, patch.hourlyRate)),
                   }
                 : tech,
             ),
@@ -1118,9 +1124,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                     number,
                     name,
                     role: advisor.role,
-                    base: patch.base === undefined ? advisor.base : money2(Math.max(0, patch.base)),
-                    laborPercent: patch.laborPercent === undefined ? advisor.laborPercent : Math.max(0, patch.laborPercent),
-                    partsPercent: patch.partsPercent === undefined ? advisor.partsPercent : Math.max(0, patch.partsPercent),
+                    base: patch.base === undefined || !Number.isFinite(patch.base) ? advisor.base : money2(Math.max(0, patch.base)),
+                    laborPercent: patch.laborPercent === undefined || !Number.isFinite(patch.laborPercent) ? advisor.laborPercent : Math.max(0, patch.laborPercent),
+                    partsPercent: patch.partsPercent === undefined || !Number.isFinite(patch.partsPercent) ? advisor.partsPercent : Math.max(0, patch.partsPercent),
                   }
                 : advisor,
             ),
@@ -1146,15 +1152,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             if (lockedOrder(order)) return order;
             const status = patch.status && OPEN_STATUS_PATCH.has(patch.status) && order.status !== "booked" ? patch.status : order.status;
             let mileage = order.mileage;
-            if (patch.mileage !== undefined && Number.isFinite(patch.mileage) && patch.mileage > 0) {
+            if (patch.mileage !== undefined && Number.isFinite(patch.mileage) && patch.mileage > 0 && patch.mileage <= 999999) {
               const blocked = mileageFloorMessage(patch.mileage, lastVisitFor(state, order));
-              if (!blocked) mileage = patch.mileage;
+              if (!blocked || mileageOverrideAllows(order, patch.mileage)) mileage = patch.mileage;
+            }
+            let mileageOut = order.mileageOut;
+            if (patch.mileageOut !== undefined) {
+              if (patch.mileageOut === null) mileageOut = null;
+              else if (Number.isFinite(patch.mileageOut) && patch.mileageOut >= 0 && patch.mileageOut <= 999999) mileageOut = patch.mileageOut;
             }
             return {
               ...order,
-              concern: patch.concern !== undefined ? patch.concern : order.concern,
+              concern: typeof patch.concern === "string" ? patch.concern : order.concern,
               mileage,
-              mileageOut: patch.mileageOut !== undefined ? patch.mileageOut : order.mileageOut,
+              mileageOut,
               promiseTime: patch.promiseTime !== undefined ? patch.promiseTime : order.promiseTime,
               advisorId: patch.advisorId !== undefined && state.advisors.some((row) => row.id === patch.advisorId) ? patch.advisorId : order.advisorId,
               bay: patch.bay !== undefined ? patch.bay : order.bay,
@@ -1325,6 +1336,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           customer,
           vehicle,
           lastVisit: lastVisitFor(state, order),
+          techs: state.techs,
         });
         if (error) return { ok: false, error };
         const next = withSnapshot({ ...closeRepairOrderWithNoWork(order, note, who, now().toISOString(), today()), authorizationLocked: true }, customer, vehicle);
@@ -1334,10 +1346,71 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }));
         return { ok: true, error: null };
       },
+      recordMileageOverride: (orderId, mileage, reason) => {
+        const state = get();
+        const order = state.orders.find((row) => row.id === orderId);
+        if (!order) return { ok: false, error: "That repair order is not on this store." };
+        if (lockedOrder(order)) return { ok: false, error: "This repair order is closed and can't be changed." };
+        const who = serviceManager(state);
+        if (!who) return { ok: false, error: "Only a service manager can record a mileage exception." };
+        const reasonError = mileageReasonError(reason);
+        if (reasonError) return { ok: false, error: reasonError };
+        if (!Number.isFinite(mileage) || mileage <= 0) return { ok: false, error: "Mileage in has to be greater than zero." };
+        if (mileage > 999999) return { ok: false, error: "Mileage in can't be over 999,999." };
+        const last = lastVisitFor(state, order);
+        const below = mileageFloorMessage(mileage, last);
+        const row = below
+          ? entry(who, {
+              kind: "mileage-override",
+              field: "mileage",
+              before: String(last?.mileage ?? ""),
+              after: String(mileage),
+              reason: reason.trim(),
+              text: `${below} ${reason.trim()}`,
+            })
+          : null;
+        set((shop) => ({
+          orders: mapOrder(shop.orders, orderId, (live) => {
+            if (lockedOrder(live)) return live;
+            const next = { ...live, mileage };
+            return row ? appendHistory(next, row) : next;
+          }),
+        }));
+        return { ok: true, error: null };
+      },
+      updateOpenContact: (orderId, patch) =>
+        set((state) => {
+          const order = state.orders.find((row) => row.id === orderId);
+          if (!order || lockedOrder(order)) return state;
+          const who = matchedStaff(state);
+          let customers = state.customers;
+          let next = order;
+          if (typeof patch.phone === "string") {
+            const customer = customers.find((row) => row.id === order.customerId);
+            const before = customer?.phone ?? "";
+            const after = patch.phone.trim();
+            if (customer && before !== after) {
+              customers = customers.map((row) => (row.id === customer.id ? { ...row, phone: after } : row));
+              next = appendHistory(next, entry(who, { kind: "amended", field: "phone", before, after, text: `Phone: ${before || "blank"} → ${after || "blank"}` }));
+            }
+          }
+          if (typeof patch.address === "string") {
+            const wa = normalizeWa(next.wa);
+            const before = wa.address;
+            const after = patch.address.trim();
+            if (before !== after) {
+              next = appendHistory({ ...next, wa: { ...wa, address: after } }, entry(who, { kind: "amended", field: "address", before, after, text: `Address: ${before || "blank"} → ${after || "blank"}` }));
+            }
+          }
+          return { customers, orders: mapOrder(state.orders, orderId, () => next) };
+        }),
       addLabor: (orderId, line) =>
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
-            if (lockedOrder(order) || !(line.hours >= 0)) return order;
+            if (lockedOrder(order)) return order;
+            if (!Number.isFinite(line.hours) || line.hours < 0) return order;
+            if (!Number.isFinite(line.rate) || line.rate < 0) return order;
+            if (line.techId && !state.techs.some((tech) => tech.id === line.techId)) return order;
             return { ...order, labor: [...order.labor, { ...line, id: uid("lb") }] };
           }),
         })),
@@ -1353,7 +1426,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 if (typeof patch.opcode === "string") next.opcode = patch.opcode;
                 if (typeof patch.description === "string") next.description = patch.description;
                 if (typeof patch.payType === "string") next.payType = patch.payType;
-                if (typeof patch.techId === "string") next.techId = patch.techId;
+                if (typeof patch.techId === "string" && (patch.techId === "" || state.techs.some((tech) => tech.id === patch.techId))) next.techId = patch.techId;
                 if (patch.hours !== undefined) {
                   if (!Number.isFinite(patch.hours) || patch.hours < 0) return line;
                   next.hours = patch.hours;
@@ -1395,13 +1468,18 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const order = state.orders.find((row) => row.id === orderId);
           if (!order || lockedOrder(order) || isSealed(order.status)) return state;
           if (!order.labor.some((line) => line.techId === techId)) return state;
-          const now = localStamp();
+          const stamp = localStamp();
           const open = state.timeLogs.find((row) => row.techId === techId && row.endedAt === null && row.orderId === orderId);
           if (open) return state;
           return {
             timeLogs: [
-              ...state.timeLogs.map((row) => (row.techId === techId && row.endedAt === null ? { ...row, endedAt: now } : row)),
-              { id: uid("clk"), techId, orderId, startedAt: now, endedAt: null },
+              ...state.timeLogs.map((row) => {
+                if (row.techId !== techId || row.endedAt !== null) return row;
+                const punched = state.orders.find((item) => item.id === row.orderId);
+                if (punched && lockedOrder(punched)) return row;
+                return { ...row, endedAt: stamp };
+              }),
+              { id: uid("clk"), techId, orderId, startedAt: stamp, endedAt: null },
             ],
           };
         }),
@@ -1421,6 +1499,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
             if (lockedOrder(order)) return order;
+            if (!Number.isFinite(line.qty) || line.qty < 0) return order;
+            if (!Number.isFinite(line.price) || line.price < 0) return order;
+            if (!Number.isFinite(line.cost) || line.cost < 0) return order;
             return { ...order, parts: [...order.parts, { ...line, condition: line.condition ?? "new", id: uid("pt") }] };
           }),
         })),
@@ -1492,15 +1573,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => ({
           laborOps: state.laborOps.map((op) => {
             if (op.id !== id) return op;
-            const next = { ...op, ...patch };
+            const next = { ...op };
             if (patch.opcode !== undefined) {
               const opcode = patch.opcode.toUpperCase();
               const trimmed = opcode.trim();
               if (trimmed && state.laborOps.some((row) => row.id !== id && row.opcode.toUpperCase() === trimmed)) return op;
               next.opcode = opcode;
             }
-            if (patch.description !== undefined) next.description = patch.description;
-            if (patch.hours !== undefined) next.hours = patch.hours < 0 ? op.hours : money2(patch.hours);
+            if (typeof patch.description === "string") next.description = patch.description;
+            if (patch.hours !== undefined && Number.isFinite(patch.hours) && patch.hours >= 0) next.hours = money2(patch.hours);
+            if (typeof patch.payType === "string") next.payType = patch.payType;
             return next;
           }),
         })),
@@ -1520,9 +1602,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           const payTypes = state.payTypes.map((row) => {
             if (row.id !== id) return row;
-            const next = { ...row, ...patch };
-            if (patch.name !== undefined) next.name = patch.name;
-            if (patch.rate !== undefined) next.rate = money2(Math.max(0, patch.rate));
+            const next = { ...row };
+            if (typeof patch.name === "string") next.name = patch.name;
+            if (patch.rate !== undefined && Number.isFinite(patch.rate)) next.rate = money2(Math.max(0, patch.rate));
+            if (patch.kind === "customer" || patch.kind === "warranty" || patch.kind === "internal") next.kind = patch.kind;
             return next;
           });
           const settings = { ...state.settings };
@@ -1616,9 +1699,24 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       createOrder: (input) => {
         const state = get();
         const vehicle = state.vehicles.find((row) => row.id === input.vehicleId);
-        const lastVisit = highestPriorMileage(shopsFrom(state), vehicle);
-        if (!Number.isFinite(input.mileage) || input.mileage <= 0 || mileageFloorMessage(input.mileage, lastVisit)) return "";
+        const openedOn = today();
+        const lastVisit = lastVisitMileage(shopsFrom(state), vehicle, { openedOn });
+        if (!Number.isFinite(input.mileage) || input.mileage <= 0 || input.mileage > 999999) return "";
+        const below = mileageFloorMessage(input.mileage, lastVisit);
+        const manager = serviceManager(state);
+        if (below && (!manager || mileageReasonError(input.mileageReason ?? ""))) return "";
         const id = uid("ro");
+        const reason = (input.mileageReason ?? "").trim();
+        const override = below && manager
+          ? entry(manager, {
+              kind: "mileage-override",
+              field: "mileage",
+              before: String(lastVisit?.mileage ?? ""),
+              after: String(input.mileage),
+              reason,
+              text: `${below} ${reason}`,
+            })
+          : null;
         set((state) => {
           const number = nextOrderNumber(state);
           const written = input.lines.map((line) => line.concern.trim()).filter(Boolean);
@@ -1651,7 +1749,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             closedById: "",
             closedAt: null,
             droppedFeesNote: "",
-            history: [],
+            history: override ? [override] : [],
             payments: [],
           };
           return { orders: [order, ...state.orders], focusOrderId: id };
@@ -1668,7 +1766,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               id: vehicleId,
               customerId,
               year: input.year,
-              make: input.make?.trim() || "Ford",
+              make: input.make === undefined ? "Ford" : input.make.trim(),
               model: input.model.trim(),
               vin: demoVin(),
             },
@@ -1778,9 +1876,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             status: "scheduled",
             orderId: null,
           };
+          const currentVehicle = state.vehicles.find((vehicle) => vehicle.id === row.vehicleId);
+          let vehicles = state.vehicles;
+          let vehicleId = row.vehicleId;
+          if (currentVehicle && vin) {
+            const existing = currentVehicle.vin.trim().toUpperCase();
+            if (!existing) vehicles = vehicles.map((vehicle) => (vehicle.id === currentVehicle.id ? { ...vehicle, vin } : vehicle));
+            else if (existing !== vin) {
+              vehicleId = uid("v");
+              vehicles = [{ ...currentVehicle, id: vehicleId, vin }, ...vehicles];
+            }
+          }
           return {
-            vehicles: state.vehicles.map((vehicle) => (vehicle.id === row.vehicleId && vin ? { ...vehicle, vin } : vehicle)),
-            appointments: [...state.appointments, row].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
+            vehicles,
+            appointments: [...state.appointments, { ...row, vehicleId }].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
           };
         });
         return appointmentId;
@@ -2085,11 +2194,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           };
         }),
       clearShop: () =>
-        set((state) => ({
-          ...createEmptyShop(),
-          settings: state.settings,
-          focusOrderId: null,
-        })),
+        set((state) => {
+          if (!demoMode) return state;
+          return {
+            ...createEmptyShop(),
+            settings: state.settings,
+            focusOrderId: null,
+          };
+        }),
       };
     },
     {

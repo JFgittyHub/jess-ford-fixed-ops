@@ -275,21 +275,23 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
               </Button>
             ) : null}
-            <Button
-              tone={confirmClear ? "accent" : "ghost"}
-              onClick={() => {
-                if (!confirmClear) {
-                  setConfirmClear(true);
-                  setConfirmReset(false);
-                  return;
-                }
-                clearShop();
-                setConfirmClear(false);
-                setOpen(false);
-              }}
-            >
-              {confirmClear ? "Clear shop data now" : "Clear shop data"}
-            </Button>
+            {isDemoMode() ? (
+              <Button
+                tone={confirmClear ? "accent" : "ghost"}
+                onClick={() => {
+                  if (!confirmClear) {
+                    setConfirmClear(true);
+                    setConfirmReset(false);
+                    return;
+                  }
+                  clearShop();
+                  setConfirmClear(false);
+                  setOpen(false);
+                }}
+              >
+                {confirmClear ? "Clear shop data now" : "Clear shop data"}
+              </Button>
+            ) : null}
           </div>
         </form>
       </Modal>

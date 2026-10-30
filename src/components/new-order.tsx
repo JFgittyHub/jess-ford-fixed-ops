@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { PROMISE_TIMES, clockTime } from "@/lib/format";
+import { PROMISE_TIMES, clockTime, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
-import { highestPriorMileage, mileageFloorMessage } from "@/lib/mileage";
+import { lastVisitHint, lastVisitMileage, mileageFloorMessage } from "@/lib/mileage";
+import { deskActor } from "@/lib/cancel";
 import { rateFor } from "@/lib/pay";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { useShop } from "@/lib/store";
@@ -23,6 +24,7 @@ type NewOrderPreset = {
   lines?: { concern: string }[];
   laborOpIds?: string[];
   appointmentId?: string;
+  mileage?: string;
 };
 
 function presetIdentity(preset?: NewOrderPreset) {
@@ -63,14 +65,16 @@ function NewOrderForm({
   const [vehicleId, setVehicleId] = useState(preset?.vehicleId ?? vehicles[0]?.id ?? "");
   const [advisorId, setAdvisorId] = useState(preset?.advisorId ?? shop.advisors[0]?.id ?? "");
   const [lines, setLines] = useState<DraftLine[]>([draftLine(preset?.concern ?? "")]);
-  const [mileage, setMileage] = useState("40000");
+  const [mileage, setMileage] = useState("");
   const [mileageOut, setMileageOut] = useState("");
   const [promiseTime, setPromiseTime] = useState("16:00");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [year, setYear] = useState("");
   const [formError, setFormError] = useState("");
-  const [model, setModel] = useState("F-150 XLT");
+  const [model, setModel] = useState("");
+  const [make, setMake] = useState("");
+  const [mileageReason, setMileageReason] = useState("");
 
   const seeded = preset?.lines?.map((line) => line.concern.trim()).filter(Boolean).join("\n") || preset?.concern || "";
 
@@ -78,9 +82,13 @@ function NewOrderForm({
     if (!open) return;
     const next = seeded ? seeded.split("\n") : [""];
     setLines(next.map((concern) => draftLine(concern)));
-  }, [open, seeded]);
+    if (preset?.mileage) setMileage(preset.mileage);
+  }, [open, seeded, preset?.mileage]);
 
   const resolvedVehicle = vehicles.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : vehicles[0]?.id ?? "";
+  const pickedVehicle = shop.vehicles.find((row) => row.id === (mode === "new" ? "" : resolvedVehicle));
+  const visitHint = lastVisitHint(lastVisitMileage(Object.values(shop.stores ?? {}), pickedVehicle, { openedOn: today() }));
+  const canOverrideMileage = deskActor(shop) === "service-manager";
   const written = lines.map((line) => line.concern.trim()).filter(Boolean);
 
   return (
@@ -97,11 +105,23 @@ function NewOrderForm({
           let nextVehicle = resolvedVehicle;
           if (mode === "new") {
             const parsedYear = Number(year);
-            if (!name.trim() || !model.trim() || !Number.isFinite(parsedYear) || parsedYear <= 0) return;
+            if (!year.trim() || !Number.isFinite(parsedYear) || parsedYear <= 0) {
+              setFormError("Add the year.");
+              return;
+            }
+            if (!make.trim()) {
+              setFormError("Add the make.");
+              return;
+            }
+            if (!name.trim() || !model.trim()) {
+              setFormError("Add the customer name and model.");
+              return;
+            }
             const created = shop.createCustomer({
               name,
               phone,
               year: parsedYear,
+              make: make.trim(),
               model,
             });
             nextCustomer = created.customerId;
@@ -110,12 +130,17 @@ function NewOrderForm({
           if (!nextCustomer || !nextVehicle || written.length === 0) return;
           const miles = Number(mileage);
           const vehicle = shop.vehicles.find((row) => row.id === nextVehicle);
-          const floor = mileageFloorMessage(miles, highestPriorMileage(Object.values(shop.stores ?? {}), vehicle));
-          if (!Number.isFinite(miles) || miles <= 0) {
+          const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedOn: today() });
+          const floor = mileageFloorMessage(miles, lastVisit);
+          if (!mileage.trim() || !Number.isFinite(miles) || miles <= 0) {
             setFormError("Mileage in has to be greater than zero.");
             return;
           }
-          if (floor) {
+          if (miles > 999999) {
+            setFormError("Mileage in can't be over 999,999.");
+            return;
+          }
+          if (floor && (deskActor(shop) !== "service-manager" || mileageReason.trim().length < 10)) {
             setFormError(floor);
             return;
           }
@@ -128,7 +153,8 @@ function NewOrderForm({
             vehicleId: nextVehicle,
             advisorId,
             lines: written.map((concern) => ({ concern })),
-            mileage: Number(mileage) || 0,
+            mileage: miles,
+            mileageReason: floor ? mileageReason : undefined,
             mileageOut: mileageOut.trim() === "" ? null : Math.max(0, Number(mileageOut) || 0),
             promiseTime,
             labor: (preset?.laborOpIds ?? []).flatMap((opId) => {
@@ -178,9 +204,10 @@ function NewOrderForm({
           <>
             <Field label="Name"><input className="field" value={name} onChange={(event) => setName(event.target.value)} required /></Field>
             <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 010-0142" /></Field>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Year"><input className="field tabular-nums" type="number" min={1990} max={2027} placeholder="Year" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
-              <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} /></Field>
+              <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} placeholder="Ford" /></Field>
+              <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="F-150" /></Field>
             </div>
           </>
         )}
@@ -212,7 +239,11 @@ function NewOrderForm({
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Mileage in"><input className="field tabular-nums" type="number" min={0} value={mileage} onChange={(event) => setMileage(event.target.value)} /></Field>
+          <Field label="Mileage in">
+            <input className="field tabular-nums" aria-label="Mileage in" inputMode="numeric" value={mileage} onChange={(event) => setMileage(event.target.value)} />
+            {visitHint ? <p className="mt-1 text-sm font-normal text-muted">{visitHint}</p> : null}
+            {canOverrideMileage ? <textarea className="field mt-2 min-h-16" placeholder="Service manager reason if mileage is below the last visit" value={mileageReason} onChange={(event) => setMileageReason(event.target.value)} /> : null}
+          </Field>
           <Field label="Mileage out"><input className="field tabular-nums" type="number" min={0} value={mileageOut} placeholder="Optional" onChange={(event) => setMileageOut(event.target.value)} /></Field>
           <Field label="Promise">
             <select className="field" value={promiseTime} onChange={(event) => setPromiseTime(event.target.value)}>

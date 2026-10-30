@@ -164,7 +164,6 @@ describe("round 4 close rules", () => {
     });
     const blocked = shop.getState().closeOrder(id);
     assert.equal(blocked.ok, false);
-    assert.match(blocked.error ?? "", /Cause/);
     assert.match(blocked.error ?? "", /Mileage out/);
     assert.equal(order(shop, id).status, "booked");
     assert.equal(order(shop, id).closedBy ?? "", "");

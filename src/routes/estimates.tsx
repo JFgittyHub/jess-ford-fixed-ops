@@ -4,6 +4,7 @@ import { printRepairOrder } from "@/components/repair-order-print";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
 import { feeCharge, feeTotal, salesTax, today, usd } from "@/lib/format";
+import { lastVisitMileage, mileageFloorMessage } from "@/lib/mileage";
 import { lineLetter } from "@/lib/jobs";
 import { partSell, rateFor } from "@/lib/pay";
 import { useShop } from "@/lib/store";
@@ -84,12 +85,27 @@ function EstimatesPage() {
       setError("Add a concern, a labor op, or a part.");
       return;
     }
+    const miles = Number(mileage);
+    const vehicle = shop.vehicles.find((row) => row.id === vehicleOk);
+    const floor = mileageFloorMessage(miles, lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedOn: today() }));
+    if (!String(mileage).trim() || !Number.isFinite(miles) || miles <= 0) {
+      setError("Mileage in has to be greater than zero.");
+      return;
+    }
+    if (miles > 999999) {
+      setError("Mileage in can't be over 999,999.");
+      return;
+    }
+    if (floor) {
+      setError(floor);
+      return;
+    }
     const id = shop.createOrder({
       customerId,
       vehicleId: vehicleOk,
       advisorId,
       lines: written.length > 0 ? written.map((concern) => ({ concern })) : [{ concern: "Estimate" }],
-      mileage: Number(mileage) || 0,
+      mileage: miles,
       promiseTime: "",
       labor: labor.map((line) => ({
         opcode: line.opcode,
@@ -111,6 +127,10 @@ function EstimatesPage() {
         payType: "cp",
         condition: "new",
       });
+    }
+    if (!id) {
+      setError(floor ?? "That repair order was not opened.");
+      return;
     }
     shop.updateWa(id, { choice: "written", estimate: beforeTax, date: today(), time: "08:00" });
     navigate({ to: "/orders" });

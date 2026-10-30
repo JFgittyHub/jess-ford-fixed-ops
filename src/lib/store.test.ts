@@ -134,8 +134,9 @@ describe("shop store", () => {
   });
 
   it("keeps settings when the shop is cleared or the sample month is loaded", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const empty = createEmptyShop();
-    useShop.setState({
+    shop.setState({
       ...empty,
       settings: {
         ...empty.settings,
@@ -146,8 +147,8 @@ describe("shop store", () => {
       customers: [{ id: "c", name: "Helen", phone: "5095550100", mobile: "", email: "helen@example.com", noShows: 0 }],
       orders: [bookedOrder()],
     });
-    useShop.getState().clearShop();
-    const cleared = useShop.getState();
+    shop.getState().clearShop();
+    const cleared = shop.getState();
     assert.equal(cleared.orders.length, 0);
     assert.equal(cleared.customers.length, 0);
     assert.equal("adminPassword" in cleared.settings, false);
@@ -155,8 +156,8 @@ describe("shop store", () => {
     assert.equal(cleared.settings.cpRate, 210);
     assert.equal(cleared.settings.targetElr, 190);
 
-    useShop.getState().resetDemo();
-    const seeded = useShop.getState();
+    shop.getState().resetDemo();
+    const seeded = shop.getState();
     assert.ok(seeded.customers.length > 0);
     assert.equal("adminPassword" in seeded.settings, false);
     assert.equal(seeded.settings.storeName, "Coulee");
@@ -166,17 +167,25 @@ describe("shop store", () => {
   });
 
   it("treats a cleared shop as real data and a loaded sample as the demo dataset", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const sample = createSeed();
-    useShop.setState({
+    shop.setState({
       ...sample,
       settings: { ...sample.settings, storeName: "Coulee" },
     });
-    useShop.getState().clearShop();
-    assert.equal(useShop.getState().dataset, "shop");
-    assert.equal(useShop.getState().settings.storeName, "Coulee");
-    useShop.getState().resetDemo();
-    assert.equal(useShop.getState().dataset, "sample");
-    assert.equal(useShop.getState().settings.storeName, "Coulee");
+    shop.getState().clearShop();
+    assert.equal(shop.getState().dataset, "shop");
+    assert.equal(shop.getState().settings.storeName, "Coulee");
+    shop.getState().resetDemo();
+    assert.equal(shop.getState().dataset, "sample");
+    assert.equal(shop.getState().settings.storeName, "Coulee");
+  });
+
+  it("does not clear a real shop outside demo mode", () => {
+    const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
+    shop.setState({ orders: [bookedOrder()] });
+    shop.getState().clearShop();
+    assert.equal(shop.getState().orders.some((row) => row.id === "ro-1"), true);
   });
 
   it("strips staff passwords and the admin password on every load path", () => {

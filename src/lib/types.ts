@@ -17,7 +17,7 @@ export interface RoHistoryEntry {
   at: string;
   who: string;
   whoId: string;
-  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed" | "reopened" | "amended" | "job-removed" | "diagnosis-cleared" | "fee-changed";
+  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed" | "reopened" | "amended" | "job-removed" | "diagnosis-cleared" | "fee-changed" | "mileage-override" | "note";
   text: string;
   /** Which field changed, when this entry is an amendment. */
   field?: string;
@@ -111,7 +111,7 @@ export interface Advisor {
   base: number;
   laborPercent: number;
   partsPercent: number;
-  /** Absent means advisor. Only a service manager may change a closed repair order. */
+  /** Absent means advisor. A service manager may log a mileage exception on an open repair order. */
   role?: "advisor" | "service-manager";
 }
 
@@ -175,6 +175,8 @@ export interface LaborLine {
   rate: number;
   payType: PayType;
   techId: string;
+  /** Which job line this labor belongs to. Missing means the first line. */
+  jobId?: string;
 }
 
 export interface LaborOp {
@@ -202,6 +204,8 @@ export interface PartLine {
   price: number;
   payType: PayType;
   condition?: "new" | "rebuilt" | "used";
+  /** Which job line this part belongs to. Missing means the first line. */
+  jobId?: string;
 }
 
 export interface RepairOrder {

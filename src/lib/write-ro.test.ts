@@ -14,6 +14,7 @@ type Preset = {
   concern?: string;
   laborOpIds?: string[];
   appointmentId?: string;
+  mileage?: string;
 };
 
 type NewOrderProps = {
@@ -463,7 +464,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "glenn",
         vehicleId: "glenn-car",
         advisorId: "advisor-glenn",
@@ -495,7 +496,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "mina",
         vehicleId: "mina-suv",
         advisorId: "advisor-mina",
@@ -532,7 +533,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: { customerId: "glenn", vehicleId: "glenn-car", concern: "Tire rotation" },
+      preset: { mileage: "40000", customerId: "glenn", vehicleId: "glenn-car", concern: "Tire rotation" },
     });
     const [customer, vehicle] = view.selects();
     assert.equal(customer?.value, "glenn");
@@ -551,7 +552,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: { customerId: "mina", vehicleId: "mina-suv", concern: "Alignment" },
+      preset: { mileage: "40000", customerId: "mina", vehicleId: "mina-suv", concern: "Alignment" },
     });
     const [nextCustomer, nextVehicle] = view.selects();
     assert.equal(nextCustomer?.value, "mina");
@@ -589,7 +590,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "glenn",
         vehicleId: "glenn-car",
         advisorId: "advisor-glenn",
@@ -625,7 +626,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "glenn",
         vehicleId: "glenn-car",
         advisorId: "advisor-glenn",
@@ -641,6 +642,36 @@ describe("Write RO", () => {
     assert.deepEqual(order.labor.map((line) => line.opcode), ["DSL"]);
     assert.equal(order.labor.every((line) => line.techId === ""), true);
     view.root.unmount();
+  });
+});
+
+describe("RO editor", () => {
+  before(async () => {
+    installTestDom();
+  });
+
+  it("renders an open and a closed repair order for every role", async () => {
+    const { OrderEditor } = await import("../components/order-editor.tsx");
+    const { createSeed } = await import("./seed.ts");
+    useShop.setState({ ...createSeed("grand-coulee"), focusOrderId: null });
+    const open = useShop.getState().orders.find((row) => row.status !== "closed");
+    const closed = useShop.getState().orders.find((row) => row.status === "closed");
+    assert.ok(open && closed);
+    for (const who of ["megan", "marcus", "derek"]) {
+      useShop.getState().setWorkingAs(who);
+      for (const id of [open.id, closed.id]) {
+        const host = (document as unknown as { createElement: (tag: string) => { textContent: string } }).createElement("div");
+        (document as unknown as { body: { appendChild: (node: unknown) => void } }).body.appendChild(host);
+        const root = createRoot(host as unknown as Element);
+        await act(async () => {
+          root.render(createElement(OrderEditor, { orderId: id, onClose() {} }));
+        });
+        const text = (document as unknown as { body: { textContent: string } }).body.textContent;
+        assert.match(text, new RegExp(String(useShop.getState().orders.find((row) => row.id === id)?.number)));
+        if (id === closed.id) assert.match(text, /It can be viewed, and it can't be changed/);
+        await act(async () => root.unmount());
+      }
+    }
   });
 });
 

@@ -763,7 +763,25 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     },
   ];
 
-  const open = openSeeds.map((order) => ({ ...order, inspection: demoSheet(order.id) }));
+  function priorVisitReading(vehicleId: string, openedOn: string) {
+    let bestDate = "";
+    let best = 0;
+    for (const row of orders) {
+      if (row.vehicleId !== vehicleId || !row.openedOn || row.openedOn > openedOn) continue;
+      const reading = row.mileage + 4;
+      if (row.openedOn > bestDate || (row.openedOn === bestDate && reading > best)) {
+        bestDate = row.openedOn;
+        best = reading;
+      }
+    }
+    return best;
+  }
+
+  const open = openSeeds.map((order) => {
+    const floor = priorVisitReading(order.vehicleId, order.openedOn);
+    const mileage = Math.max(order.mileage, floor > 0 ? floor + 4 : 0);
+    return { ...order, mileage, mileageOut: mileage, inspection: demoSheet(order.id) };
+  });
 
   function appt(
     id: string,
@@ -846,10 +864,24 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
 
   const finished = [...open, ...orders].map((order) => {
     const closed = order.status === "closed";
+    const customer = customers.find((row) => row.id === order.customerId);
+    const vehicle = vehicles.find((row) => row.id === order.vehicleId);
     return {
       ...order,
       bay: bayFromStatus(order.status),
-      mileageOut: closed || order.status === "ready" ? order.mileage + 4 : null,
+      mileageOut: (order as { mileageOut?: number | null }).mileageOut ?? (closed || order.status === "ready" ? order.mileage + 4 : null),
+      closeSnapshot: closed && customer && vehicle
+        ? {
+            customerName: customer.name,
+            phone: customer.phone,
+            address: "",
+            plate: "",
+            vin: vehicle.vin,
+            year: vehicle.year,
+            make: vehicle.make,
+            model: vehicle.model,
+          }
+        : undefined,
       fees: settings.fees.map((line) => ({ ...line })),
       taxRate: settings.taxRate,
       parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new" as const })),
