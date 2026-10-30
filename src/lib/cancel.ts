@@ -26,12 +26,19 @@ export function mayCloseRepairOrder(actor: DeskActor): boolean {
 
 export function deskActor(state: {
   workingAsId: string;
-  advisors: { id: string }[];
+  advisors: { id: string; role?: string }[];
   techs: { id: string }[];
 }): DeskActor {
-  if (state.advisors.some((row) => row.id === state.workingAsId)) return "advisor";
+  const advisor = state.advisors.find((row) => row.id === state.workingAsId);
+  if (advisor?.role === "service-manager") return "service-manager";
+  if (advisor) return "advisor";
   if (state.techs.some((row) => row.id === state.workingAsId)) return "technician";
   return "customer";
+}
+
+/** Brandon, Oct 30 2026: only a service manager may change a closed repair order. */
+export function mayAmendClosedOrder(actor: DeskActor): boolean {
+  return actor === "service-manager";
 }
 
 export const CANCEL_NOTE_MAX = 500;
@@ -183,7 +190,7 @@ export function normalizeCancelHistory(value: unknown): AppointmentCancel[] | un
       action,
       reason: typeof row.reason === "string" ? row.reason : "",
       note: typeof row.note === "string" ? row.note.trim().slice(0, CANCEL_NOTE_MAX) : "",
-      who: typeof row.who === "string" && row.who.trim() ? row.who : "Unknown",
+      who: typeof row.who === "string" && row.who.trim() && row.who.trim().toLowerCase() !== "unknown" ? row.who.trim() : "",
       whoId: typeof row.whoId === "string" ? row.whoId : "",
       at: typeof row.at === "string" ? row.at : "",
       priorStatus,

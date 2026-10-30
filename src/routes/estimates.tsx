@@ -254,7 +254,7 @@ function EstimatesPage() {
       <article className="ro-print">
         <p className="ro-kicker">{shop.settings.storeName}</p>
         <h1>Repair estimate</h1>
-        <p>{customer?.name ?? "Customer"}{vehicle ? ` · ${vehicle.year} Ford ${vehicle.model}` : ""}{mileage ? ` · ${Number(mileage).toLocaleString("en-US")} miles` : ""}</p>
+        <p>{customer?.name ?? "Customer"}{vehicle ? ` · ${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : ""}{mileage ? ` · ${Number(mileage).toLocaleString("en-US")} miles` : ""}</p>
         <p>Advisor {advisor ? `#${advisor.number} ${advisor.name}` : "—"} · {today()}</p>
         <h2>Concerns</h2>
         {written.length === 0 ? <p>No concerns written.</p> : written.map((line, index) => <p key={index}>{lineLetter(index)}. {line}</p>)}

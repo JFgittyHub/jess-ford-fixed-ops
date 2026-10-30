@@ -256,7 +256,7 @@ describe("status flow and parts stock", () => {
     assert.ok("error" in noAdvisor && "error" in noTech && "error" in noClock);
     assert.match(noAdvisor.error, /advisor number/);
     assert.match(noTech.error, /technician number/);
-    assert.match(noClock.error, /clock time/);
+    assert.match(noClock.error, /Clock time/);
     assert.equal(booked.status, "booked");
   });
 });
@@ -268,6 +268,7 @@ const vehicle: Vehicle = {
   id: "v",
   customerId: "c",
   year: 2019,
+  make: "Ford",
   model: "F-150",
   vin: fullVin({ prefix: "1FTEW1EP", year: 2019, plant: "A", serial: 123456 }),
 };

@@ -114,9 +114,9 @@ export function closeDay(order: Pick<RepairOrder, "invoicedOn" | "closedAt">) {
   return "";
 }
 
-/** An advisor closed this ticket. Empty who and when do not count. */
-export function isAdvisorClosed(order: Pick<RepairOrder, "status" | "closedBy" | "closedAt">) {
-  return order.status === "closed" && Boolean(order.closedBy?.trim() || order.closedAt);
+/** Closed, including a migrated sale whose closer was not recorded. Who and when are display-only. */
+export function isAdvisorClosed(order: Pick<RepairOrder, "status">) {
+  return order.status === "closed";
 }
 
 /** Open, including in bay, parts, and ready. Booked and Closed are separate. */
@@ -162,7 +162,7 @@ export function closeGaps(order: RepairOrder, techs: Tech[], advisors: Advisor[]
   const numbered = order.labor.filter((line) => techs.find((tech) => tech.id === line.techId)?.number.trim());
   if (numbered.length === 0 || numbered.length !== order.labor.length) gaps.push("Every labor line needs a technician number.");
   const time = timeLogs.filter((row) => row.orderId === order.id).reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt), 0);
-  if (time <= 0) gaps.push("A technician has to log clock time on this repair order.");
+  if (time <= 0) gaps.push("Clock time");
   return gaps;
 }
 
@@ -180,7 +180,7 @@ export function closedRecord(order: RepairOrder, customer?: Customer, vehicle?: 
     address: wa.address,
     plate: wa.plate,
     vin: vehicle?.vin ?? "",
-    vehicle: vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "",
+    vehicle: vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "",
     mileage: order.mileage,
     mileageOut: order.mileageOut ?? null,
     concern: order.concern,

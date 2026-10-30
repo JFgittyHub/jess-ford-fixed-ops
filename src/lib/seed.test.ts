@@ -42,9 +42,8 @@ describe("shop sample data", () => {
     for (const order of closed) {
       assert.equal(order.invoicedOn?.slice(0, 7), "2026-10");
       assert.ok((order.invoicedOn ?? "") < today);
-      assert.ok(order.closedBy);
-      assert.ok(order.closedAt);
-      assert.ok(order.closeNote);
+      assert.equal(order.closedBy ?? "", "");
+      assert.equal(order.closedAt ?? null, null);
       assert.notEqual(order.closeType, "no_work");
     }
     assert.ok(shop.expenses.length > 0);

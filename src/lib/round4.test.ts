@@ -8,7 +8,7 @@ import { DeskCancelActions } from "../components/cancel-appointment.tsx";
 import { bookedRoCancelMessage } from "./cancel.ts";
 import { deskSeedFor } from "./booking.ts";
 import { roStatusLabel, STATUS_LABEL } from "./format.ts";
-import { isNoWorkClose, isSold, isWorkOpen } from "./metrics.ts";
+import { isAdvisorClosed, isNoWorkClose, isSold, isWorkOpen } from "./metrics.ts";
 import { NO_WORK_NOTE_SHORT } from "./ro.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore, migrateSavedShop, type ShopState } from "./store.ts";
@@ -77,18 +77,20 @@ describe("round 4 close rules", () => {
     const causeId = blankOrder(shop);
     const jobId = order(shop, causeId).jobs[0].id;
     shop.getState().updateJob(causeId, jobId, { cause: "Found a leak" });
-    assert.match(shop.getState().closeOrderWithNoWork(causeId, "Customer never arrived").error ?? "", /Clear the cause on line A/);
+    assert.match(shop.getState().closeOrderWithNoWork(causeId, "Customer never arrived").error ?? "", /Inspection or diagnosis is recorded/);
 
     const sheetId = blankOrder(shop);
     shop.getState().setInspectionPoint(sheetId, "oil", { status: "green" });
-    assert.match(shop.getState().closeOrderWithNoWork(sheetId, "Customer never arrived").error ?? "", /multi-point/);
+    assert.match(shop.getState().closeOrderWithNoWork(sheetId, "Customer never arrived").error ?? "", /Inspection or diagnosis is recorded/);
+    shop.getState().setInspectionPoint(sheetId, "oil", { status: null, reading: "", note: "" });
+    assert.match(shop.getState().closeOrderWithNoWork(sheetId, "Customer never arrived").error ?? "", /Inspection or diagnosis is recorded/);
 
     const removedId = blankOrder(shop);
     shop.getState().addLabor(removedId, { opcode: "LOF", description: "Oil", hours: 0.3, rate: 0, payType: "cp", techId: shop.getState().techs[0].id });
     const lineId = order(shop, removedId).labor[0].id;
     shop.getState().removeLabor(removedId, lineId);
     const removed = shop.getState().closeOrderWithNoWork(removedId, "Customer never arrived");
-    assert.match(removed.error ?? "", /removed after work started \(LOF\)/);
+    assert.equal(removed.ok, true, removed.error ?? "");
     const entry = order(shop, removedId).history?.find((row) => row.kind === "labor-removed");
     assert.equal(entry?.who, "Megan Cho");
     assert.ok(entry?.at);
@@ -228,7 +230,7 @@ describe("round 4 close rules", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const closed = shop.getState().orders.filter((row) => row.status === "closed");
     assert.ok(closed.length > 0);
-    assert.ok(closed.every((row) => row.closedBy && row.closedAt && row.closeNote));
+    assert.ok(closed.every((row) => !row.closedBy && !row.closedAt && isAdvisorClosed(row)));
     assert.equal(shop.getState().orders.some((row) => isWorkOpen(row) && isSold(row)), false);
     assert.equal(shop.getState().orders.some((row) => row.status === "booked" && isSold(row)), false);
   });

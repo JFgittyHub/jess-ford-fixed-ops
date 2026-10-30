@@ -12,13 +12,20 @@ export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "clos
 /** A $0 close with no work on the ticket. A normal advisor close leaves this empty. */
 export type RoCloseType = "no_work";
 
-/** A line taken off a repair order, or a note written when it closes. Who is empty until someone is recorded. */
+/** A line taken off a repair order, a close, or a logged change. Who is empty until someone is recorded. Entries are append-only. */
 export interface RoHistoryEntry {
   at: string;
   who: string;
   whoId: string;
-  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed";
+  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed" | "reopened" | "amended" | "job-removed" | "diagnosis-cleared" | "fee-changed";
   text: string;
+  /** Which field changed, when this entry is an amendment. */
+  field?: string;
+  before?: string;
+  after?: string;
+  reason?: string;
+  /** A removal or cleared diagnosis that happened after work started. Blocks a no-work close. */
+  blocksNoWork?: boolean;
 }
 
 export interface RoPayment {
@@ -104,6 +111,8 @@ export interface Advisor {
   base: number;
   laborPercent: number;
   partsPercent: number;
+  /** Absent means advisor. Only a service manager may change a closed repair order. */
+  role?: "advisor" | "service-manager";
 }
 
 export interface Tech {
@@ -139,6 +148,8 @@ export interface Vehicle {
   id: string;
   customerId: string;
   year: number;
+  /** Stored make. Ford is the default when a vehicle is created. Close checks this value. */
+  make: string;
   model: string;
   vin: string;
 }
@@ -231,6 +242,8 @@ export interface RepairOrder {
   history?: RoHistoryEntry[];
   /** Money already taken on this repair order. A nonzero amount blocks a no-work close. */
   payments?: RoPayment[];
+  /** Set when the ticket is closed. Reopen does not unlock the signed estimate. */
+  authorizationLocked?: boolean;
 }
 
 export interface AppointmentLine {

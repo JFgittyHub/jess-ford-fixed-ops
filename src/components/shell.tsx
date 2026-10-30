@@ -184,7 +184,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                     onChange={(event) => setWorkingAs(event.target.value)}
                   >
                     <optgroup label="Advisors">
-                      {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
+                      {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}{advisor.role === "service-manager" ? " · Service manager" : ""}</option>)}
                     </optgroup>
                     <optgroup label="Technicians">
                       {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} {tech.name}</option>)}

@@ -438,13 +438,13 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     ? [
         { id: "jordan", number: "12", name: "Riley Chen", base: 4600, laborPercent: 5.5, partsPercent: 2.5 },
         { id: "megan", number: "19", name: "Noah Briggs", base: 4400, laborPercent: 5, partsPercent: 2 },
-        { id: "derek", number: "27", name: "Tara Singh", base: 4300, laborPercent: 5, partsPercent: 2 },
+        { id: "derek", number: "27", name: "Tara Singh", base: 4300, laborPercent: 5, partsPercent: 2, role: "service-manager" as const },
         { id: "alicia", number: "33", name: "Evan Cho", base: 4100, laborPercent: 4.5, partsPercent: 2 },
       ]
     : [
         { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3 },
         { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2 },
-        { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2 },
+        { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2, role: "service-manager" as const },
         { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2 },
       ];
 
@@ -488,6 +488,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       id: `v${i + 1}`,
       customerId: `c${i + 1}`,
       year: model.year,
+      make: "Ford",
       model: model.model,
       vin: fullVin({
         prefix: pullman ? "1FTPULMN" : "1FTAB12C",
@@ -844,7 +845,6 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   ];
 
   const finished = [...open, ...orders].map((order) => {
-    const advisor = advisors.find((row) => row.id === order.advisorId);
     const closed = order.status === "closed";
     return {
       ...order,
@@ -854,10 +854,11 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       taxRate: settings.taxRate,
       parts: order.parts.map((line) => ({ ...line, condition: line.condition ?? "new" as const })),
       closeType: null,
-      closeNote: closed ? "Closed by the advisor." : "",
-      closedBy: closed ? advisor?.name ?? "" : "",
-      closedById: closed ? order.advisorId : "",
-      closedAt: closed && order.invoicedOn ? `${order.invoicedOn}T20:00:00.000Z` : null,
+      closeNote: "",
+      closedBy: "",
+      closedById: "",
+      closedAt: null,
+      authorizationLocked: closed,
       droppedFeesNote: "",
       history: [],
       payments: [],

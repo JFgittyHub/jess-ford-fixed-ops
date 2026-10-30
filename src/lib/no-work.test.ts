@@ -103,7 +103,7 @@ describe("no-work close", () => {
     shop.getState().addPartLine(id, { partId: null, number: "X", description: "Bolt", qty: 1, cost: 1, price: 2, payType: "cp" });
     shop.getState().bookOrder(id);
     shop.getState().invoiceOrder(id);
-    shop.getState().reopenOrder(id);
+    shop.getState().reopenOrder(id, "not the service manager");
     shop.getState().closeOrder(id);
     const locked = order(shop, id);
     assert.equal(locked.status, "closed");
@@ -161,7 +161,7 @@ describe("no-work close", () => {
   });
 
   it("migrates an invoiced repair order to booked and does not invent a no-work close", () => {
-    assert.equal(SHOP_PERSIST_VERSION, 31);
+    assert.equal(SHOP_PERSIST_VERSION, 32);
     const migrated = migrateSavedShop({
       orders: [{ id: "ro-old", status: "invoiced", number: 12, labor: [], parts: [], concern: "Oil", closeType: "invoiced", closedBy: "Unknown" }],
       closedHistory: [{ id: "h-old", orderId: "kept", number: 9, openedOn: "2026-09-01", closedOn: "2026-09-02", customerName: "Helen Cho", phone: "", address: "", plate: "", vin: "", vehicle: "", mileage: 1, mileageOut: null, concern: "Oil", opcodes: "", partNumbers: "", total: 10, beforeTax: 9, closeType: "invoiced", closedBy: "Unknown", closedAt: "Unknown" }],

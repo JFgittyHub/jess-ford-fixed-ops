@@ -94,7 +94,7 @@ describe("shop store", () => {
     const empty = createEmptyShop();
     useShop.setState({
       ...empty,
-      advisors: [advisor],
+      advisors: [{ ...advisor, role: "service-manager" }],
       techs: [tech],
       parts: [
         {
@@ -112,7 +112,7 @@ describe("shop store", () => {
       ],
       workingAsId: advisor.id,
       customers: [{ id: "c", name: "Helen Cho", phone: "5095550100", mobile: "", email: "", noShows: 0 }],
-      vehicles: [{ id: "v", customerId: "c", year: 2018, model: "F-150", vin: fullVin({ prefix: "1FTEW1EP", year: 2018, plant: "A", serial: 100001 }) }],
+      vehicles: [{ id: "v", customerId: "c", year: 2018, make: "Ford", model: "F-150", vin: fullVin({ prefix: "1FTEW1EP", year: 2018, plant: "A", serial: 100001 }) }],
       orders: [bookedOrder()],
       timeLogs: [log],
       closedHistory: [],
@@ -123,12 +123,13 @@ describe("shop store", () => {
       useShop.getState().closedHistory.some((row) => row.orderId === "ro-1"),
       true,
     );
-    useShop.getState().reopenOrder("ro-1");
+    const reopened = useShop.getState().reopenOrder("ro-1", "Customer came back for the same repair");
+    assert.equal(reopened.ok, true, reopened.error ?? "");
     const next = useShop.getState();
     assert.equal(next.orders.find((order) => order.id === "ro-1")?.status, "booked");
     assert.equal(
       next.closedHistory.some((row) => row.orderId === "ro-1"),
-      false,
+      true,
     );
     assert.equal(next.parts.find((part) => part.id === "pads")?.onHand, 4);
   });

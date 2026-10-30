@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { BAY_LABEL, PROMISE_TIMES, STATUS_LABEL, clockTime, feeCharge, formatDuration, punchHours, roStatusLabel, usd } from "@/lib/format";
 import { NO_WORK_NOTE_MAX, advisorCloseGaps, hasBookedWork } from "@/lib/ro";
-import { deskActor, displayRecordedName, displayRecordedWhen, mayCloseRepairOrder } from "@/lib/cancel";
+import { deskActor, displayRecordedName, displayRecordedWhen, mayAmendClosedOrder, mayCloseRepairOrder } from "@/lib/cancel";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
@@ -110,12 +110,16 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const [noWorkNote, setNoWorkNote] = useState("");
   const [noWorkError, setNoWorkError] = useState<string | null>(null);
   const [closeError, setCloseError] = useState<string | null>(null);
+  const [amendReason, setAmendReason] = useState("");
+  const [amendError, setAmendError] = useState<string | null>(null);
 
   useEffect(() => {
     setTab("ticket");
     setNoWorkNote("");
     setNoWorkError(null);
     setCloseError(null);
+    setAmendReason("");
+    setAmendError(null);
   }, [orderId]);
 
   if (!order) {
@@ -125,7 +129,9 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const sealed = order.status === "closed";
   const locked = sealed;
   const booked = order.status === "booked";
-  const canClose = mayCloseRepairOrder(deskActor(shop));
+  const actor = deskActor(shop);
+  const canClose = mayCloseRepairOrder(actor);
+  const canAmend = mayAmendClosedOrder(actor);
   const gaps = advisorCloseGaps(order, {
     customer: look.customer.get(order.customerId),
     vehicle: look.vehicle.get(order.vehicleId),
@@ -145,7 +151,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       wide
       onClose={onClose}
       title={`RO ${order.number}`}
-      description={customer ? `${customer.name} · ${vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "Vehicle"}` : "Repair order"}
+      description={customer ? `${customer.name} · ${vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "Vehicle"}` : "Repair order"}
     >
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "closed" ? "good" : undefined}>{roStatusLabel(order)}</Pill>
@@ -458,7 +464,32 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           <p className="text-sm">{order.closeNote}</p>
           {order.droppedFeesNote ? <p className="text-sm text-muted">{order.droppedFeesNote}</p> : null}
           <p className="text-sm text-muted">{displayRecordedName(order.closedBy)} · {displayRecordedWhen(order.closedAt)}</p>
-          {order.closeType === "no_work" ? null : <Button tone="ghost" onClick={() => shop.reopenOrder(order.id)}>Reopen</Button>}
+          {canAmend ? (
+            <form
+              className="mt-3 grid max-w-xl gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const mileageInput = new FormData(event.currentTarget).get("mileage");
+                const result = shop.amendClosedOrder(order.id, amendReason, { field: "mileage", value: Math.max(0, Number(mileageInput) || 0) });
+                setAmendError(result.error);
+              }}
+            >
+              <Field label="Reason for a change">
+                <textarea className="field min-h-20" name="reason" value={amendReason} onChange={(event) => setAmendReason(event.target.value)} />
+              </Field>
+              <Field label="Mileage in">
+                <input className="field tabular-nums" name="mileage" type="number" min={0} defaultValue={order.mileage} />
+              </Field>
+              <div className="flex flex-wrap gap-2">
+                <Button type="submit">Save mileage</Button>
+                <Button type="button" onClick={() => {
+                  const result = shop.reopenOrder(order.id, amendReason);
+                  setAmendError(result.error);
+                }}>Reopen</Button>
+              </div>
+              {amendError ? <p role="alert" className="text-sm text-[#8a3b2a]">{amendError}</p> : null}
+            </form>
+          ) : null}
         </div>
       ) : (
       <div className="mt-4 flex flex-wrap gap-2">

@@ -146,7 +146,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
         <p className="mt-2 text-sm">{settings.storeName}</p>
         <p className="text-sm text-muted">{[settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || "Add the street and phone in Settings. The invoice has to show them."}</p>
         <p className="mt-2 text-sm">{customer?.name} · {customer?.phone}{wa.address ? ` · ${wa.address}` : ""}</p>
-        <p className="text-sm">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
+        <p className="text-sm">{vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
         <p className="mt-2 text-sm">{order.jobs.map((job) => `${job.code}. ${job.concern}`).join(" · ")}</p>
         <p className="mt-2 text-sm">Labor {usd(money.labor)} · Parts {usd(money.parts)} · Total before tax {usd(money.ticket)}</p>
         <ul className="mt-1 text-sm text-muted">

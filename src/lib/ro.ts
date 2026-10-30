@@ -89,7 +89,7 @@ export function invoiceRepairOrder(
 }
 
 export function reopenRepairOrder(order: RepairOrder, parts: PartSku[]): { order: RepairOrder; parts: PartSku[] } | null {
-  if (order.status !== "closed" || order.closeType === "no_work") return null;
+  if (order.status !== "closed") return null;
   const nextParts = order.stockApplied ? applyPartStock(parts, order, 1, order.invoicedOn ?? "") : parts;
   return {
     order: {
@@ -153,6 +153,22 @@ function inspectionHasResults(order: RepairOrder) {
   return items.some((item) => item.status !== null || item.reading.trim() !== "" || item.note.trim() !== "");
 }
 
+/** Clock time, cause, correction, or a multi-point result means work started. */
+export function workHadStarted(order: RepairOrder, logs: TimeLog[]) {
+  if (logs.some((log) => log.orderId === order.id)) return true;
+  if ((order.jobs ?? []).some((job) => job.cause.trim() || job.correction.trim())) return true;
+  if (inspectionHasResults(order)) return true;
+  return (order.history ?? []).some((entry) => entry.kind === "diagnosis-cleared" || entry.blocksNoWork);
+}
+
+export const DIAGNOSIS_BLOCK = "Inspection or diagnosis is recorded — close it with an accurate invoice.";
+export const AMEND_REASON_SHORT = "Add a reason of at least 10 characters.";
+export const AMEND_ROLE_REQUIRED = "Only a service manager can change a closed repair order.";
+
+export function amendReasonError(reason: string) {
+  return reason.trim().replace(/\s/g, "").length < 10 ? AMEND_REASON_SHORT : null;
+}
+
 /** What is in the way of a $0 close. Each line names the blocker. */
 export function noWorkBlockers(
   order: RepairOrder,
@@ -168,27 +184,22 @@ export function noWorkBlockers(
     const names = order.parts.map((line) => line.number || line.description || "part").join(", ");
     blocks.push(`Remove ${lineCountLabel(order.parts.length, "part")} (${names})`);
   }
-  for (const job of order.jobs ?? []) {
-    if (job.cause.trim()) blocks.push(`Clear the cause on line ${job.code}`);
-    if (job.correction.trim()) blocks.push(`Clear the correction on line ${job.code}`);
-  }
-  if (inspectionHasResults(order)) blocks.push("Clear the multi-point results");
+  const diagnosis =
+    (order.jobs ?? []).some((job) => job.cause.trim() || job.correction.trim())
+    || inspectionHasResults(order)
+    || (order.history ?? []).some((entry) => entry.kind === "diagnosis-cleared" || (entry.blocksNoWork && (entry.kind === "labor-removed" || entry.kind === "part-removed" || entry.kind === "job-removed")));
+  if (diagnosis) blocks.push(DIAGNOSIS_BLOCK);
   const extraFees = (order.fees ?? []).filter((fee) => !isDefaultShopFee(fee));
   if (extraFees.length === 1) blocks.push(`Remove the ${extraFees[0].name} fee`);
   else if (extraFees.length > 1) blocks.push(`Remove ${extraFees.length} fees (${extraFees.map((fee) => fee.name).join(", ")})`);
   if (logs.some((log) => log.orderId === order.id)) blocks.push("Clear the technician clock time");
   if ((order.payments ?? []).some((pay) => Math.abs(pay.amount) > CENT)) blocks.push("A payment is on this repair order");
-  const removed = (order.history ?? []).filter((entry) => entry.kind === "labor-removed" || entry.kind === "part-removed");
-  if (removed.length > 0) {
-    const names = removed.map((entry) => entry.text.replace(/^Removed (?:labor|part) line /, "").split(" — ")[0]).join(", ");
-    blocks.push(`Labor or parts were removed after work started (${names})`);
-  }
   if (!identity?.customer?.name.trim()) blocks.push("Add the customer name");
   if (!normalizeWa(order.wa).address.trim()) blocks.push("Add the address");
   if (!identity?.customer?.phone.trim()) blocks.push("Add the customer phone");
   const vehicle = identity?.vehicle;
-  if (!vehicle || !vehicle.year || !vehicle.model.trim()) blocks.push("Add the year, make, and model");
-  if (!Number.isFinite(order.mileage) || order.mileage < 0) blocks.push("Add the mileage in");
+  if (!vehicle || !vehicle.year || !vehicle.model.trim() || !vehicle.make?.trim()) blocks.push("Add the year, make, and model");
+  if (!Number.isFinite(order.mileage) || order.mileage <= 0) blocks.push("Add the mileage in");
   return blocks;
 }
 
@@ -248,6 +259,7 @@ export function closeRepairOrderWithNoWork(
     droppedFeesNote: dropped,
     history,
     stockApplied: false,
+    authorizationLocked: true,
   };
 }
 
@@ -267,14 +279,15 @@ export function advisorCloseGaps(order: RepairOrder, ctx: AdvisorCloseContext): 
   if (!concern) gaps.push("Concern");
   if (!jobs.some((job) => job.cause.trim())) gaps.push("Cause");
   if (!jobs.some((job) => job.correction.trim())) gaps.push("Correction");
-  if (!Number.isFinite(order.mileage) || order.mileage < 0) gaps.push("Mileage in");
-  if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut < 0) gaps.push("Mileage out");
+  if (!Number.isFinite(order.mileage) || order.mileage <= 0) gaps.push("Mileage in");
+  if (order.mileageOut == null || !Number.isFinite(order.mileageOut) || order.mileageOut < order.mileage) gaps.push("Mileage out");
   if (!isFullVin(ctx.vehicle?.vin ?? "")) gaps.push("VIN");
   const nameParts = (ctx.customer?.name ?? "").trim().split(/\s+/).filter(Boolean);
   if (nameParts.length < 2) gaps.push("Customer first and last name");
   if (!normalizeWa(order.wa).address.trim()) gaps.push("Address");
   if (!ctx.customer?.phone.trim()) gaps.push("Customer phone");
   if (!ctx.vehicle?.year || !ctx.vehicle.model.trim()) gaps.push("Year, make, and model");
+  if (!ctx.vehicle?.make?.trim()) gaps.push("Make");
   for (const line of order.parts) {
     const label = line.number || line.description || "a part";
     if (!line.number.trim()) gaps.push(`Part number on ${label}`);
@@ -324,6 +337,7 @@ export function closeRepairOrder(
       invoicedOn: closedOn,
       stockApplied: true,
       history,
+      authorizationLocked: true,
     },
     parts: nextParts,
   };

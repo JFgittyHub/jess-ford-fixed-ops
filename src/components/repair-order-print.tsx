@@ -52,7 +52,7 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
         </div>
         <div>
           <h2>Vehicle</h2>
-          <p>{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "—"}</p>
+          <p>{vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "—"}</p>
           <p>{wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : ""}</p>
           <p>In {order.mileage.toLocaleString("en-US")} miles</p>
           <p>Out {order.mileageOut != null ? `${order.mileageOut.toLocaleString("en-US")} miles` : "—"}</p>

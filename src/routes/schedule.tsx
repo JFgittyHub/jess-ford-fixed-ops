@@ -262,7 +262,7 @@ function ScheduleDesk() {
           const advisor = look.advisor.get(row.advisorId);
           return {
             name: customer?.name ?? "Customer",
-            vehicle: vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "No vehicle",
+            vehicle: vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "No vehicle",
             advisor: advisor?.name ?? "Advisor",
             tech: look.tech.get(row.techId) ? `#${look.tech.get(row.techId)?.number} ${look.tech.get(row.techId)?.name}` : "No technician",
             when: `${dayLabel(row.date)} · ${clockRange(row.time, row.minutes)}`,
@@ -335,7 +335,7 @@ function ScheduleDesk() {
               <div className="grid gap-2 text-sm">
                 <p><span className="text-muted">Day</span> {dayLabel(editing.date)} · {clockTime(editing.time)}</p>
                 <p><span className="text-muted">Customer</span> {look.customer.get(editing.customerId)?.name ?? "Customer"}</p>
-                <p><span className="text-muted">Vehicle</span> {look.vehicle.get(editing.vehicleId) ? `${look.vehicle.get(editing.vehicleId)?.year} Ford ${look.vehicle.get(editing.vehicleId)?.model}` : "No vehicle"}</p>
+                <p><span className="text-muted">Vehicle</span> {look.vehicle.get(editing.vehicleId) ? `${look.vehicle.get(editing.vehicleId)?.year} ${look.vehicle.get(editing.vehicleId)?.make || "Ford"} ${look.vehicle.get(editing.vehicleId)?.model}` : "No vehicle"}</p>
                 <p><span className="text-muted">Concern</span> {editing.concern}</p>
                 <p className="text-muted">This appointment is cancelled. Reinstate it to change the date, customer, vehicle, or concern.</p>
               </div>
@@ -433,7 +433,7 @@ function Selected({
   row: Appointment;
   name: string;
   noShows?: number;
-  vehicle?: { year: number; model: string };
+  vehicle?: { year: number; make?: string; model: string };
   laneName: string;
   actor: ReturnType<typeof deskActor>;
   actionError: string | null;
@@ -449,7 +449,7 @@ function Selected({
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
         <p className="flex flex-wrap items-baseline gap-2 font-semibold">{name}<NoShowMark count={noShows} /></p>
-        <p className="text-sm text-muted">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : ""} · {row.concern}</p>
+        <p className="text-sm text-muted">{vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : ""} · {row.concern}</p>
         <p className="text-sm text-muted">{dayLabel(row.date)} · {clockRange(row.time, row.minutes)} · {laneName}</p>
         {(row.cancelHistory ?? []).map((event, index) => (
           <p key={`${event.at}-${event.action ?? "cancel"}-${index}`} className="text-sm text-muted">{cancellationLine(event)}</p>

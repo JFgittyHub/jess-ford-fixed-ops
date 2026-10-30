@@ -428,7 +428,7 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-other")?.status, "approved");
 
     const unnamed = normalizeCancelHistory([{ reason: "customer-request", note: "kept" }]);
-    assert.equal(unnamed?.[0]?.who, "Unknown");
+    assert.equal(unnamed?.[0]?.who, "");
     assert.equal(unnamed?.[0]?.at, "");
     assert.match(cancellationLine(unnamed![0]!), /Unknown/);
     const kept = normalizeCancelHistory([{ reason: "sold-the-truck", note: "old", who: "Megan", whoId: "megan", at: when }]);

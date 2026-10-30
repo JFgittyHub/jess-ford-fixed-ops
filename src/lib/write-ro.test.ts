@@ -372,9 +372,9 @@ function loadShop() {
       { id: "mina", name: "Mina Patel", phone: "(555) 010-0003", mobile: "", email: "", noShows: 0 },
     ],
     vehicles: [
-      { id: "helen-truck", customerId: "helen", year: 2024, model: "F-150", vin: "1FTH" },
-      { id: "glenn-car", customerId: "glenn", year: 2019, model: "Escape", vin: "1FMC" },
-      { id: "mina-suv", customerId: "mina", year: 2021, model: "Explorer", vin: "1FM5" },
+      { id: "helen-truck", customerId: "helen", year: 2024, make: "Ford", model: "F-150", vin: "1FTH" },
+      { id: "glenn-car", customerId: "glenn", year: 2019, make: "Ford", model: "Escape", vin: "1FMC" },
+      { id: "mina-suv", customerId: "mina", year: 2021, make: "Ford", model: "Explorer", vin: "1FM5" },
     ],
     advisors: [
       { id: "advisor-21", number: "21", name: "First Advisor", base: 1, laborPercent: 1, partsPercent: 1 },

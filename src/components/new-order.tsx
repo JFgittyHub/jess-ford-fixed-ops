@@ -108,7 +108,6 @@ function NewOrderForm({
           const booked = preset?.appointmentId
             ? shop.appointments.find((row) => row.id === preset.appointmentId)
             : undefined;
-          // An appointment with no tech stays unassigned. Invoice already requires a technician number on every labor line.
           const carriedTech = booked ? (booked.techId ?? "").trim() : (shop.techs[0]?.id ?? "");
           const id = shop.createOrder({
             customerId: nextCustomer,
@@ -152,7 +151,7 @@ function NewOrderForm({
             </Field>
             <Field label="Vehicle">
               <select className="field" value={resolvedVehicle} onChange={(event) => setVehicleId(event.target.value)}>
-                {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.year} Ford {vehicle.model}</option>)}
+                {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.year} {vehicle.make || "Ford"} {vehicle.model}</option>)}
               </select>
             </Field>
           </>
