@@ -561,7 +561,8 @@
 }
 
 @media print {
-  aside, header, .no-print { display: none !important; }
+  aside, header.app-header, .no-print { display: none !important; }
+  .ro-print header { display: block !important; }
   body { background: white; }
   .md\:pl-60 { padding-left: 0 !important; }
   body.printing-mpi * { visibility: hidden; }

@@ -23,7 +23,7 @@ import { sectionLockEnabled } from "./section-lock";
 import { inRange, MONEY_MAX, HOURS_MAX, QTY_MAX, asText, phoneDigits, NAME_MAX, TEXT_MAX, REASON_MAX } from "./range";
 import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, linkLaborAndParts, mileageOverrideAllows, noWorkCloseError, unbookRepairOrder } from "./ro";
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
-import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ServiceManager, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
+import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RequestAction, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ServiceManager, SettingsChange, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -715,6 +715,14 @@ function roleChangeRow(who: { id: string; name: string } | null, advisorId: stri
   return { at: now().toISOString(), who: who?.name ?? "", whoId: who?.id ?? "", advisorId, before, after, ...(advisorName ? { advisorName } : {}) };
 }
 
+function requestAction(who: { id: string; name: string }, requestId: string, action: RequestAction["action"], at: string): RequestAction {
+  return { at, who: who.name, whoId: who.id, requestId, action };
+}
+
+function settingsChange(who: { id: string; name: string }, field: string, before: string, after: string): SettingsChange {
+  return { at: now().toISOString(), who: who.name, whoId: who.id, field, before, after };
+}
+
 function serviceManager(state: ShopData): { id: string; name: string } | null {
   if (deskActor(state) !== "service-manager") return null;
   const manager = activeServiceManagers(state).find((row) => row.id === state.workingAsId);
@@ -966,6 +974,8 @@ const dataKeys: (keyof ShopData)[] = [
   "notices",
   "roleLog",
   "ownershipLog",
+  "settingsLog",
+  "requestLog",
 ];
 
 /** Persisted-shop load path. Staff passwords and the old admin password are removed on every branch, including a saved blob with no repair-order list. */
@@ -1103,6 +1113,8 @@ export function migrateSavedShop(persisted: unknown): ShopState {
     closedHistory: Array.isArray(saved.closedHistory) ? saved.closedHistory.map((row) => migrateHistoryRow(row)) : [],
     roleLog: Array.isArray(saved.roleLog) ? saved.roleLog : [],
     ownershipLog: Array.isArray(saved.ownershipLog) ? saved.ownershipLog : [],
+    settingsLog: Array.isArray(saved.settingsLog) ? saved.settingsLog : [],
+    requestLog: Array.isArray(saved.requestLog) ? saved.requestLog : [],
     ...liftServiceManagers(advisorRows(saved), Array.isArray(saved.serviceManagers) ? saved.serviceManagers : undefined),
     techs: Array.isArray(saved.techs)
       ? saved.techs.filter((tech) => tech && typeof tech === "object").map((tech, index) => {
@@ -1120,8 +1132,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
 function finishMigrate(shop: ShopState): ShopState {
   if (!Array.isArray(shop.vehicles) || !Array.isArray(shop.orders)) return shop;
   const merged = mergeVinDuplicates(shop.vehicles, shop.orders);
-  if (merged.vehicles === shop.vehicles && merged.orders === shop.orders) return shop;
-  return { ...shop, vehicles: merged.vehicles, orders: merged.orders };
+  if (merged.vehicles === shop.vehicles && merged.orders === shop.orders && merged.ownershipLog.length === 0) return shop;
+  return {
+    ...shop,
+    vehicles: merged.vehicles,
+    orders: merged.orders,
+    ownershipLog: [...(shop.ownershipLog ?? []), ...merged.ownershipLog],
+  };
 }
 
 /** Rehydrate path. Strips passwords even when the blob is already version 28. */
@@ -1284,47 +1301,94 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (state.activeStoreId === id) return state;
           const next = state.stores[id];
           if (!next) return state;
-          return { ...next, roleLog: next.roleLog ?? [], ownershipLog: next.ownershipLog ?? [], activeStoreId: id, stores: state.stores, focusOrderId: null };
+          return { ...next, roleLog: next.roleLog ?? [], ownershipLog: next.ownershipLog ?? [], settingsLog: next.settingsLog ?? [], requestLog: next.requestLog ?? [], activeStoreId: id, stores: state.stores, focusOrderId: null };
         });
       },
       setFocus: (id) => set({ focusOrderId: id }),
       updateSettings: (patch) =>
         set((state) => {
+          const who = namedActor(state);
+          if (!who || rosterEditorError(state)) return state;
+          const locked = sectionLockEnabled();
           const settings = { ...state.settings };
+          const changes: SettingsChange[] = [];
+          const stamp = now().toISOString();
+          const note = (field: string, before: string, after: string) => {
+            if (before === after) return;
+            changes.push({ at: stamp, who: who.name, whoId: who.id, field, before, after });
+          };
           if (typeof patch.storeName === "string") {
             const storeName = asText(patch.storeName, NAME_MAX);
-            if (storeName) settings.storeName = storeName;
+            if (storeName) {
+              note("Store name", settings.storeName, storeName);
+              settings.storeName = storeName;
+            }
           }
           if (typeof patch.city === "string") {
             const city = asText(patch.city, TEXT_MAX);
-            if (city !== null) settings.city = city;
+            if (city !== null) {
+              note("City", settings.city, city);
+              settings.city = city;
+            }
           }
-          if (typeof patch.phone === "string") settings.phone = patch.phone;
+          if (typeof patch.phone === "string") {
+            note("Shop phone", settings.phone, patch.phone);
+            settings.phone = patch.phone;
+          }
           if (typeof patch.address === "string") {
             const address = asText(patch.address, TEXT_MAX);
-            if (address !== null) settings.address = address;
+            if (address !== null) {
+              note("Street address", settings.address, address);
+              settings.address = address;
+            }
           }
-          const rateEditor = namedActor(state);
-          const mayEditRates = Boolean(rateEditor) && rosterEditor(state);
-          if (mayEditRates && inRange(patch.cpRate, 0, MONEY_MAX)) settings.cpRate = patch.cpRate;
-          if (mayEditRates && inRange(patch.warrantyRate, 0, MONEY_MAX)) settings.warrantyRate = patch.warrantyRate;
-          if (mayEditRates && inRange(patch.internalRate, 0, MONEY_MAX)) settings.internalRate = patch.internalRate;
-          if (inRange(patch.targetAbsorption, 0, 100)) settings.targetAbsorption = patch.targetAbsorption;
-          if (inRange(patch.targetElr, 0, MONEY_MAX)) settings.targetElr = patch.targetElr;
-          if (inRange(patch.policyGuide, 0, MONEY_MAX)) settings.policyGuide = patch.policyGuide;
-          const fees = Array.isArray(patch.fees) ? normalizeFees(patch.fees) : settings.fees;
-          const taxRate = inRange(patch.taxRate, 0, 20) ? patch.taxRate : settings.taxRate;
-          settings.fees = fees;
-          settings.taxRate = taxRate;
-          const who = matchedStaff(state);
+          if (!locked && inRange(patch.cpRate, 0, MONEY_MAX)) {
+            note("Customer labor rate", String(settings.cpRate), String(patch.cpRate));
+            settings.cpRate = patch.cpRate;
+          }
+          if (!locked && inRange(patch.warrantyRate, 0, MONEY_MAX)) {
+            note("Warranty labor rate", String(settings.warrantyRate), String(patch.warrantyRate));
+            settings.warrantyRate = patch.warrantyRate;
+          }
+          if (!locked && inRange(patch.internalRate, 0, MONEY_MAX)) {
+            note("Internal labor rate", String(settings.internalRate), String(patch.internalRate));
+            settings.internalRate = patch.internalRate;
+          }
+          if (inRange(patch.targetAbsorption, 0, 100)) {
+            note("Absorption target", String(settings.targetAbsorption), String(patch.targetAbsorption));
+            settings.targetAbsorption = patch.targetAbsorption;
+          }
+          if (inRange(patch.targetElr, 0, MONEY_MAX)) {
+            note("Target effective labor rate", String(settings.targetElr), String(patch.targetElr));
+            settings.targetElr = patch.targetElr;
+          }
+          if (inRange(patch.policyGuide, 0, MONEY_MAX)) {
+            note("Policy guide", String(settings.policyGuide), String(patch.policyGuide));
+            settings.policyGuide = patch.policyGuide;
+          }
+          let fees = settings.fees;
+          let taxRate = settings.taxRate;
+          if (!locked && Array.isArray(patch.fees)) {
+            fees = normalizeFees(patch.fees);
+            note("Fees", settings.fees.map((row) => `${row.name} ${row.amount}`).join(", "), fees.map((row) => `${row.name} ${row.amount}`).join(", "));
+            settings.fees = fees;
+          }
+          if (!locked && inRange(patch.taxRate, 0, 20)) {
+            note("Tax rate", String(settings.taxRate), String(patch.taxRate));
+            taxRate = patch.taxRate;
+            settings.taxRate = taxRate;
+          }
           const roleLog = [...(state.roleLog ?? [])];
-          if (mayEditRates && rateEditor && settings.cpRate !== state.settings.cpRate) {
-            roleLog.push(roleChangeRow(rateEditor, "cp", String(state.settings.cpRate), String(settings.cpRate), "Customer"));
+          if (!locked && settings.cpRate !== state.settings.cpRate) {
+            roleLog.push(roleChangeRow(who, "cp", String(state.settings.cpRate), String(settings.cpRate), "Customer"));
           }
+          const settingsLog = [...(state.settingsLog ?? []), ...changes];
+          if (locked || !roWritesEnabled()) return { settings, roleLog, settingsLog, orders: state.orders };
           return {
             settings,
             roleLog,
-            orders: !roWritesEnabled() ? state.orders : state.orders.map((order) => {
+            settingsLog,
+            orders: state.orders.map((order) => {
               if (lockedOrder(order)) return order;
               let next = order;
               if (patch.taxRate !== undefined && taxRate !== order.taxRate) {
@@ -2684,7 +2748,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!inRange(input.mileage, 1, 999999)) return { ok: false, orderId: "", error: input.mileage > 999999 ? "Mileage in can't be over 999,999." : "Mileage in has to be greater than zero.", warning: null };
         const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
         if (vinText) {
-          const vinError = vinEntryError(vinText);
+          const vinError = vinScheduleError(vinText);
           if (vinError) return { ok: false, orderId: "", error: vinError, warning: null };
         }
         const state = get();
@@ -3175,6 +3239,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!who || !rosterEditor(state)) return { ok: false, reason: "role" };
         const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
         if (!request) return { ok: false, reason: "missing" };
+        if (request.vin && vinScheduleError(request.vin)) return { ok: false, reason: "vin" };
         const plan = planApproval({
           request,
           customers: state.customers,
@@ -3190,7 +3255,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           appointments: [...current.appointments, plan.appointment].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
           onlineRequests: current.onlineRequests.map((row) => (row.id === id ? plan.request : row)),
           notices: [...(current.notices ?? []), plan.notice],
-          roleLog: [...(current.roleLog ?? []), roleChangeRow(who, id, "pending", "approved", request.customerName)],
+          requestLog: [...(current.requestLog ?? []), requestAction(who, id, "approved", now().toISOString())],
         }));
         return { ok: true, appointmentId: plan.appointment.id, noticeId: plan.notice.id };
       },
@@ -3200,16 +3265,19 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!who || !rosterEditor(state)) return { ok: false, reason: "role" };
         const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
         if (!request) return { ok: false, reason: "missing" };
-        const notice = decisionNotice({ id: uid("nt"), at: now().toISOString(), request, kind: "decline" });
+        const at = now().toISOString();
+        const notice = decisionNotice({ id: uid("nt"), at, request, kind: "decline" });
         set((current) => ({
           onlineRequests: current.onlineRequests.map((row) => (row.id === id ? { ...row, status: "declined" as const } : row)),
           notices: [...(current.notices ?? []), notice],
-          roleLog: [...(current.roleLog ?? []), roleChangeRow(who, id, "pending", "declined", request.customerName)],
+          requestLog: [...(current.requestLog ?? []), requestAction(who, id, "declined", at)],
         }));
         return { ok: true, noticeId: notice.id };
       },
       simulateDayBeforeReminders: () => {
         const state = get();
+        const who = namedActor(state);
+        if (!who || !rosterEditor(state)) return { created: 0 };
         const day = tomorrowIso(now());
         const already = new Set((state.notices ?? []).filter((row) => row.kind === "reminder" && row.appointmentId).map((row) => row.appointmentId));
         const due = state.appointments.filter((row) => row.date === day && row.status !== "no_show" && row.status !== "cancelled" && !already.has(row.id));
@@ -3226,6 +3294,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             transportName: laneLabel(appointment.lane, state.settings.scheduling.transportOptions),
             method: reminderMethod(request, customer),
             storeId: state.activeStoreId,
+            who: who.name,
+            whoId: who.id,
           });
         });
         if (notices.length > 0) set((current) => ({ notices: [...(current.notices ?? []), ...notices] }));
@@ -3270,20 +3340,36 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       setBudget: (id, monthly) =>
         set((state) => {
           if (sectionLockEnabled()) return state;
+          const who = namedActor(state);
+          if (!who || rosterEditorError(state) || !inRange(monthly, 0, MONEY_MAX)) return state;
+          const current = state.budgets.find((row) => row.id === id);
+          if (!current) return state;
+          const next = money2(monthly);
+          if (next === current.monthly) return state;
           return {
-          budgets: state.budgets.map((row) => (row.id === id && inRange(monthly, 0, MONEY_MAX) ? { ...row, monthly: money2(monthly) } : row)),
-        };
+            budgets: state.budgets.map((row) => (row.id === id ? { ...row, monthly: next } : row)),
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, `Budget ${current.category}`, String(current.monthly), String(next))],
+          };
         }),
       setOverhead: (id, monthly) =>
         set((state) => {
           if (sectionLockEnabled()) return state;
+          const who = namedActor(state);
+          if (!who || rosterEditorError(state) || !inRange(monthly, 0, MONEY_MAX)) return state;
+          const current = state.overhead.find((row) => row.id === id);
+          if (!current) return state;
+          const next = money2(monthly);
+          if (next === current.monthly) return state;
           return {
-          overhead: state.overhead.map((row) => (row.id === id && inRange(monthly, 0, MONEY_MAX) ? { ...row, monthly: money2(monthly) } : row)),
-        };
+            overhead: state.overhead.map((row) => (row.id === id ? { ...row, monthly: next } : row)),
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, `Overhead ${current.name}`, String(current.monthly), String(next))],
+          };
         }),
       sendCampaign: (input) =>
         set((state) => {
           if (sectionLockEnabled()) return state;
+          const who = namedActor(state);
+          if (!who || rosterEditorError(state)) return state;
           if (!input.name.trim() || !input.message.trim() || input.recipientIds.length === 0) return state;
           const row: Campaign = {
             id: uid("cp"),
@@ -3293,7 +3379,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             sentOn: today(),
             recipientIds: input.recipientIds,
           };
-          return { campaigns: [row, ...state.campaigns] };
+          return {
+            campaigns: [row, ...state.campaigns],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Campaign", "", `${row.name}: ${row.message}`)],
+          };
         }),
       resetDemo: (confirmReplace) =>
         set((state) => {

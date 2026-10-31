@@ -7,6 +7,7 @@ import { phoneDigitError } from "@/lib/range";
 import { isFullVin, normalizeVin, vinEntryError } from "@/lib/vin";
 import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney } from "@/lib/metrics";
+import { repairOrderHeading, vehicleHistoryEntries } from "@/lib/ownership";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
 import { normalizeWa, waLimit } from "@/lib/wa";
 import { RO_WRITE_REFUSAL, roWritesEnabled } from "@/lib/ro-flags";
@@ -202,7 +203,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
 
   const sealed = order.status === "closed";
   const viewOnly = !roWritesEnabled();
-  const locked = sealed || viewOnly;
+  const locked = sealed || !roWritesEnabled();
   const booked = order.status === "booked";
   const actor = deskActor(shop);
   const canClose = mayCloseRepairOrder(actor);
@@ -250,8 +251,9 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       wide
       onClose={requestClose}
       title={`RO ${order.number}`}
-      description={customer || sealedView?.customerName ? `${sealedView?.customerName || customer?.name} · ${vehicle ? `${sealedView?.year || vehicle.year} ${sealedView?.make || vehicle.make || "Ford"} ${sealedView?.model || vehicle.model}` : "Vehicle"}` : "Repair order"}
+      description={repairOrderHeading(order, customer, vehicle)}
     >
+      <div className="ro-window">
       {viewOnly ? <p className="mb-4 text-sm font-semibold" role="status">{RO_WRITE_REFUSAL}</p> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "closed" ? "good" : undefined}>{roStatusLabel(order)}</Pill>
@@ -272,6 +274,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         <Button small onClick={printRepairOrder}>Print repair order</Button>
       </div>
       <RepairOrderPrint orderId={order.id} />
+      <VehicleHistory vehicleId={order.vehicleId} vin={sealedView?.vin || vehicle?.vin || ""} />
 
       {tab === "sheet" ? <MultiPointSheet orderId={order.id} /> : (
       <>
@@ -905,6 +908,30 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           ))}
         </ul>
       ) : null}
+      </div>
     </Modal>
+  );
+}
+
+export function VehicleHistory({ vehicleId, vin }: { vehicleId: string; vin: string }) {
+  const orders = useShop((state) => state.orders);
+  const vehicles = useShop((state) => state.vehicles);
+  const customers = useShop((state) => state.customers);
+  const vehicle = vehicles.find((row) => row.id === vehicleId)
+    ?? vehicles.find((row) => vin && normalizeVin(row.vin) === normalizeVin(vin));
+  const entries = vehicle ? vehicleHistoryEntries(orders, vehicle, customers, vehicles) : [];
+  return (
+    <section aria-label="Vehicle history" className="mt-6">
+      <h3 className="font-display text-2xl leading-none">Vehicle history</h3>
+      {entries.length === 0 ? <p className="mt-2 text-sm text-muted">No other visits are on file for this VIN.</p> : (
+        <ul className="mt-2 grid gap-1 text-sm">
+          {entries.map((entry) => (
+            entry.kind === "divider"
+              ? <li key={entry.text} className="mt-2 font-semibold">{entry.text}</li>
+              : <li key={entry.order.id}>RO {entry.order.number} · {entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

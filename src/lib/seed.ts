@@ -438,6 +438,8 @@ export function createEmptyShop(): ShopData {
     onlineRequests: [],
     onlineChallenges: [],
     notices: [],
+    settingsLog: [],
+    requestLog: [],
   };
 }
 
@@ -977,5 +979,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     notices: [],
     roleLog: [],
     ownershipLog: [],
+    settingsLog: [],
+    requestLog: [],
   }, pullman ? "pl-" : "");
 }

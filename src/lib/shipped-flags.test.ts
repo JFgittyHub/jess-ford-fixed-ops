@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isLockedPath } from "./section-lock.ts";
+import { RO_CREATION_ENABLED, RO_WRITES_ENABLED, roCreationEnabled, roWritesEnabled } from "./ro-flags.ts";
+import { LOCKED_SECTIONS, SECTION_LOCK_ENABLED, isLockedPath, sectionLockEnabled } from "./section-lock.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import { fullVin } from "./vin.ts";
@@ -21,6 +22,56 @@ function memoryStorage(): ShopStorage {
 }
 
 describe("shipped flags", () => {
+  it("pins the shipped flag constants and the 11 locked routes", () => {
+    assert.equal(RO_WRITES_ENABLED, false);
+    assert.equal(RO_CREATION_ENABLED, false);
+    assert.equal(SECTION_LOCK_ENABLED, true);
+    assert.deepEqual([...LOCKED_SECTIONS], [
+      "/dispatch",
+      "/tech-board",
+      "/advisors",
+      "/service-managers",
+      "/parts",
+      "/expenses",
+      "/customers",
+      "/reports",
+      "/labor-ops",
+      "/pay-types",
+      "/fees",
+    ]);
+    const previous = {
+      create: flags.__RO_CREATION_ENABLED__,
+      write: flags.__RO_WRITES_ENABLED__,
+      lock: flags.__SECTION_LOCK_ENABLED__,
+    };
+    delete flags.__RO_CREATION_ENABLED__;
+    delete flags.__RO_WRITES_ENABLED__;
+    delete flags.__SECTION_LOCK_ENABLED__;
+    try {
+      assert.equal(roWritesEnabled(), false);
+      assert.equal(roCreationEnabled(), false);
+      assert.equal(sectionLockEnabled(), true);
+      assert.equal(isLockedPath("/online-requests"), false);
+    } finally {
+      flags.__RO_CREATION_ENABLED__ = previous.create;
+      flags.__RO_WRITES_ENABLED__ = previous.write;
+      flags.__SECTION_LOCK_ENABLED__ = previous.lock;
+    }
+  });
+
+  it("locks every path variant legal listed", () => {
+    const previous = flags.__SECTION_LOCK_ENABLED__;
+    flags.__SECTION_LOCK_ENABLED__ = true;
+    try {
+      for (const path of ["/Fees", "/Labor-Ops", "/%46ees", "//Fees", "/Fees/", "/Fees?x=1", "/Fees#x"]) {
+        assert.equal(isLockedPath(path), true, path);
+      }
+      assert.equal(isLockedPath("/schedule"), false);
+    } finally {
+      flags.__SECTION_LOCK_ENABLED__ = previous;
+    }
+  });
+
   it("locks mixed-case, encoded, and trailing-slash paths", () => {
     const previous = flags.__SECTION_LOCK_ENABLED__;
     flags.__SECTION_LOCK_ENABLED__ = true;
@@ -89,6 +140,84 @@ describe("shipped flags", () => {
       assert.equal(shop.getState().payTypes.find((row) => row.id === "cp")?.rate, rate);
       assert.equal(shop.getState().campaigns.length, campaigns);
       assert.equal(JSON.stringify(shop.getState().orders), before);
+    } finally {
+      flags.__RO_CREATION_ENABLED__ = previous.create;
+      flags.__RO_WRITES_ENABLED__ = previous.write;
+      flags.__SECTION_LOCK_ENABLED__ = previous.lock;
+    }
+  });
+
+  it("leaves every guarded repair-order action byte-identical when the shipped flags are off", () => {
+    const previous = {
+      create: flags.__RO_CREATION_ENABLED__,
+      write: flags.__RO_WRITES_ENABLED__,
+      lock: flags.__SECTION_LOCK_ENABLED__,
+    };
+    flags.__RO_CREATION_ENABLED__ = false;
+    flags.__RO_WRITES_ENABLED__ = false;
+    flags.__SECTION_LOCK_ENABLED__ = true;
+    try {
+      const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+      shop.getState().setWorkingAs("megan");
+      const order = shop.getState().orders.find((row) => row.status !== "closed" && row.jobs.length > 0);
+      assert.ok(order);
+      const before = JSON.stringify(shop.getState().orders);
+      const id = order.id;
+      const jobId = order.jobs[0]?.id ?? "";
+      const laborId = order.labor[0]?.id ?? "missing-labor";
+      const partId = order.parts[0]?.id ?? "missing-part";
+      const customer = shop.getState().customers.find((row) => row.id !== order.customerId) ?? shop.getState().customers[0];
+      const vehicle = shop.getState().vehicles.find((row) => row.customerId === customer.id) ?? shop.getState().vehicles[0];
+      shop.getState().updateOrder(id, { concern: "Changed", mileage: order.mileage + 5, mileageOut: order.mileage + 9, promiseTime: "09:00", advisorId: "derek", status: "ready", bay: "ready" });
+      shop.getState().updateJob(id, jobId, { concern: "Nope", cause: "Nope", correction: "Nope" });
+      shop.getState().addJob(id);
+      shop.getState().removeJob(id, jobId);
+      shop.getState().updateWa(id, { address: "1 Main", plate: "ABC123", estimate: 40, choice: "written", returnParts: true });
+      shop.getState().addExtraAuth(id, { date: "2026-10-30", time: "09:00", employee: "Megan Cho", person: "Helen Cho", phone: "5095550100", work: "Brakes", amount: 25 });
+      shop.getState().invoiceOrder(id);
+      shop.getState().bookOrder(id);
+      shop.getState().unbookOrder(id);
+      shop.getState().closeOrder(id);
+      shop.getState().closeOrderWithNoWork(id, "Customer left before any work was done");
+      shop.getState().recordMileageOverride(id, 1, "the odometer was misread on arrival");
+      shop.getState().recordMileageOutOverride(id, order.mileage + 20000, "the replacement odometer read higher");
+      shop.getState().updateOpenContact(id, { phone: "5095550101", address: "9 Oak Street" });
+      shop.getState().addLabor(id, { opcode: "LOF", description: "Oil", hours: 1, rate: 10, payType: "cp", techId: "marcus", jobId });
+      shop.getState().updateLabor(id, laborId, { hours: 9, rate: 1, description: "Nope", opcode: "ZZ" });
+      shop.getState().removeLabor(id, laborId);
+      shop.getState().clockIn("marcus", id);
+      shop.getState().clockOut("marcus");
+      shop.getState().resolveFlaggedPunch("missing", "2026-10-30T18:00:00.000Z");
+      shop.getState().addPartLine(id, { partId: null, number: "BL", description: "Bolt", qty: 2, cost: 1, price: 4, payType: "cp", jobId });
+      shop.getState().updatePartLine(id, partId, { qty: 9, price: 50 });
+      shop.getState().removePartLine(id, partId);
+      shop.getState().attachInspection(id);
+      shop.getState().setInspectionTech(id, "marcus");
+      shop.getState().setInspectionPoint(id, "brakes", { status: "red", reading: "1", note: "worn" });
+      shop.getState().moveWorkToJob(id, "labor", laborId, jobId);
+      shop.getState().updateOpenVin(id, fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 44 }));
+      assert.equal(shop.getState().createOrder({
+        customerId: customer.id, vehicleId: vehicle.id, advisorId: "megan",
+        lines: [{ concern: "Oil" }], mileage: 1000, promiseTime: "",
+      }), "");
+      const walked = shop.getState().openWalkIn({
+        name: "New Person", phone: "5095550188", year: 2020, model: "Escape", make: "Ford",
+        vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 45 }),
+        advisorId: "megan", lines: [{ concern: "Brakes" }], mileage: 2000, promiseTime: "",
+      });
+      assert.equal(walked.ok, false);
+      shop.getState().updateSettings({
+        taxRate: 1,
+        cpRate: 1,
+        fees: shop.getState().settings.fees.map((row) => ({ ...row, amount: 99 })),
+      });
+      const feeId = shop.getState().settings.fees[0]?.id ?? "";
+      shop.getState().addFee({ name: "Tow", amount: 4 });
+      shop.getState().updateFee(feeId, { amount: 99 });
+      shop.getState().removeFee(feeId);
+      assert.equal(JSON.stringify(shop.getState().orders), before);
+      assert.equal(shop.getState().settings.taxRate === 1, false);
+      assert.equal(shop.getState().settings.cpRate === 1, false);
     } finally {
       flags.__RO_CREATION_ENABLED__ = previous.create;
       flags.__RO_WRITES_ENABLED__ = previous.write;
@@ -176,11 +305,12 @@ describe("shipped flags", () => {
     const approved = shop.getState().approveOnlineRequest(request.id, "");
     assert.equal(approved.ok, true);
     assert.equal(shop.getState().vehicles.length, vehicles + 1);
-    assert.equal(shop.getState().roleLog?.some((row) => row.who === "Megan Cho" && row.after === "approved" && row.advisorName === "New Owner"), true);
+    assert.equal(shop.getState().requestLog?.some((row) => row.who === "Megan Cho" && row.whoId === "megan" && row.action === "approved" && row.requestId === request.id), true);
+    assert.equal(shop.getState().roleLog?.some((row) => row.after === "approved"), false);
     const declined = { ...request, id: "rq-no", customerName: "Decline Me" };
     shop.setState({ onlineRequests: [declined, ...shop.getState().onlineRequests] });
     assert.equal(shop.getState().declineOnlineRequest(declined.id).ok, true);
-    assert.equal(shop.getState().roleLog?.some((row) => row.who === "Megan Cho" && row.after === "declined" && row.advisorName === "Decline Me"), true);
+    assert.equal(shop.getState().requestLog?.some((row) => row.who === "Megan Cho" && row.whoId === "megan" && row.action === "declined" && row.requestId === declined.id), true);
   });
 
   it("does not throw on a non-string VIN and does not save a bad check digit", () => {

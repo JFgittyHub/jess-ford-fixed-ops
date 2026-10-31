@@ -1,5 +1,6 @@
 import { appointmentLoads, onlineSlots } from "./capacity";
 import type { ContactMethod, Customer, OnlineChallenge, OnlineRequest, SchedulingSettings, StoreId, Vehicle } from "./types";
+import { normalizeVin, vinScheduleError } from "./vin";
 
 const CODE_WINDOW_MS = 10 * 60 * 1000;
 
@@ -159,7 +160,7 @@ export function submitOnlineRequest(
   input: OnlineRequestInput,
   id: string,
   at: string,
-): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" } {
+): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" } {
   const service = shop.settings.scheduling.onlineMenu.find((row) => row.id === input.serviceId);
   if (!service) return { ok: false, reason: "service" };
   const advisor = shop.advisors.find((row) => row.id === input.advisorId);
@@ -176,7 +177,7 @@ export function submitOnlineRequest(
   let year = Math.trunc(Number(input.year) || 0);
   let make = (input.make ?? "").trim();
   let model = (input.model ?? "").trim();
-  let vin = (input.vin ?? "").trim().toUpperCase();
+  let vin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
   let plate = (input.plate ?? "").trim().toUpperCase();
 
   if (input.verified) {
@@ -197,9 +198,12 @@ export function submitOnlineRequest(
     model = vehicle.model;
     vin = vehicle.vin;
     plate = plate || "";
-  } else if (!customerName || !make || !model || year < 1980 || year > 2035 || vin.length < 8 || !plate) {
+  } else if (!customerName || !make || !model || year < 1980 || year > 2035 || !plate) {
     return { ok: false, reason: "contact" };
+  } else if (vinScheduleError(vin)) {
+    return { ok: false, reason: "vin" };
   }
+  if (vin && vinScheduleError(vin)) return { ok: false, reason: "vin" };
 
   const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };

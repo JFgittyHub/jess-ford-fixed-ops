@@ -189,7 +189,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
         </p>
       </aside>
       <div className="md:pl-60">
-        <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
+        <header className="app-header sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-14 w-auto md:hidden" />

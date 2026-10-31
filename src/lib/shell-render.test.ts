@@ -72,8 +72,11 @@ function deskRouter(path: string) {
 async function mount(path: string, interact?: (host: HTMLElement) => Promise<void> | void) {
   let router = deskRouter(path);
   await router.load();
-  const server = (router as { _serverResult?: { type?: string; redirect?: { options?: { href?: string } } } })._serverResult;
-  const redirectHref = server?.type === "redirect" ? server.redirect?.options?.href : undefined;
+  const server = (router as { _serverResult?: { type?: string; redirect?: { options?: { href?: string; hash?: string } } } })._serverResult;
+  const redirectOptions = server?.type === "redirect" ? server.redirect?.options : undefined;
+  const redirectHref = redirectOptions?.href
+    ? `${redirectOptions.href}${redirectOptions.hash && !redirectOptions.href.includes("#") ? `#${String(redirectOptions.hash).replace(/^#/, "")}` : ""}`
+    : undefined;
   // An encoded path or a trailing slash is canonicalized before the screen renders.
   if (redirectHref && redirectHref !== path) {
     router = deskRouter(redirectHref);
@@ -91,7 +94,7 @@ async function mount(path: string, interact?: (host: HTMLElement) => Promise<voi
     for (let i = 0; i < 25; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 20));
       const text = host.textContent ?? "";
-      if (text.includes("Fixed operations") || text.includes("Something went wrong") || text.includes("Maximum update depth")) break;
+      if (text.includes("Fixed operations") || text.includes("Request a visit") || text.includes("Something went wrong") || text.includes("Maximum update depth")) break;
     }
   } catch (error) {
     thrown = error instanceof Error ? `${error.message}\n${error.stack}` : String(error);
@@ -159,7 +162,15 @@ describe("desk client mount", () => {
         if (text.includes("Something went wrong") || text.includes("Maximum update depth")) {
           problems.push(`${path} crashed: ${text.slice(0, 240)}`);
         }
-        if (!text.includes("Fixed operations") && !text.includes("Jess Ford") && !text.includes("Service managers") && !text.includes("Repair orders") && !text.includes("Appointments")) {
+        if (path === "/request") {
+          if (!text.includes("Request a visit")) problems.push("/request did not render the customer booking page");
+          if (html.includes("data-staff-nav") || text.includes("Fixed operations") || text.includes("Working as")) {
+            problems.push("/request rendered the staff shell");
+          }
+          for (const name of ["Megan Cho", "Derek Lang", "Marcus Hale", "Jordan Hale", "Alicia Nguyen"]) {
+            if (text.includes(name)) problems.push(`/request showed staff name ${name}`);
+          }
+        } else if (!text.includes("Fixed operations") && !text.includes("Jess Ford") && !text.includes("Service managers") && !text.includes("Repair orders") && !text.includes("Appointments")) {
           problems.push(`${path} did not render the desk (${status} ${location}): ${JSON.stringify(html.slice(0, 180))}`);
         }
         const nav = staffNav(html);
@@ -172,7 +183,7 @@ describe("desk client mount", () => {
           const marker = LOCKED_BODY[path];
           if (marker && text.includes(marker)) problems.push(`${path} rendered the locked screen (${marker})`);
         }
-        if (path === "/online-requests" && !text.includes("Online requests") && !location.includes("/schedule")) {
+        if (path === "/online-requests" && !text.includes("Online requests")) {
           problems.push(`/online-requests did not open the appointments calendar (${location})`);
         }
         if (path === "/schedule" && !text.includes("Online requests (0)")) {
@@ -236,7 +247,13 @@ describe("desk client mount", () => {
         root.render(createElement(OrderEditor, { orderId: order.id, onClose: () => undefined }));
       });
       await new Promise((resolve) => setTimeout(resolve, 40));
-      assert.match(document.body.textContent ?? "", /Read-only — repair orders come from Dealertrack/);
+      const bodyText = document.body.textContent ?? "";
+      assert.match(bodyText, /Read-only — repair orders come from Dealertrack/);
+      assert.equal(bodyText.includes("Close with no work ($0)"), false);
+      assert.equal(bodyText.includes("Add line"), false);
+      assert.equal(bodyText.includes("Add labor"), false);
+      assert.equal(bodyText.includes("Add part"), false);
+      assert.ok(document.querySelector(".ro-window [role=status]"));
       const enabled = [...document.querySelectorAll("input, select, textarea, button")].filter((element) => {
         if (element.hasAttribute("disabled") || element.getAttribute("aria-disabled") === "true") return false;
         const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -347,6 +364,7 @@ describe("desk client mount", () => {
       routeText = document.body.textContent ?? "";
     });
     assert.equal(fromRoute.thrown, "");
+    assert.match(fromRoute.location, /\/schedule/);
     assert.match(routeText, /Online requests \(0\)/);
     assert.match(routeText, /Pending requests for this store hold their time/);
     let hashText = "";

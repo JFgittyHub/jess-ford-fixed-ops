@@ -403,6 +403,25 @@ export interface RoleChange {
   advisorName?: string;
 }
 
+/** Who changed a store setting, and what it was before and after. */
+export interface SettingsChange {
+  at: string;
+  who: string;
+  whoId: string;
+  field: string;
+  before: string;
+  after: string;
+}
+
+/** Who approved or declined an online request. This is not a role change. */
+export interface RequestAction {
+  at: string;
+  who: string;
+  whoId: string;
+  requestId: string;
+  action: "approved" | "declined";
+}
+
 export interface ClosedRecord {
   id: string;
   orderId: string;
@@ -495,6 +514,9 @@ export interface ShopNotice {
   requestId: string | null;
   appointmentId: string | null;
   customerName: string;
+  /** Staff name that ran a simulated reminder. */
+  who?: string;
+  whoId?: string;
 }
 
 /** Why an advisor kept a booking the capacity check would not offer online. */
@@ -549,6 +571,10 @@ export interface ShopData {
   roleLog?: RoleChange[];
   /** A confirmed VIN transfer. Closed repair orders keep their own snapshot. */
   ownershipLog?: OwnershipChange[];
+  /** Store setup changes: who, when, before, and after. */
+  settingsLog?: SettingsChange[];
+  /** Approve and decline actions for online requests. */
+  requestLog?: RequestAction[];
 }
 
 /** Who moved a vehicle to another customer, and when. */

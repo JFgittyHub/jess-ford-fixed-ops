@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { Shell } from "@/components/shell";
+import { useEffect, useState } from "react";
 import { Button, Field } from "@/components/ui";
 import { today } from "@/lib/format";
 import { lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
 import { useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
+import { vinScheduleError } from "@/lib/vin";
 
 export const Route = createFileRoute("/request")({ component: RequestPage });
 
@@ -36,7 +36,7 @@ function RequestPage() {
   const [vin, setVin] = useState("");
   const [plate, setPlate] = useState("");
   const [serviceId, setServiceId] = useState(shop.settings.scheduling.onlineMenu[0]?.id ?? "");
-  const [advisorId, setAdvisorId] = useState(shop.advisors[0]?.id ?? "");
+  const advisorId = shop.advisors[0]?.id ?? "";
   const [transportId, setTransportId] = useState(shop.settings.scheduling.transportOptions[0]?.id ?? "");
   const [contactMethod, setContactMethod] = useState<"text" | "email" | "call">("text");
   const [date, setDate] = useState(today());
@@ -46,7 +46,7 @@ function RequestPage() {
   const menu = shop.settings.scheduling.onlineMenu;
   const transports = shop.settings.scheduling.transportOptions;
   const service = menu.some((row) => row.id === serviceId) ? serviceId : menu[0]?.id ?? "";
-  const advisor = shop.advisors.some((row) => row.id === advisorId) ? advisorId : shop.advisors[0]?.id ?? "";
+  const advisor = advisorId;
   const transport = transports.some((row) => row.id === transportId) ? transportId : transports[0]?.id ?? "";
   const slots = visitSlots(shop, { serviceId: service, advisorId: advisor });
   const dates = [...new Set(slots.map((slot) => slot.date))];
@@ -139,15 +139,21 @@ function RequestPage() {
         ? "That time is no longer open."
         : result.reason === "code"
           ? "The code did not match, so the saved vehicle was not used."
-          : "Enter the visit details and try again.");
+          : result.reason === "vin"
+            ? (vinScheduleError(vin) || "Enter a 17-character VIN.")
+            : "Enter the visit details and try again.");
       return;
     }
     setSentId(result.id);
     setStep("sent");
   }
 
+  useEffect(() => {
+    void useShop.persist.rehydrate();
+  }, []);
+
   return (
-    <Shell>
+    <main className="mx-auto min-h-screen max-w-3xl bg-bg px-4 py-8 text-ink">
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Online request</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Request a visit</h1>
       <p className="mt-3 max-w-2xl text-muted">
@@ -240,8 +246,9 @@ function RequestPage() {
               setStep("visit");
               return;
             }
-            if (!name.trim() || !make.trim() || !model.trim() || vin.trim().length < 8 || !plate.trim()) {
-              setError("Enter your name, make, model, VIN, and plate.");
+            const vinProblem = vinScheduleError(vin);
+            if (!name.trim() || !make.trim() || !model.trim() || !plate.trim() || vinProblem) {
+              setError(vinProblem || "Enter your name, make, model, VIN, and plate.");
               return;
             }
             setError("");
@@ -293,11 +300,6 @@ function RequestPage() {
               {menu.map((row) => <option key={row.id} value={row.id}>{row.name} · {row.laborHours} hr</option>)}
             </select>
           </Field>
-          <Field label="Advisor">
-            <select className="field" value={advisor} onChange={(event) => setAdvisorId(event.target.value)}>
-              {shop.advisors.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-            </select>
-          </Field>
           <Field label="How should the shop reach you">
             <select className="field" value={contactMethod} onChange={(event) => setContactMethod(event.target.value as "text" | "email" | "call")}>
               <option value="text">Text</option>
@@ -339,12 +341,12 @@ function RequestPage() {
         <div className="card mt-4 max-w-xl" role="status">
           <h2 className="font-display text-3xl leading-none">Request received</h2>
           <p className="mt-3 text-sm text-muted">
-            {sent.customerName} · {sent.serviceName} · {sent.date} at {sent.time} · {sent.advisorName} · {sent.transportName}. This is waiting for the shop. It is not a confirmed appointment.
+            {sent.customerName} · {sent.serviceName} · {sent.date} at {sent.time} · {sent.transportName}. This is waiting for the shop. It is not a confirmed appointment.
           </p>
           <p className="mt-2 text-sm">{sent.verified ? "Identity verified." : "Unverified. The shop will match the record when it confirms the request."}</p>
           <Button className="mt-4" onClick={() => { setStep("lookup"); setSentId(null); setQuery(""); setEnteredCode(""); setVerified(false); }}>Request another</Button>
         </div>
       ) : null}
-    </Shell>
+    </main>
   );
 }

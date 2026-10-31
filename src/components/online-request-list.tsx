@@ -10,12 +10,17 @@ export function OnlineRequestList({
   suggested,
   onApprove,
   onDecline,
+  canAct = true,
+  refusal = "Only an advisor or service manager can approve or decline a request.",
 }: {
   rows: OnlineRequest[];
   customers?: { id: string; name: string }[];
   suggested?: (row: OnlineRequest) => string;
   onApprove?: (id: string, linkCustomerId?: string) => void;
   onDecline?: (id: string) => void;
+  /** Techs and a blank working-as pick do not get Approve or Decline. */
+  canAct?: boolean;
+  refusal?: string;
 }) {
   const listed = [...rows].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
   if (listed.length === 0) {
@@ -51,13 +56,17 @@ export function OnlineRequestList({
               <td>{row.verified ? "Verified" : "Unverified"}</td>
               {onApprove ? (
                 <td>
-                  <RequestActions
-                    row={row}
-                    customers={customers}
-                    suggestion={suggested?.(row) ?? ""}
-                    onApprove={onApprove}
-                    onDecline={onDecline}
-                  />
+                  {canAct ? (
+                    <RequestActions
+                      row={row}
+                      customers={customers}
+                      suggestion={suggested?.(row) ?? ""}
+                      onApprove={onApprove}
+                      onDecline={onDecline}
+                    />
+                  ) : (
+                    <p role="alert" className="max-w-xs text-sm text-[#8a3b2a]">{refusal}</p>
+                  )}
                 </td>
               ) : null}
             </tr>

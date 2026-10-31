@@ -10,6 +10,7 @@ import { requestHolds, visitSlots } from "./online-request.ts";
 import { onlineSlots } from "./capacity.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore, type ShopState } from "./store.ts";
+import { fullVin } from "./vin.ts";
 
 const when = "2026-10-20T14:00:00.000Z";
 const friday = "2026-10-23";
@@ -33,7 +34,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2021,
       make: "Sample",
       model: "Hatch",
-      vin: "2T1BURHE0JC123456",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2021, plant: "G", serial: 21 }),
       plate: "NEW123",
     });
     assert.equal(saved.ok, true);
@@ -117,7 +118,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2020,
       make: "Sample",
       model: "Truck",
-      vin: "3FAHP0HA6AR123456",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 22 }),
       plate: "HOLD1",
     });
     assert.equal(saved.ok, true);
@@ -167,7 +168,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2018,
       make: "Sample",
       model: "Coupe",
-      vin: "JH4KA4650MC000001",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2018, plant: "G", serial: 23 }),
       plate: "REMIND",
     });
     assert.equal(saved.ok, true);
@@ -202,7 +203,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2024,
       make: "Sample",
       model: "Truck",
-      vin: "1FTAB12C0RG000099",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2024, plant: "G", serial: 24 }),
       plate: "COULEE",
     });
     assert.equal(coulee.ok, true);
@@ -221,7 +222,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2022,
       make: "Sample",
       model: "Wagon",
-      vin: "1FTPULMN0RC000099",
+      vin: fullVin({ prefix: "1FTPULMN", year: 2022, plant: "P", serial: 25 }),
       plate: "PULLMN",
     });
     assert.equal(pullman.ok, true);

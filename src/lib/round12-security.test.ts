@@ -55,7 +55,6 @@ describe("round 12 security", () => {
       closeSnapshot: { customerName: "Helen Cho", phone: "5095550199", address: "", plate: "", vin: vinA, year: 2019, make: "Ford", model: "F-150" },
     };
     const open: RepairOrder = { ...closed, id: "open-1", number: 11, status: "open", authorizationLocked: false, vehicleId: "new-car", customerId: "pat", openedAt: "2026-10-30T16:00:00.000Z", closeSnapshot: undefined };
-    const before = JSON.stringify(closed);
     const merged = mergeVinDuplicates([
       { id: "old-car", customerId: "helen", year: 2019, make: "Ford", model: "F-150", vin: vinA },
       { id: "new-car", customerId: "pat", year: 2019, make: "Ford", model: "F-150", vin: vinA.toLowerCase() },
@@ -63,13 +62,22 @@ describe("round 12 security", () => {
     assert.equal(merged.vehicles.filter((row) => row.vin.toUpperCase() === vinA).length, 1);
     assert.equal(merged.vehicles[0]?.customerId, "pat");
     assert.equal(merged.vehicles[0]?.ownership?.length, 2);
-    assert.equal(JSON.stringify(merged.orders.find((row) => row.id === "closed-1")), before);
-    assert.equal(merged.orders.find((row) => row.id === "closed-1")?.closeSnapshot?.customerName, "Helen Cho");
+    const closedAfter = merged.orders.find((row) => row.id === "closed-1");
+    assert.equal(closedAfter?.vehicleId, merged.vehicles[0]?.id);
+    assert.equal(JSON.stringify(closedAfter?.closeSnapshot), JSON.stringify(closed.closeSnapshot));
+    const { vehicleId: _moved, ...closedRest } = closedAfter ?? closed;
+    const { vehicleId: _kept, ...beforeRest } = closed;
+    assert.equal(JSON.stringify(closedRest), JSON.stringify(beforeRest));
+    assert.equal(closedAfter?.closeSnapshot?.customerName, "Helen Cho");
+    assert.equal(merged.ownershipLog.some((row) => row.beforeVehicleId === "old-car" && row.afterVehicleId === merged.vehicles[0]?.id), true);
+    assert.equal(merged.vehicles[0]?.ownership?.[0]?.startedAt.startsWith("1970"), false);
     const loaded = migrateSavedShop({ vehicles: [
       { id: "old-car", customerId: "helen", year: 2019, make: "Ford", model: "F-150", vin: vinA },
       { id: "new-car", customerId: "pat", year: 2019, make: "Ford", model: "F-150", vin: vinA },
     ], orders: [closed, open] });
-    assert.equal(JSON.stringify(loaded.orders.find((row) => row.id === "closed-1")), before);
+    const loadedClosed = loaded.orders.find((row) => row.id === "closed-1");
+    assert.equal(loadedClosed?.vehicleId, loaded.vehicles.find((row) => row.vin === vinA)?.id);
+    assert.equal(JSON.stringify(loadedClosed?.closeSnapshot), JSON.stringify(closed.closeSnapshot));
   });
 
   it("edits a phone in place, even when a closed repair order uses that customer", () => {

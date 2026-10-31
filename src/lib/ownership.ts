@@ -1,6 +1,6 @@
 import { displayRecordedWhen } from "./cancel";
 import { openedInstant } from "./mileage";
-import type { Customer, OwnershipSpan, RepairOrder, Vehicle } from "./types";
+import type { Customer, OwnershipChange, OwnershipSpan, RepairOrder, Vehicle } from "./types";
 import { isFullVin, normalizeVin } from "./vin";
 
 /** A transfer reason is required, trimmed, and kept to 500 characters. */
@@ -80,7 +80,7 @@ export type VehicleHistoryEntry =
 /** Newest first. A transfer divider names the new owner. Each repair order names the owner at that visit. */
 export function vehicleHistoryEntries(orders: RepairOrder[], vehicle: Vehicle, customers: Pick<Customer, "id" | "name">[], vehicles: Vehicle[]): VehicleHistoryEntry[] {
   const spans = [...(vehicle.ownership ?? [])].sort((a, b) => Date.parse(a.startedAt) - Date.parse(b.startedAt));
-  const firstStart = spans[0]?.startedAt ?? "";
+  const originalOwner = spans[0]?.customerId ?? "";
   const lines: VehicleHistoryEntry[] = [];
   let shown = "";
   for (const order of ordersOnVin(orders, vehicles, vehicle.vin, vehicle.id)) {
@@ -96,9 +96,9 @@ export function vehicleHistoryEntries(orders: RepairOrder[], vehicle: Vehicle, c
       const owned = [...spans].reverse().find((row) => row.customerId === ownerId);
       if (owned) span = owned;
     }
-    const key = span ? `${span.customerId}:${span.startedAt}` : owner;
+    const key = span?.customerId || ownerId || owner;
     if (key !== shown) {
-      if (span && span.startedAt !== firstStart) {
+      if (span && originalOwner && span.customerId !== originalOwner) {
         const named = customers.find((row) => row.id === span.customerId)?.name ?? owner;
         lines.push({ kind: "divider", text: `New owner: ${named}, since ${displayRecordedWhen(span.startedAt)}` });
       }
@@ -109,24 +109,75 @@ export function vehicleHistoryEntries(orders: RepairOrder[], vehicle: Vehicle, c
   return lines;
 }
 
+const REAL_VISIT = Date.parse("1980-01-01T00:00:00.000Z");
+
+function realMillis(value: unknown): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(parsed) && parsed >= REAL_VISIT ? parsed : 0;
+}
+
 function visitInstant(orders: RepairOrder[], vehicleId: string, pick: "min" | "max") {
   let best = pick === "min" ? Number.POSITIVE_INFINITY : 0;
   let found = false;
   for (const order of orders) {
     if (order.vehicleId !== vehicleId) continue;
-    const instant = openedInstant(order);
-    if (!Number.isFinite(instant) || instant <= 0) continue;
+    const instant = realMillis(openedInstant(order));
+    if (!instant) continue;
     found = true;
     best = pick === "min" ? Math.min(best, instant) : Math.max(best, instant);
   }
   return found ? best : 0;
 }
 
+function iso(ms: number) {
+  return new Date(ms).toISOString();
+}
+
+/** Keep recorded spans. Same owner stays one span. Start dates are real visits, never 1970. */
+function ownershipSpansFor(group: { vehicle: Vehicle }[], orders: RepairOrder[], survivor: Vehicle): OwnershipSpan[] {
+  const ranked = [...group].sort((a, b) => {
+    const aStart = visitInstant(orders, a.vehicle.id, "min") || visitInstant(orders, a.vehicle.id, "max");
+    const bStart = visitInstant(orders, b.vehicle.id, "min") || visitInstant(orders, b.vehicle.id, "max");
+    return aStart - bStart;
+  });
+  const spans: OwnershipSpan[] = [];
+  for (const row of ranked) {
+    const recorded = (row.vehicle.ownership ?? []).filter((span) => realMillis(span.startedAt)).map((span) => ({ ...span }));
+    const pieces = recorded.length > 0 ? recorded : [];
+    if (pieces.length === 0) {
+      const start = visitInstant(orders, row.vehicle.id, "min") || visitInstant(orders, row.vehicle.id, "max");
+      if (!start) continue;
+      pieces.push({ customerId: row.vehicle.customerId, startedAt: iso(start), endedAt: null, who: "", whoId: "", reason: "" });
+    }
+    for (const span of pieces.sort((a, b) => realMillis(a.startedAt) - realMillis(b.startedAt))) {
+      const last = spans[spans.length - 1];
+      if (last && last.customerId === span.customerId) {
+        if (realMillis(span.startedAt) < realMillis(last.startedAt)) last.startedAt = span.startedAt;
+        continue;
+      }
+      if (last && !last.endedAt) last.endedAt = span.startedAt;
+      spans.push({ ...span, endedAt: realMillis(span.endedAt) ? span.endedAt : null });
+    }
+  }
+  const open = spans[spans.length - 1];
+  const survivorStart = visitInstant(orders, survivor.id, "max");
+  if (open && open.customerId !== survivor.customerId && survivorStart > realMillis(open.startedAt)) {
+    open.endedAt = iso(survivorStart);
+    spans.push(firstOwnership(survivor.customerId, iso(survivorStart), null));
+  } else if (open) {
+    open.endedAt = null;
+  } else if (survivorStart) {
+    spans.push(firstOwnership(survivor.customerId, iso(survivorStart), null));
+  }
+  return spans;
+}
+
 /**
  * One current vehicle per full VIN. The latest owner stays current.
- * Closed repair orders are returned as the same objects.
+ * Every repair order, including Closed, points at the surviving vehicle.
+ * A Closed repair order changes only that vehicle id. Its snapshot and totals stay.
  */
-export function mergeVinDuplicates(vehicles: Vehicle[], orders: RepairOrder[]): { vehicles: Vehicle[]; orders: RepairOrder[] } {
+export function mergeVinDuplicates(vehicles: Vehicle[], orders: RepairOrder[]): { vehicles: Vehicle[]; orders: RepairOrder[]; ownershipLog: OwnershipChange[] } {
   const groups = new Map<string, Vehicle[]>();
   const kept: Vehicle[] = [];
   for (const vehicle of vehicles) {
@@ -140,6 +191,7 @@ export function mergeVinDuplicates(vehicles: Vehicle[], orders: RepairOrder[]): 
     groups.set(key, list);
   }
   const redirect = new Map<string, string>();
+  const ownershipLog: OwnershipChange[] = [];
   for (const [vin, group] of groups) {
     if (group.length === 1) {
       kept.push(group[0]);
@@ -149,42 +201,61 @@ export function mergeVinDuplicates(vehicles: Vehicle[], orders: RepairOrder[]): 
       .map((vehicle, index) => ({ vehicle, index, latest: visitInstant(orders, vehicle.id, "max") }))
       .sort((a, b) => a.latest - b.latest || a.index - b.index);
     const survivor = ranked[ranked.length - 1].vehicle;
-    let cursor = 0;
-    const spans: OwnershipSpan[] = ranked.map((row, index) => {
-      const earliest = visitInstant(orders, row.vehicle.id, "min") || row.latest || cursor + 1;
-      const startedAt = new Date(Math.max(earliest, cursor + 1)).toISOString();
-      cursor = Date.parse(startedAt);
-      const last = index === ranked.length - 1;
-      return {
-        customerId: row.vehicle.customerId,
-        startedAt,
-        endedAt: last ? null : new Date(cursor + 1).toISOString(),
-        who: "",
-        whoId: "",
-        reason: last ? "" : "Merged duplicate VIN on load",
-      };
-    });
-    for (let index = 0; index < spans.length - 1; index += 1) {
-      spans[index] = { ...spans[index], endedAt: spans[index + 1].startedAt };
-    }
+    const described = [...ranked].reverse().find((row) => row.vehicle.year && row.vehicle.model)?.vehicle ?? survivor;
+    const spans = ownershipSpansFor(ranked, orders, survivor);
     kept.push({
       ...survivor,
+      year: survivor.year || described.year,
+      make: survivor.make || described.make || "Ford",
+      model: survivor.model || described.model,
       vin,
       customerId: survivor.customerId,
       transferredTo: undefined,
       ownership: spans,
     });
+    const atMs = visitInstant(orders, survivor.id, "max")
+      || ranked.map((row) => visitInstant(orders, row.vehicle.id, "min")).find((value) => value > 0)
+      || 0;
     for (const row of group) {
-      if (row.id !== survivor.id) redirect.set(row.id, survivor.id);
+      if (row.id === survivor.id) continue;
+      redirect.set(row.id, survivor.id);
+      if (!atMs) continue;
+      ownershipLog.push({
+        at: iso(atMs),
+        who: "",
+        whoId: "",
+        beforeVehicleId: row.id,
+        afterVehicleId: survivor.id,
+        beforeCustomerId: row.customerId,
+        afterCustomerId: survivor.customerId,
+        vin,
+        reason: "Merged duplicate VIN on load",
+      });
     }
   }
-  if (redirect.size === 0) return { vehicles, orders };
+  if (redirect.size === 0) return { vehicles, orders, ownershipLog };
   const nextOrders = orders.map((order) => {
     const nextId = redirect.get(order.vehicleId);
-    if (!nextId || order.status === "closed" || order.authorizationLocked) return order;
+    if (!nextId || nextId === order.vehicleId) return order;
     return { ...order, vehicleId: nextId };
   });
-  return { vehicles: kept, orders: nextOrders };
+  return { vehicles: kept, orders: nextOrders, ownershipLog };
+}
+
+/** Closed tickets use the snapshot year, make, and model even when the vehicle row is gone. */
+export function repairOrderHeading(
+  order: Pick<RepairOrder, "status" | "closeSnapshot">,
+  customer: { name?: string } | undefined,
+  vehicle: { year?: number; make?: string; model?: string } | undefined,
+): string {
+  const snap = order.status === "closed" ? order.closeSnapshot : undefined;
+  const name = (snap?.customerName || customer?.name || "").trim();
+  if (!name) return "Repair order";
+  const year = snap?.year || vehicle?.year || "";
+  const make = (snap?.make || vehicle?.make || (year ? "Ford" : "")).trim();
+  const model = (snap?.model || vehicle?.model || "").trim();
+  const vehicleLabel = [year, make, model].filter((part) => String(part).trim()).join(" ");
+  return `${name} · ${vehicleLabel || "Vehicle"}`;
 }
 
 /** Customer copy of this repair order only. A closed ticket uses its snapshot. Previous owners are not included. */

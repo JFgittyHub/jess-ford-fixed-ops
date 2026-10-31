@@ -33,7 +33,10 @@ export function sectionLockEnabled() {
   return flagEnabled();
 }
 
-/** Lowercase, decoded, without a trailing slash. */
+/**
+ * Decode, lowercase, collapse repeated slashes, and drop the trailing slash,
+ * query, and hash. `/Fees`, `/%46ees`, `//Fees`, and `/Fees?x=1` all match.
+ */
 export function normalizeDeskPath(path: string) {
   let clean = path.split("?")[0]?.split("#")[0] ?? "";
   try {
@@ -41,8 +44,8 @@ export function normalizeDeskPath(path: string) {
   } catch {
     /* Keep a path that is not valid encoding. */
   }
-  clean = clean.replace(/\/+$/, "") || "/";
-  return clean.toLowerCase();
+  clean = clean.toLowerCase().replace(/\/{2,}/g, "/").replace(/\/+$/, "") || "/";
+  return clean;
 }
 
 /** A locked path, including any sub-route under it. */

@@ -73,6 +73,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [showCancelled, setShowCancelled] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [requestNote, setRequestNote] = useState("");
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
@@ -319,12 +320,29 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           rows={(shop.onlineRequests ?? []).filter((row) => row.status === "pending")}
           customers={shop.customers}
           suggested={(row) => matchRequestCustomer(shop.customers, shop.vehicles, row)?.customerId ?? ""}
-          onApprove={(id, linkCustomerId) => { shop.approveOnlineRequest(id, linkCustomerId); }}
-          onDecline={(id) => { shop.declineOnlineRequest(id); }}
+          canAct={actor === "advisor" || actor === "service-manager"}
+          onApprove={(id, linkCustomerId) => {
+            const result = shop.approveOnlineRequest(id, linkCustomerId);
+            setRequestNote(result.ok ? "" : result.reason === "vin"
+              ? "That VIN doesn't pass the check. It was not approved."
+              : "Only an advisor or service manager can approve or decline a request.");
+          }}
+          onDecline={(id) => {
+            const result = shop.declineOnlineRequest(id);
+            setRequestNote(result.ok ? "" : "Only an advisor or service manager can approve or decline a request.");
+          }}
         />
+        {requestNote ? <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{requestNote}</p> : null}
         <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
           <p className="max-w-xl text-sm text-muted">Approval, decline, and the day-before reminder are simulated here. The texting adapter is off, so nothing leaves this desk.</p>
-          <Button onClick={() => shop.simulateDayBeforeReminders()}>Simulate day-before reminders</Button>
+          <Button onClick={() => {
+            if (actor !== "advisor" && actor !== "service-manager") {
+              setRequestNote("Only an advisor or service manager can send reminders.");
+              return;
+            }
+            shop.simulateDayBeforeReminders();
+            setRequestNote("");
+          }}>Simulate day-before reminders</Button>
         </div>
         <NoticeLog rows={shop.notices ?? []} />
       </Modal>

@@ -47,6 +47,8 @@ export function reminderNotice(input: {
   transportName: string;
   method: ContactMethod;
   storeId: ShopNotice["storeId"];
+  who?: string;
+  whoId?: string;
 }): ShopNotice {
   const customer = input.customer;
   const notice: ShopNotice = {
@@ -64,6 +66,8 @@ export function reminderNotice(input: {
     requestId: null,
     appointmentId: input.appointment.id,
     customerName: customer?.name ?? "Customer",
+    who: input.who ?? "",
+    whoId: input.whoId ?? "",
   };
   simulateDelivery(notice);
   return notice;
