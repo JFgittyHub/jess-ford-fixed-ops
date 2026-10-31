@@ -5,12 +5,36 @@ import { LOCKED_SECTIONS, SECTION_LOCK_ENABLED, isLockedPath, sectionLockEnabled
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import { fullVin } from "./vin.ts";
+import { normalizeWa } from "./wa.ts";
 
 const flags = globalThis as {
   __RO_CREATION_ENABLED__?: boolean;
   __RO_WRITES_ENABLED__?: boolean;
   __SECTION_LOCK_ENABLED__?: boolean;
 };
+
+/** Sandra's open ticket, stripped to a no-work close that would succeed if writes were on. */
+function prepareNoWorkClose(shop: ReturnType<typeof createShopStore>) {
+  const order = shop.getState().orders.find((row) => row.id === "open-sandra");
+  if (!order) return;
+  shop.setState({
+    orders: shop.getState().orders.map((row) => (row.id === "open-sandra"
+      ? {
+          ...row,
+          labor: [],
+          parts: [],
+          jobs: row.jobs.map((job) => ({ ...job, cause: "", correction: "" })),
+          inspection: null,
+          history: [],
+          payments: [],
+          fees: [],
+          mileageOut: row.mileage + 4,
+          wa: { ...normalizeWa(row.wa), address: "100 Main Street" },
+        }
+      : row)),
+    timeLogs: shop.getState().timeLogs.filter((row) => row.orderId !== "open-sandra"),
+  });
+}
 
 function memoryStorage(): ShopStorage {
   const items = new Map<string, string>();
@@ -339,7 +363,7 @@ describe("shipped flags", () => {
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.vin, row.vin);
   });
 
-  const guarded: Array<[string, (shop: ReturnType<typeof createShopStore>) => void]> = [
+  const guarded: Array<[string, (shop: ReturnType<typeof createShopStore>) => void, ((shop: ReturnType<typeof createShopStore>) => void)?]> = [
     ["updateOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOrder(order!.id, { concern: "Changed", mileage: (order?.mileage ?? 1) + 4 }); }],
     ["updateJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed" && row.jobs[0]); shop.getState().updateJob(order!.id, order!.jobs[0].id, { cause: "Nope" }); }],
     ["addJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addJob(order!.id); }],
@@ -349,7 +373,7 @@ describe("shipped flags", () => {
     ["bookOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().bookOrder(order!.id); }],
     ["unbookOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().unbookOrder(order!.id); }],
     ["closeOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().closeOrder(order!.id); }],
-    ["closeOrderWithNoWork", (shop) => { const order = shop.getState().orders.find((row) => row.id === "open-sandra") ?? shop.getState().orders.find((row) => row.status === "open"); shop.getState().closeOrderWithNoWork(order!.id, "Customer left before any work was done"); }],
+    ["closeOrderWithNoWork", (shop) => { shop.getState().closeOrderWithNoWork("open-sandra", "Customer left before any work was done"); }, prepareNoWorkClose],
     ["recordMileageOverride", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().recordMileageOverride(order!.id, 1, "the odometer was misread on arrival"); }],
     ["recordMileageOutOverride", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().recordMileageOutOverride(order!.id, (order?.mileage ?? 1) + 20000, "the replacement odometer read higher"); }],
     ["updateOpenContact", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOpenContact(order!.id, { phone: "5095550101", address: "9 Oak Street" }); }],
@@ -364,17 +388,17 @@ describe("shipped flags", () => {
     ["removePartLine", (shop) => { const order = shop.getState().orders.find((row) => row.parts[0]); shop.getState().removePartLine(order!.id, order!.parts[0].id); }],
     ["attachInspection", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().attachInspection(order!.id); }],
     ["setInspectionTech", (shop) => { const order = shop.getState().orders.find((row) => row.inspection); shop.getState().setInspectionTech(order!.id, "marcus"); }],
-    ["setInspectionPoint", (shop) => { const order = shop.getState().orders.find((row) => row.inspection?.items[0]); shop.getState().setInspectionPoint(order!.id, order!.inspection!.items[0].id, { status: "red", reading: "1", note: "worn" }); }],
+    ["setInspectionPoint", (shop) => { const order = shop.getState().orders.find((row) => row.id === "open-helen" && row.inspection?.items[0]); shop.getState().setInspectionPoint(order!.id, order!.inspection!.items[0].id, { status: "red", reading: "9", note: "replaced" }); }],
     ["moveWorkToJob", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0] && row.jobs[0]); shop.getState().moveWorkToJob(order!.id, "labor", order!.labor[0].id, order!.jobs[0].id); }],
     ["updateOpenVin", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOpenVin(order!.id, fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 77 })); }],
-    ["createOrder", (shop) => { const vehicle = shop.getState().vehicles[0]; shop.getState().createOrder({ customerId: vehicle.customerId, vehicleId: vehicle.id, advisorId: "megan", lines: [{ concern: "Oil" }], mileage: 1000, promiseTime: "" }); }],
+    ["createOrder", (shop) => { const vehicle = shop.getState().vehicles.find((row) => row.id === "v7" && !row.transferredTo) ?? shop.getState().vehicles.find((row) => !row.transferredTo); shop.getState().createOrder({ customerId: vehicle!.customerId, vehicleId: vehicle!.id, advisorId: "megan", lines: [{ concern: "Oil" }], mileage: 999999, promiseTime: "16:00" }); }],
     ["openWalkIn", (shop) => { shop.getState().openWalkIn({ name: "New Person", phone: "5095550188", year: 2020, model: "Escape", make: "Ford", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 78 }), advisorId: "megan", lines: [{ concern: "Brakes" }], mileage: 2000, promiseTime: "" }); }],
     ["addFee", (shop) => { shop.getState().addFee({ name: "Tow", amount: 9 }); }],
     ["updateFee", (shop) => { shop.getState().updateFee(shop.getState().settings.fees[0]?.id ?? "", { amount: 77 }); }],
     ["removeFee", (shop) => { shop.getState().removeFee(shop.getState().settings.fees[0]?.id ?? ""); }],
   ];
 
-  for (const [name, run] of guarded) {
+  for (const [name, run, prepare] of guarded) {
     it(`leaves orders byte-identical when ${name} runs with the shipped flags`, () => {
       const previous = {
         create: flags.__RO_CREATION_ENABLED__,
@@ -389,6 +413,7 @@ describe("shipped flags", () => {
         assert.equal(roCreationEnabled(), false);
         const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
         shop.getState().setWorkingAs("megan");
+        prepare?.(shop);
         const before = JSON.stringify(shop.getState().orders);
         const punches = JSON.stringify(shop.getState().timeLogs);
         run(shop);
@@ -403,6 +428,53 @@ describe("shipped flags", () => {
       }
     });
   }
+
+  it("changes the sample repair order when writes and creation are on", () => {
+    const previous = {
+      create: flags.__RO_CREATION_ENABLED__,
+      write: flags.__RO_WRITES_ENABLED__,
+      lock: flags.__SECTION_LOCK_ENABLED__,
+    };
+    flags.__RO_WRITES_ENABLED__ = true;
+    flags.__RO_CREATION_ENABLED__ = true;
+    flags.__SECTION_LOCK_ENABLED__ = false;
+    try {
+      assert.equal(roWritesEnabled(), true);
+      assert.equal(roCreationEnabled(), true);
+      const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+      shop.getState().setWorkingAs("megan");
+      prepareNoWorkClose(shop);
+      const closed = shop.getState().closeOrderWithNoWork("open-sandra", "Customer left before any work was done");
+      if (!closed.ok) assert.fail(closed.error ?? "The no-work close did not run.");
+      assert.equal(shop.getState().orders.find((row) => row.id === "open-sandra")?.status, "closed");
+      const helen = shop.getState().orders.find((row) => row.id === "open-helen");
+      const point = helen?.inspection?.items[0];
+      assert.ok(helen && point);
+      shop.getState().setInspectionPoint(helen.id, point.id, { status: "red", reading: "9", note: "replaced" });
+      assert.equal(shop.getState().orders.find((row) => row.id === "open-helen")?.inspection?.items[0]?.reading, "9");
+      const openPunch = shop.getState().timeLogs.find((row) => row.techId === "luis" && row.endedAt === null);
+      assert.ok(openPunch);
+      assert.equal(shop.getState().clockOut("luis").ok, true);
+      assert.notEqual(shop.getState().timeLogs.find((row) => row.id === openPunch.id)?.endedAt ?? null, null);
+      const before = shop.getState().orders.length;
+      const vehicle = shop.getState().vehicles.find((row) => row.id === "v7" && !row.transferredTo);
+      assert.ok(vehicle);
+      const created = shop.getState().createOrder({
+        customerId: vehicle.customerId,
+        vehicleId: vehicle.id,
+        advisorId: "megan",
+        lines: [{ concern: "Oil" }],
+        mileage: 999999,
+        promiseTime: "16:00",
+      });
+      assert.notEqual(created, "");
+      assert.equal(shop.getState().orders.length, before + 1);
+    } finally {
+      flags.__RO_CREATION_ENABLED__ = previous.create;
+      flags.__RO_WRITES_ENABLED__ = previous.write;
+      flags.__SECTION_LOCK_ENABLED__ = previous.lock;
+    }
+  });
 
   it("ignores global flag overrides when the process is production", () => {
     const previous = process.env.NODE_ENV;

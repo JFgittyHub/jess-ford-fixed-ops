@@ -143,7 +143,7 @@ interface ShopActions {
   setWorkingAs: (id: string) => void;
   issueOnlineChallenge: (customerId: string) => { ok: true; code: string; mobileLast4: string } | { ok: false; reason: "unknown" | "no-mobile" };
   addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string };
-  approveOnlineRequest: (id: string, linkCustomerId?: string) => { ok: true; appointmentId: string; noticeId: string } | { ok: false; reason: string };
+  approveOnlineRequest: (id: string, linkCustomerId?: string) => { ok: true; appointmentId: string; noticeId: string; warning: string | null } | { ok: false; reason: string; error?: string };
   declineOnlineRequest: (id: string) => { ok: true; noticeId: string } | { ok: false; reason: string };
   simulateDayBeforeReminders: () => { created: number };
   linkAppointment: (id: string, orderId: string) => void;
@@ -3360,7 +3360,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             laborOpIds: [],
           },
         });
-        if (capacity.blocked) return { ok: false, reason: "full" };
+        if (capacity.blocked) return { ok: false, reason: "full", error: capacity.blocked };
+        const warning = advisorBookingNote(capacity);
         const plan = planApproval({
           request,
           customers: state.customers,
@@ -3385,7 +3386,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           techId: request.techId,
           advisorId: request.advisorId,
         });
-        return { ok: true, appointmentId: plan.appointment.id, noticeId: plan.notice.id };
+        return { ok: true, appointmentId: plan.appointment.id, noticeId: plan.notice.id, warning };
       },
       declineOnlineRequest: (id) => {
         const state = get();

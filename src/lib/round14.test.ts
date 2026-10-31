@@ -161,6 +161,33 @@ describe("round 14", () => {
     assert.equal(heading.includes("1970"), false);
   });
 
+  it("logs a capacity override when an online request is approved past a warning", () => {
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
+    const request = {
+      id: "rq-heavy", storeId: "grand-coulee" as const, status: "pending" as const, createdAt: "2026-10-30T16:00:00.000Z",
+      serviceId: "oil", serviceName: "Oil", laborHours: 20, date: "2026-11-02", time: "09:00",
+      advisorId: "megan", advisorName: "Megan Cho", techId: "marcus", techName: "Marcus Hale",
+      transportId: "drop", transportName: "Drop", contactMethod: "text" as const, verified: false,
+      customerId: null, customerName: "Heavy Job", phone: "5095550191", email: "", vehicleId: null, year: 2020, make: "Ford", model: "Escape",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 31 }), plate: "HEAVY", appointmentId: null,
+    } satisfies OnlineRequest;
+    shop.setState({ onlineRequests: [request] });
+    const approved = shop.getState().approveOnlineRequest(request.id, "");
+    assert.equal(approved.ok, true);
+    if (approved.ok) assert.match(approved.warning ?? "", /You can still book it/);
+    assert.equal(shop.getState().overrides.some((row) => row.appointmentId && row.reason === "tech-hours"), true);
+    const blocked = { ...request, id: "rq-off", techId: "not-on-store", customerName: "Off Store", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 32 }) };
+    shop.setState({ onlineRequests: [blocked, ...shop.getState().onlineRequests] });
+    const refused = shop.getState().approveOnlineRequest(blocked.id, "");
+    assert.equal(refused.ok, false);
+    if (!refused.ok) {
+      assert.equal(refused.reason, "full");
+      assert.match(refused.error ?? "", /technician isn't on this store/);
+    }
+    assert.equal(shop.getState().onlineRequests.find((row) => row.id === "rq-off")?.status, "pending");
+  });
+
   it("ignores a dev lock override in production", () => {
     const previous = process.env.NODE_ENV;
     process.env.NODE_ENV = "production";

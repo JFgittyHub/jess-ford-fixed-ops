@@ -325,16 +325,27 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           canAct={actor === "advisor" || actor === "service-manager"}
           onApprove={(id, linkCustomerId) => {
             const result = shop.approveOnlineRequest(id, linkCustomerId);
-            setRequestNote(result.ok ? "" : result.reason === "vin"
+            if (result.ok) {
+              setRequestNote(result.warning ?? "");
+              return;
+            }
+            setRequestNote(result.reason === "vin"
               ? "That VIN doesn't pass the check. It was not approved."
-              : "Only an advisor or service manager can approve or decline a request.");
+              : result.reason === "full"
+                ? (result.error || "That time is full. It was not approved.")
+                : "Only an advisor or service manager can approve or decline a request.");
           }}
           onDecline={(id) => {
             const result = shop.declineOnlineRequest(id);
             setRequestNote(result.ok ? "" : "Only an advisor or service manager can approve or decline a request.");
           }}
         />
-        {requestNote ? <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{requestNote}</p> : null}
+        {requestNote && requestNote.includes("You can still book it.") ? (
+          <p role="status" className="mt-3 rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{requestNote}</p>
+        ) : null}
+        {requestNote && !requestNote.includes("You can still book it.") ? (
+          <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{requestNote}</p>
+        ) : null}
         <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
           <p className="max-w-xl text-sm text-muted">Approval, decline, and the day-before reminder are simulated here. The texting adapter is off, so nothing leaves this desk.</p>
           <Button onClick={() => {
