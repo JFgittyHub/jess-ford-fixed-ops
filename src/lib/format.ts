@@ -37,6 +37,34 @@ export function snapHalfHour(time: string) {
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 }
 
+export function formatShopPhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (local.length !== 10) return value.trim();
+  return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`;
+}
+
+export function closedHeaderCopy(
+  order: { status: string; closeSnapshot?: { storeName?: string; storeAddress?: string; storeCity?: string; storePhone?: string; phone?: string } | null },
+  settings: { storeName: string; address: string; city: string; phone: string },
+) {
+  const snap = order.closeSnapshot;
+  const recorded = order.status === "closed" && snap?.storeName?.trim() ? snap.storeName.trim() : "";
+  if (order.status !== "closed") {
+    return {
+      name: settings.storeName,
+      line: [settings.address, settings.city, formatShopPhone(settings.phone)].filter(Boolean).join(" · ") || settings.city,
+    };
+  }
+  if (!recorded) {
+    return { name: "Header not recorded", line: formatShopPhone(snap?.storePhone || snap?.phone || "") };
+  }
+  return {
+    name: recorded,
+    line: [snap?.storeAddress, snap?.storeCity, formatShopPhone(snap?.storePhone || "")].filter(Boolean).join(" · "),
+  };
+}
+
 export function clockTime(time: string) {
   const match = /^(\d{1,2}):(\d{2})/.exec(time.trim());
   if (!match) return time;

@@ -228,9 +228,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           <p className="mt-2 max-w-xl text-muted">
             {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
           </p>
+          {actor !== "advisor" && actor !== "service-manager" ? <p role="status" className="mt-2 text-sm font-semibold text-[#8a5a00]">Choose who is working.</p> : null}
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
-          <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
+          <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(day); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
           <Button small id="online-requests" onClick={() => setRequestsOpen(true)}>Online requests ({pendingCount})</Button>
           <Button small onClick={() => setTimesOpen(true)}>Online times</Button>
           <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
@@ -251,6 +252,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         selectedId={selectedId}
         onSelect={(id) => openAppointment(id)}
         onSlot={(nextTech, nextTime) => {
+          if (actor !== "advisor" && actor !== "service-manager") {
+            setActionError("Choose who is working.");
+            return;
+          }
           setDate(day);
           patchSeed({ techId: nextTech });
           setTime(nextTime);
@@ -298,7 +303,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           laneName={laneLabel(selected.lane, transports)}
           actor={actor}
           actionError={actionError}
-          onStatus={(status) => shop.setAppointmentStatus(selected.id, status)}
+          onStatus={(status) => {
+            const result = shop.setAppointmentStatus(selected.id, status);
+            setActionError(result.ok ? null : result.error);
+          }}
           onWrite={() => setPreset(selected)}
           onEdit={() => openAppointment(selected.id)}
           onCancel={() => askCancel(selected.id)}
@@ -327,7 +335,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           onApprove={(id, linkCustomerId) => {
             const result = shop.approveOnlineRequest(id, linkCustomerId);
             if (!result.ok && result.reason === "warning" && result.warning) {
-              setApproveGate({ id, linkCustomerId, warning: result.warning });
+              const request = shop.onlineRequests.find((row) => row.id === id);
+              const who = request?.customerName || "This customer";
+              const when = request ? `${request.date} at ${request.time}` : "that time";
+              setApproveGate({ id, linkCustomerId, warning: `${who} at ${when}. ${result.warning}` });
               setRequestNote("");
               return;
             }
@@ -423,7 +434,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value, confirmTransfer, transferReason) => {
             const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason);
-            if (result.needsTransfer) return { error: null, needsTransfer: true, warning: result.warning ?? null };
+            if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
             if (!result.ok) return result.error;
             setBooking(false);
             return null;
@@ -457,7 +468,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 initial={editing}
                 onSubmit={(value, confirmTransfer, transferReason) => {
                   const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason);
-                  if (result.needsTransfer) return { error: null, needsTransfer: true, warning: result.warning ?? null };
+                  if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
                   if (!result.ok) return result.error;
                   setEditingId(null);
                   return null;
@@ -562,7 +573,7 @@ function Selected({
         ))}
         {actionError ? <p role="alert" className="text-sm text-[#8a3b2a]">{actionError}</p> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+            <div className="tap-targets flex flex-wrap items-center gap-2">
         <Pill tone={row.status === "no_show" ? "bad" : row.status === "in_shop" ? "good" : undefined}>
           {appointmentStatusLabel(row.status)}
         </Pill>

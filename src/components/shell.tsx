@@ -242,6 +242,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                   </select>
                 </label>
               ) : null}
+              {!staffId ? <p role="status" className="text-sm font-semibold text-[#8a5a00]">Choose who is working.</p> : null}
               <div role="group" aria-label="Active store" className="flex gap-1">
                 {STORES.map((store) => (
                   <Button
@@ -289,7 +290,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
             setOpen(false);
           }}
         >
-          {!canEditSettings ? <p role="status" className="text-sm text-[#8a3b2a] sm:col-span-2">Only an advisor or service manager can change store settings.</p> : null}
+          {!canEditSettings ? <p role="status" className="text-sm text-[#8a3b2a] sm:col-span-2">{actor === "customer" ? "Choose who is working first." : "Only an advisor or service manager can change store settings."}</p> : null}
           <Field label="Store name">
             <input
               className="field"
@@ -340,7 +341,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
             ) : null}
             {isDemoMode() && actor === "service-manager" ? (
               <Button
-                tone={confirmClear ? "accent" : "ghost"}
+                tone="ghost"
                 onClick={() => {
                   if (!confirmClear) {
                     setConfirmClear(true);
@@ -355,20 +356,21 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 {confirmClear ? "Clear open work now" : "Clear shop data"}
               </Button>
             ) : null}
+            {confirmClear ? <Button type="button" onClick={() => setConfirmClear(false)}>Cancel</Button> : null}
           </div>
           {confirmClear ? (
             <p role="status" className="text-sm text-muted sm:col-span-2">
-              This removes open repair orders and the sample schedule. Closed repair orders, the change log, the request log, and the advisor, technician, and service manager rosters stay.
+              This removes every appointment and every capacity override, and the open repair orders. Closed repair orders, the change log, the request log, and the rosters stay. Sample data resets when you reload.
             </p>
           ) : null}
           {actor === "service-manager" ? (
             <section className="sm:col-span-2" aria-label="Change log">
               <h2 className="font-display text-2xl leading-none">Change log</h2>
-              <p className="mt-1 text-sm text-muted">Read only. Who changed a setting or decided an online request.</p>
+              <p className="mt-1 text-sm text-muted">Read only. Settings, appointments, and online request decisions. Times are Pacific.</p>
               {settingsLog.length === 0 && requestLog.length === 0 ? <p className="mt-2 text-sm text-muted">No changes on this store yet.</p> : (
                 <ul className="mt-2 grid max-h-48 gap-1 overflow-auto text-sm">
                   {settingsLog.map((row) => (
-                    <li key={`${row.at}-${row.field}-${row.after}`}>{row.who} · {row.field} · {row.before || "blank"} → {row.after || "blank"} · {displayRecordedWhen(row.at)}</li>
+                    <li key={`${row.at}-${row.field}-${row.after}`}>{row.who} · {row.after || row.field} · {displayRecordedWhen(row.at)} PT</li>
                   ))}
                   {requestLog.map((row) => (
                     <li key={`${row.at}-${row.requestId}-${row.action}`}>{row.who} · {row.action} request {row.requestId} · {displayRecordedWhen(row.at)}</li>

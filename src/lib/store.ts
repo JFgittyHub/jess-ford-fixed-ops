@@ -6,7 +6,7 @@ import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputE
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { appointmentMinutes as laborAppointmentMinutes, decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
-import { money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
+import { clockTime, money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
 import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
@@ -16,7 +16,7 @@ import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normali
 import { fullVin, isFullVin, normalizeVin, vinCheckWarning, vinEntryError, vinScheduleError } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
-import { formatVisitDate, lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, openedInstant, preparedReason } from "./mileage";
+import { formatVisitDate, lastVisitHint, lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, openedInstant, preparedReason } from "./mileage";
 import { earliestVisitStart, firstOwnership, mergeVinDuplicates, transferOwnership, transferReason } from "./ownership";
 import { RO_CREATE_REFUSAL, RO_WRITE_REFUSAL, roCreationEnabled, roWritesEnabled } from "./ro-flags";
 import { sectionLockEnabled } from "./section-lock";
@@ -132,7 +132,7 @@ interface ShopActions {
   createCustomer: (input: NewCustomerInput) => { customerId: string; vehicleId: string; warning?: string | null; error?: string | null; needsTransfer?: boolean };
   /** New customer and repair order in one step. A VIN transfer is written only when the repair order is created. */
   openWalkIn: (input: NewCustomerInput & Omit<NewOrderInput, "customerId" | "vehicleId">) => { ok: boolean; orderId: string; error: string | null; warning: string | null; needsTransfer?: boolean };
-  setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => void;
+  setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => { ok: boolean; error: string | null };
   moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>) => { ok: boolean; error: string | null };
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>) => { ok: boolean; error: string | null };
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string) => string;
@@ -142,7 +142,7 @@ interface ShopActions {
   reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
   setWorkingAs: (id: string) => void;
   issueOnlineChallenge: (customerId: string) => { ok: true; code: string; mobileLast4: string } | { ok: false; reason: "unknown" | "no-mobile" };
-  addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string };
+  addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string; limit?: number };
   approveOnlineRequest: (id: string, linkCustomerId?: string, confirmOverride?: boolean) => { ok: true; appointmentId: string; noticeId: string; warning: string | null } | { ok: false; reason: string; error?: string; warning?: string };
   declineOnlineRequest: (id: string) => { ok: true; noticeId: string } | { ok: false; reason: string };
   simulateDayBeforeReminders: () => { created: number };
@@ -224,6 +224,28 @@ function withCustomerFields<T extends { phone?: string; mobile?: string; email?:
     email: typeof row.email === "string" ? row.email : "",
     noShows: typeof row.noShows === "number" && row.noShows > 0 ? Math.trunc(row.noShows) : 0,
   }));
+}
+
+function visitLabel(date: string, time: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const stamp = new Date(Date.UTC(year || 2026, (month || 1) - 1, day || 1, 12));
+  const dayText = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(stamp);
+  return `${dayText}, ${clockTime(time)} PT`;
+}
+
+function appointmentStatusSentence(
+  current: { status: string; date: string; time: string },
+  next: string,
+  customerName: string,
+) {
+  const when = visitLabel(current.date, current.time);
+  if (current.status === "no_show" && next !== "no_show") {
+    return `Put back ${customerName} for ${when}. The no-show count goes down because the visit is back on the board.`;
+  }
+  if (next === "no_show") return `Marked no-show: ${customerName} for ${when}.`;
+  if (next === "arrived") return `Marked arrived: ${customerName} for ${when}.`;
+  if (next === "in_shop") return `Marked in shop: ${customerName} for ${when}.`;
+  return `Status ${current.status} to ${next} for ${customerName} on ${when}.`;
 }
 
 function noShowChanges(fromStatus: string, toStatus: string, fromCustomer: string, toCustomer: string) {
@@ -407,34 +429,34 @@ function stampStoreHeader(snapshot: CloseSnapshot, settings?: { storeName?: stri
 
 type RecordedStoreHeader = { storeName: string; storeAddress: string; storeCity: string; storePhone: string };
 
-let seedHeaders: Map<string, RecordedStoreHeader> | null = null;
+/** Sample close header. Same on the 1st and the 20th. Not taken from today's generated repair orders. */
+export const FIXED_CLOSE_HEADER: Record<"grand-coulee" | "pullman", RecordedStoreHeader> = {
+  "grand-coulee": {
+    storeName: "Jess Ford Grand Coulee",
+    storeAddress: "Grand Coulee service drive",
+    storeCity: "Grand Coulee, WA",
+    storePhone: "(555) 633-1400",
+  },
+  pullman: {
+    storeName: "Jess Ford Pullman",
+    storeAddress: "Pullman service drive",
+    storeCity: "Pullman, WA",
+    storePhone: "(555) 332-2100",
+  },
+};
 
-/** Store name, address, city, and phone from the sample close, keyed by repair-order id. Not the live settings. */
-function seedStoreHeader(orderId: string): RecordedStoreHeader | null {
-  if (!seedHeaders) {
-    seedHeaders = new Map();
-    for (const storeId of ["grand-coulee", "pullman"] as const) {
-      for (const order of createSeed(storeId).orders) {
-        const name = order.closeSnapshot?.storeName?.trim();
-        if (!name) continue;
-        seedHeaders.set(order.id, {
-          storeName: name,
-          storeAddress: order.closeSnapshot?.storeAddress ?? "",
-          storeCity: order.closeSnapshot?.storeCity ?? "",
-          storePhone: order.closeSnapshot?.storePhone ?? "",
-        });
-      }
-    }
-  }
-  return seedHeaders.get(orderId) ?? null;
+/** Canonical sample name only. A renamed store does not pick up today's header. */
+export function fixedCloseHeader(storeName: string | undefined): RecordedStoreHeader | null {
+  if (storeName === FIXED_CLOSE_HEADER["grand-coulee"].storeName) return FIXED_CLOSE_HEADER["grand-coulee"];
+  if (storeName === FIXED_CLOSE_HEADER.pullman.storeName) return FIXED_CLOSE_HEADER.pullman;
+  return null;
 }
 
-/** A saved Closed repair order keeps its close-time header. A seed row can fill a blank one. Live settings are not copied. */
-function fillRecordedStoreHeader(order: RepairOrder): RepairOrder {
+/** A saved Closed repair order keeps its close-time header. A blank one can take the fixed sample header. Live settings are not copied. */
+function fillRecordedStoreHeader(order: RepairOrder, header: RecordedStoreHeader | null): RepairOrder {
   const snap = order.closeSnapshot;
   if (snap && typeof snap.storeName === "string" && snap.storeName.trim()) return order;
-  const seeded = seedStoreHeader(order.id);
-  if (!seeded) return order;
+  if (!header) return order;
   const base: CloseSnapshot = snap ?? {
     customerName: "",
     phone: "",
@@ -445,7 +467,20 @@ function fillRecordedStoreHeader(order: RepairOrder): RepairOrder {
     make: "",
     model: "",
   };
-  return { ...order, closeSnapshot: { ...base, ...seeded } };
+  return { ...order, closeSnapshot: { ...base, ...header } };
+}
+
+function freezeLastVisit(order: RepairOrder, state: ShopData): RepairOrder {
+  if (order.status !== "closed" || !order.closeSnapshot || typeof order.closeSnapshot.lastVisitNote === "string") return order;
+  const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
+  const visit = lastVisitMileage(shopsFrom(state), vehicle, {
+    closedOnly: true,
+    excludeOrderId: order.id,
+    openedAt: order.openedAt,
+    openedOn: order.openedOn,
+    number: order.number,
+  });
+  return { ...order, closeSnapshot: { ...order.closeSnapshot, lastVisitNote: lastVisitHint(visit) } };
 }
 
 function withSnapshot(order: RepairOrder, customer?: Customer, vehicle?: Vehicle, settings?: { storeName?: string; address?: string; city?: string; phone?: string }) {
@@ -1073,6 +1108,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
   );
   const shelf: PartSku[] = Array.isArray(saved.parts) ? saved.parts.map((part) => ({ ...part })) : [];
   const transports = (withScheduling(saved.settings) ?? saved.settings)?.scheduling?.transportOptions ?? normalizeScheduling(undefined).transportOptions;
+  const recordedHeader = fixedCloseHeader(saved.settings?.storeName);
   return finishMigrate({
     ...saved,
     parts: shelf,
@@ -1089,7 +1125,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
         ? prior.jobs
         : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
-      if (prior.status === "closed") return fillRecordedStoreHeader(freezeClosedOrder(prior));
+      if (prior.status === "closed") return fillRecordedStoreHeader(freezeClosedOrder(prior), recordedHeader);
       const wa = normalizeWa(prior.wa);
       const stamped = wa;
       const keepFees = (prior.status as string) === "invoiced" || Boolean(prior.authorizationLocked) || historyIds.has(prior.id);
@@ -1129,10 +1165,9 @@ export function migrateSavedShop(persisted: unknown): ShopState {
         const customer = (Array.isArray(saved.customers) ? saved.customers : []).find((row) => row.id === prior.customerId);
         const vehicle = vehicleList.find((row) => row.id === prior.vehicleId);
         const identity = identitySnapshot(built, customer, vehicle);
-        const seeded = seedStoreHeader(prior.id);
         built.closeSnapshot = built.closeSnapshot
-          ? fillRecordedStoreHeader(built).closeSnapshot
-          : (seeded ? { ...identity, ...seeded } : identity);
+          ? fillRecordedStoreHeader(built, recordedHeader).closeSnapshot
+          : (recordedHeader ? { ...identity, ...recordedHeader } : identity);
       }
       if (built.status !== "closed" && !built.authorizationLocked && !(typeof prior.openedAt === "string" && prior.openedAt.trim())) {
         built.openedAt = new Date(openedInstant(prior)).toISOString();
@@ -2180,7 +2215,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           today(),
         );
         if ("error" in result) return { ok: false, error: result.error };
-        const stamped = withSnapshot({ ...result.order, authorizationLocked: true }, customer, vehicle, state.settings);
+        const stamped = freezeLastVisit(withSnapshot({ ...result.order, authorizationLocked: true }, customer, vehicle, state.settings), state);
         set((current) => ({
           parts: result.parts,
           closedHistory: appendClosedVersion(current.closedHistory, stamped, customer, vehicle),
@@ -2221,7 +2256,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           techs: state.techs,
         });
         if (error) return { ok: false, error };
-        const next = withSnapshot({ ...closeRepairOrderWithNoWork(order, note, who, now().toISOString(), today()), authorizationLocked: true }, customer, vehicle, state.settings);
+        const next = freezeLastVisit(withSnapshot({ ...closeRepairOrderWithNoWork(order, note, who, now().toISOString(), today()), authorizationLocked: true }, customer, vehicle, state.settings), state);
         set((current) => ({
           closedHistory: appendClosedVersion(current.closedHistory, next, customer, vehicle),
           orders: mapOrder(current.orders, orderId, () => next),
@@ -3055,21 +3090,23 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             }),
           };
         }),
-      setAppointmentStatus: (id, status) =>
-        set((state) => {
-          const current = state.appointments.find((row) => row.id === id);
-          if (!current || current.status === status) return state;
-          if (current.status === "cancelled" || status === "cancelled") return state;
-          const who = namedActor(state);
-          if (status === "no_show" && (!who || !rosterEditor(state))) return state;
-          return {
-            appointments: state.appointments.map((row) => (row.id === id ? { ...row, status } : row)),
-            customers: adjustNoShows(state.customers, noShowChanges(current.status, status, current.customerId, current.customerId)),
-            settingsLog: status === "no_show" && who
-              ? [...(state.settingsLog ?? []), settingsChange(who, "No-show", `${current.date} ${current.time} ${current.status}`, "no_show")]
-              : state.settingsLog,
-          };
-        }),
+      setAppointmentStatus: (id, status) => {
+        const state = get();
+        const current = state.appointments.find((row) => row.id === id);
+        if (!current || current.status === status) return { ok: true, error: null };
+        if (current.status === "cancelled" || status === "cancelled") return { ok: false, error: "This appointment is cancelled." };
+        const who = namedActor(state);
+        if (!who || !rosterEditor(state)) return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
+        const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
+        const sentence = appointmentStatusSentence(current, status, customerName);
+        const field = current.status === "no_show" && status !== "no_show" ? "Put back" : status === "arrived" ? "Arrived" : status === "no_show" ? "No-show" : "Appointment status";
+        set((next) => ({
+          appointments: next.appointments.map((row) => (row.id === id ? { ...row, status } : row)),
+          customers: adjustNoShows(next.customers, noShowChanges(current.status, status, current.customerId, current.customerId)),
+          settingsLog: [...(next.settingsLog ?? []), settingsChange(who, field, current.status, sentence)],
+        }));
+        return { ok: true, error: null };
+      },
       moveAppointment: (id, patch) => {
         const state = get();
         const who = namedActor(state);
@@ -3086,8 +3123,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const minutes = appointmentMinutes(patch.minutes, current.minutes);
         const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : current.time);
         const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
-        const before = `${current.date} ${current.time} ${current.techId}`;
-        const after = `${date} ${time} ${techId}`;
+        const techName = (id: string) => state.techs.find((tech) => tech.id === id)?.name ?? "No technician";
+        const before = `Moved from ${visitLabel(current.date, current.time)} with ${techName(current.techId)}`;
+        const after = `Moved to ${visitLabel(date, time)} with ${techName(techId)}`;
         set((next) => ({
           appointments: next.appointments.map((row) => {
             if (row.id !== id || row.status === "cancelled") return row;
@@ -3107,7 +3145,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
         );
         if (staffError) return { ok: false, error: staffError };
-        if (patch.status === "no_show" && (!namedActor(state) || !rosterEditor(state))) {
+        if (patch.status && patch.status !== current.status && patch.status !== "cancelled" && (!namedActor(state) || !rosterEditor(state))) {
           return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
         }
         if (patch.vin != null && typeof patch.vin !== "string") return { ok: false, error: "Enter a 17-character VIN." };
@@ -3145,8 +3183,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           customers: current
             ? adjustNoShows(state.customers, noShowChanges(current.status, nextStatus, current.customerId, nextCustomer))
             : state.customers,
-          settingsLog: current && nextStatus === "no_show" && current.status !== "no_show" && namedActor(state)
-            ? [...(state.settingsLog ?? []), settingsChange(namedActor(state) as { id: string; name: string }, "No-show", `${current.date} ${current.time} ${current.status}`, "no_show")]
+          settingsLog: current && nextStatus !== current.status && namedActor(state)
+            ? [...(state.settingsLog ?? []), settingsChange(
+              namedActor(state) as { id: string; name: string },
+              nextStatus === "no_show" ? "No-show" : current.status === "no_show" ? "Put back" : nextStatus === "arrived" ? "Arrived" : "Appointment status",
+              current.status,
+              appointmentStatusSentence(current, nextStatus, state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer"),
+            )]
             : state.settingsLog,
           };
         });
@@ -3199,7 +3242,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return {
             vehicles,
             appointments: [...state.appointments, row].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Appointment", "", `${row.date} ${row.time} ${row.customerId}`)],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Appointment", "", `Booked ${visitLabel(row.date, row.time)} for ${state.customers.find((customer) => customer.id === row.customerId)?.name ?? "Customer"} with ${state.advisors.find((advisor) => advisor.id === row.advisorId)?.name ?? "Advisor"}`)],
           };
         });
         return appointmentId;
@@ -3608,8 +3651,12 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (!who || deskActor(state) !== "service-manager") return state;
           const closed = state.orders.filter((order) => order.status === "closed");
           const closedIds = new Set(closed.map((order) => order.id));
-          const customerIds = new Set(closed.map((order) => order.customerId));
           const vehicleIds = new Set(closed.map((order) => order.vehicleId));
+          const keptVehicles = state.vehicles.filter((row) => vehicleIds.has(row.id));
+          const customerIds = new Set([
+            ...closed.map((order) => order.customerId),
+            ...keptVehicles.map((row) => row.customerId),
+          ]);
           const sample = createSeed(state.activeStoreId);
           return {
             ...state,
@@ -3629,7 +3676,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             techs: state.techs,
             serviceManagers: state.serviceManagers,
             workingAsId: state.workingAsId,
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Clear shop data", String(state.orders.length), String(closed.length))],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Clear shop data", "Open repair orders, every appointment, and capacity overrides", "Closed repair orders, the logs, and the rosters stay")],
             requestLog: state.requestLog ?? [],
             focusOrderId: null,
           };

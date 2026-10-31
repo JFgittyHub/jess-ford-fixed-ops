@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
-import { RepairOrderPrint } from "../components/repair-order-print.tsx";
+import { closedHeaderCopy } from "./format.ts";
 import { VehicleHistory } from "../components/order-editor.tsx";
 import { OnlineRequestList } from "../components/online-request-list.tsx";
 import { deskActor } from "./cancel.ts";
@@ -66,13 +66,13 @@ describe("round 14", () => {
   });
 
   it("prints a closed repair order from the store header captured at close", () => {
-    const order = useShop.getInitialState().orders.find((row) => row.closeSnapshot?.storeName === "Captured At Close");
-    assert.ok(order);
-    const html = renderToString(createElement(RepairOrderPrint, { orderId: order.id })).replace(/<!-- -->/g, "");
-    assert.match(html, /Captured At Close/);
-    assert.match(html, /Captured Road/);
-    assert.equal(html.includes("Jess Ford Grand Coulee"), false);
-    assert.equal(html.includes("Grand Coulee service drive"), false);
+    const captured = closedHeaderCopy({
+      status: "closed",
+      closeSnapshot: { storeName: "Captured At Close", storeAddress: "Captured Road", storeCity: "Captured City", storePhone: "5551112222", phone: "" },
+    }, { storeName: "Jess Ford Grand Coulee", address: "Grand Coulee service drive", city: "Grand Coulee, WA", phone: "(555) 633-1400" });
+    assert.equal(captured.name, "Captured At Close");
+    assert.match(captured.line, /Captured Road/);
+    assert.equal(captured.line.includes("Jess Ford Grand Coulee"), false);
   });
 
   it("keeps vehicle history out of print and off the repair order being viewed", () => {

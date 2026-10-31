@@ -956,26 +956,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     parts,
     laborOps: laborCatalog(),
     payTypes: defaultPayTypes(settings),
-    orders: finished.map((order, index, rows) => {
-      if (order.status !== "closed" || !order.closeSnapshot) return order;
-      const closedIndex = rows.slice(0, index + 1).filter((row) => row.status === "closed").length;
-      if (closedIndex === 1) {
-        return { ...order, closeSnapshot: { ...order.closeSnapshot, storeName: "", storeAddress: "", storeCity: "", storePhone: "" } };
-      }
-      if (closedIndex === 2) {
-        return {
-          ...order,
-          closeSnapshot: {
-            ...order.closeSnapshot,
-            storeName: "Captured At Close",
-            storeAddress: "Captured Road",
-            storeCity: "Captured City",
-            storePhone: "5551112222",
-          },
-        };
-      }
-      return order;
-    }),
+    orders: finished,
     closedHistory: finished.filter((order) => order.status === "closed").map((order) => closedRecord(
       order,
       customers.find((row) => row.id === order.customerId),

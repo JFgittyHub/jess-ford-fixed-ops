@@ -363,6 +363,48 @@ describe("shipped flags", () => {
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.vin, row.vin);
   });
 
+  const helenAuth = {
+    choice: "cap" as const,
+    initials: "HC",
+    date: "2026-10-19",
+    time: "09:00",
+    estimate: 0,
+    cap: 50000,
+    returnParts: false,
+    plate: "",
+    address: "100 Main Street",
+    extras: [],
+  };
+
+  function prepareBookableHelen(shop: ReturnType<typeof createShopStore>) {
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === "open-helen"
+        ? { ...row, status: "working" as const, wa: helenAuth, mileageOut: row.mileage + 4, parts: row.parts.map((line) => ({ ...line, condition: "new" as const })) }
+        : row),
+    });
+  }
+
+  function prepareBookedHelen(shop: ReturnType<typeof createShopStore>) {
+    prepareBookableHelen(shop);
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === "open-helen" ? { ...row, status: "booked" as const } : row),
+    });
+  }
+
+  function prepareBlankInspection(shop: ReturnType<typeof createShopStore>) {
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === "open-helen" ? { ...row, inspection: null } : row),
+    });
+  }
+
+  function prepareMoveTarget(shop: ReturnType<typeof createShopStore>) {
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === "open-helen"
+        ? { ...row, jobs: [...row.jobs, { id: "oh-move", code: "B", concern: "Move the brakes here", cause: "", correction: "" }] }
+        : row),
+    });
+  }
+
   const guarded: Array<[string, (shop: ReturnType<typeof createShopStore>) => void, ((shop: ReturnType<typeof createShopStore>) => void)?]> = [
     ["updateOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOrder(order!.id, { concern: "Changed", mileage: (order?.mileage ?? 1) + 4 }); }],
     ["updateJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed" && row.jobs[0]); shop.getState().updateJob(order!.id, order!.jobs[0].id, { cause: "Nope" }); }],
@@ -370,9 +412,9 @@ describe("shipped flags", () => {
     ["removeJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed" && row.jobs.length > 1); shop.getState().removeJob(order!.id, order!.jobs[1].id); }],
     ["updateWa", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateWa(order!.id, { address: "9 Oak", plate: "NEW" }); }],
     ["addExtraAuth", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addExtraAuth(order!.id, { date: "2026-10-30", time: "09:00", employee: "Megan Cho", person: "Helen Cho", phone: "5095550100", work: "Brakes", amount: 20 }); }],
-    ["bookOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().bookOrder(order!.id); }],
-    ["unbookOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().unbookOrder(order!.id); }],
-    ["closeOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().closeOrder(order!.id); }],
+    ["bookOrder", (shop) => { shop.getState().bookOrder("open-helen"); }, prepareBookableHelen],
+    ["unbookOrder", (shop) => { shop.getState().unbookOrder("open-helen"); }, prepareBookedHelen],
+    ["closeOrder", (shop) => { shop.getState().closeOrder("open-helen"); }, prepareBookedHelen],
     ["closeOrderWithNoWork", (shop) => { shop.getState().closeOrderWithNoWork("open-sandra", "Customer left before any work was done"); }, prepareNoWorkClose],
     ["recordMileageOverride", (shop) => { shop.getState().setWorkingAs("derek"); const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().recordMileageOverride(order!.id, 1, "the odometer was misread on arrival"); }],
     ["recordMileageOutOverride", (shop) => { shop.getState().setWorkingAs("derek"); const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().recordMileageOutOverride(order!.id, (order?.mileage ?? 1) + 20000, "the replacement odometer read higher"); }],
@@ -380,16 +422,16 @@ describe("shipped flags", () => {
     ["addLabor", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addLabor(order!.id, { opcode: "LOF", description: "Oil", hours: 1, rate: 10, payType: "cp", techId: "marcus", jobId: order?.jobs[0]?.id }); }],
     ["updateLabor", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0]); shop.getState().updateLabor(order!.id, order!.labor[0].id, { hours: 9 }); }],
     ["removeLabor", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0]); shop.getState().removeLabor(order!.id, order!.labor[0].id); }],
-    ["clockIn", (shop) => { const order = shop.getState().orders.find((row) => row.labor.some((line) => line.techId === "marcus")); shop.getState().clockIn("marcus", order!.id); }],
+    ["clockIn", (shop) => { shop.getState().clockIn("chris", "open-helen"); }],
     ["clockOut", (shop) => { shop.getState().clockOut("luis"); }],
     ["resolveFlaggedPunch", (shop) => { shop.getState().resolveFlaggedPunch(shop.getState().timeLogs[0]?.id ?? "missing", "2026-10-30T18:00:00.000Z"); }],
     ["addPartLine", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addPartLine(order!.id, { partId: null, number: "BL", description: "Bolt", qty: 1, cost: 1, price: 4, payType: "cp", jobId: order?.jobs[0]?.id }); }],
     ["updatePartLine", (shop) => { const order = shop.getState().orders.find((row) => row.parts[0]); shop.getState().updatePartLine(order!.id, order!.parts[0].id, { qty: 4, price: 80 }); }],
     ["removePartLine", (shop) => { const order = shop.getState().orders.find((row) => row.parts[0]); shop.getState().removePartLine(order!.id, order!.parts[0].id); }],
-    ["attachInspection", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().attachInspection(order!.id); }],
+    ["attachInspection", (shop) => { shop.getState().attachInspection("open-helen"); }, prepareBlankInspection],
     ["setInspectionTech", (shop) => { const order = shop.getState().orders.find((row) => row.inspection); shop.getState().setInspectionTech(order!.id, "marcus"); }],
     ["setInspectionPoint", (shop) => { const order = shop.getState().orders.find((row) => row.id === "open-helen" && row.inspection?.items[0]); shop.getState().setInspectionPoint(order!.id, order!.inspection!.items[0].id, { status: "red", reading: "9", note: "replaced" }); }],
-    ["moveWorkToJob", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0] && row.jobs[0]); shop.getState().moveWorkToJob(order!.id, "labor", order!.labor[0].id, order!.jobs[0].id); }],
+    ["moveWorkToJob", (shop) => { shop.getState().moveWorkToJob("open-helen", "labor", "oh-l1", "oh-move"); }, prepareMoveTarget],
     ["updateOpenVin", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOpenVin(order!.id, fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 77 })); }],
     ["createOrder", (shop) => { const vehicle = shop.getState().vehicles.find((row) => row.id === "v7" && !row.transferredTo) ?? shop.getState().vehicles.find((row) => !row.transferredTo); shop.getState().createOrder({ customerId: vehicle!.customerId, vehicleId: vehicle!.id, advisorId: "megan", lines: [{ concern: "Oil" }], mileage: 999999, promiseTime: "16:00" }); }],
     ["openWalkIn", (shop) => { shop.getState().openWalkIn({ name: "New Person", phone: "5095550188", year: 2020, model: "Escape", make: "Ford", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 78 }), advisorId: "megan", lines: [{ concern: "Brakes" }], mileage: 2000, promiseTime: "" }); }],
@@ -476,18 +518,74 @@ describe("shipped flags", () => {
     }
   });
 
-  it("refuses staff setup while the section lock is on", () => {
+  it("refuses the eight staff-setup actions while the section lock is on", () => {
     const previous = flags.__SECTION_LOCK_ENABLED__;
     flags.__SECTION_LOCK_ENABLED__ = true;
     try {
       const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
       shop.getState().setWorkingAs("derek");
-      const before = shop.getState().techs.length;
+      const techs = shop.getState().techs.length;
+      const advisors = shop.getState().advisors.length;
+      const managers = (shop.getState().serviceManagers ?? []).length;
       assert.equal(shop.getState().addTech({ number: "99", name: "Temp Tech", skill: "b", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" }), false);
-      assert.equal(shop.getState().techs.length, before);
+      assert.equal(shop.getState().updateTech("marcus", { name: "Not Marcus" }), false);
+      assert.equal(shop.getState().removeTech("marcus"), "role");
       assert.equal(shop.getState().addAdvisor({ number: "98", name: "Temp Advisor", base: 1, laborPercent: 1, partsPercent: 1 }), false);
+      assert.equal(shop.getState().updateAdvisor("megan", { name: "Not Megan" }), false);
+      assert.equal(shop.getState().removeAdvisor("alicia"), "role");
+      assert.equal(shop.getState().addServiceManager({ number: "97", name: "Temp Manager", base: 1, laborPercent: 1, partsPercent: 1 }).ok, false);
+      assert.equal(shop.getState().updateServiceManager("derek", { name: "Not Derek" }).ok, false);
+      assert.equal(shop.getState().techs.length, techs);
+      assert.equal(shop.getState().techs.find((row) => row.id === "marcus")?.name.includes("Not"), false);
+      assert.equal(shop.getState().advisors.length, advisors);
+      assert.equal((shop.getState().serviceManagers ?? []).length, managers);
     } finally {
       flags.__SECTION_LOCK_ENABLED__ = previous;
+    }
+  });
+
+  it("changes Helen, the clock, and the roster when the flags allow it", () => {
+    const previous = {
+      create: flags.__RO_CREATION_ENABLED__,
+      write: flags.__RO_WRITES_ENABLED__,
+      lock: flags.__SECTION_LOCK_ENABLED__,
+    };
+    flags.__RO_WRITES_ENABLED__ = true;
+    flags.__RO_CREATION_ENABLED__ = true;
+    flags.__SECTION_LOCK_ENABLED__ = false;
+    try {
+      const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+      shop.getState().setWorkingAs("megan");
+      prepareBookableHelen(shop);
+      shop.getState().bookOrder("open-helen");
+      assert.equal(shop.getState().orders.find((row) => row.id === "open-helen")?.status, "booked");
+      shop.getState().unbookOrder("open-helen");
+      assert.equal(shop.getState().orders.find((row) => row.id === "open-helen")?.status, "ready");
+      shop.setState({ orders: shop.getState().orders.map((row) => row.id === "open-helen" ? { ...row, status: "booked" as const } : row) });
+      const closed = shop.getState().closeOrder("open-helen");
+      if (!closed.ok) assert.fail(closed.error ?? "close failed");
+      const fresh = createShopStore({ demoMode: true, storage: memoryStorage() });
+      fresh.getState().setWorkingAs("megan");
+      const punches = fresh.getState().timeLogs.length;
+      assert.equal(fresh.getState().clockIn("chris", "open-helen").ok, true);
+      assert.equal(fresh.getState().timeLogs.length > punches, true);
+      prepareBlankInspection(fresh);
+      fresh.getState().attachInspection("open-helen");
+      assert.ok(fresh.getState().orders.find((row) => row.id === "open-helen")?.inspection);
+      prepareMoveTarget(fresh);
+      fresh.getState().moveWorkToJob("open-helen", "labor", "oh-l1", "oh-move");
+      assert.equal(fresh.getState().orders.find((row) => row.id === "open-helen")?.labor.find((line) => line.id === "oh-l1")?.jobId, "oh-move");
+      const beforeTech = fresh.getState().techs.length;
+      assert.equal(fresh.getState().addTech({ number: "99", name: "Temp Tech", skill: "b", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" }), true);
+      const added = fresh.getState().techs.find((row) => row.number === "99");
+      assert.ok(added);
+      assert.equal(fresh.getState().techs.length, beforeTech + 1);
+      assert.equal(fresh.getState().updateTech(added.id, { name: "Temp Tech Renamed" }), true);
+      assert.equal(fresh.getState().removeTech(added.id), "ok");
+    } finally {
+      flags.__RO_CREATION_ENABLED__ = previous.create;
+      flags.__RO_WRITES_ENABLED__ = previous.write;
+      flags.__SECTION_LOCK_ENABLED__ = previous.lock;
     }
   });
 

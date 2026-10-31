@@ -1,10 +1,9 @@
-import { appointmentLoads, onlineSlots } from "./capacity";
+import { advisorDayCapacity, appointmentLoads, onlineSlots } from "./capacity";
 import type { ContactMethod, Customer, OnlineChallenge, OnlineRequest, SchedulingSettings, StoreId, Vehicle } from "./types";
 import { normalizeVin, vinScheduleError } from "./vin";
 
 const CODE_WINDOW_MS = 10 * 60 * 1000;
 const CONTACT_CAP = 3;
-const ADVISOR_DAY_CAP = 12;
 const DEVICE_CAP = 5;
 
 export interface OnlineRequestInput {
@@ -166,7 +165,7 @@ export function submitOnlineRequest(
   input: OnlineRequestInput,
   id: string,
   at: string,
-): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" | "limit" } {
+): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" | "limit" | "date"; limit?: number } {
   const service = shop.settings.scheduling.onlineMenu.find((row) => row.id === input.serviceId);
   if (!service) return { ok: false, reason: "service" };
   const advisor = shop.advisors.find((row) => row.id === input.advisorId);
@@ -178,8 +177,8 @@ export function submitOnlineRequest(
   let customerId: string | null = null;
   let vehicleId: string | null = null;
   let customerName = textField(input.customerName, 80);
-  let phone = textField(input.phone, 20);
-  let email = textField(input.email, 120);
+  let phone = textField(cleanContact(input.phone), 20);
+  let email = textField(cleanContact(input.email), 120).toLowerCase();
   let year = Math.trunc(Number(input.year) || 0);
   let make = textField(input.make, 40);
   let model = textField(input.model, 40);
@@ -226,10 +225,16 @@ export function submitOnlineRequest(
     (phones && phoneKey(row.phone) === phones)
     || (mail && row.email && emailKey(row.email) === mail)
   ));
-  if (sameContact.length >= CONTACT_CAP) return { ok: false, reason: "limit" };
+  if (sameContact.length >= CONTACT_CAP) return { ok: false, reason: "limit", limit: CONTACT_CAP };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date ?? "")) return { ok: false, reason: "date" };
+  const dayCap = advisorDayCapacity(shop.settings.scheduling, input.date);
+  if (dayCap <= 0) return { ok: false, reason: "full" };
+  const advisorCap = Math.max(0, dayCap - 1);
   const sameAdvisorDay = pending.filter((row) => row.advisorId === advisor.id && row.date === input.date);
-  if (sameAdvisorDay.length >= ADVISOR_DAY_CAP) return { ok: false, reason: "limit" };
-  if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit" };
+  if (sameAdvisorDay.length >= advisorCap) return { ok: false, reason: "limit", limit: advisorCap };
+  const storeCap = Math.max(0, shop.advisors.length * dayCap - 1);
+  if (pending.filter((row) => row.date === input.date).length >= storeCap) return { ok: false, reason: "limit", limit: storeCap };
+  if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit", limit: DEVICE_CAP };
 
   const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };
@@ -325,8 +330,14 @@ function textField(value: unknown, max: number): string {
   return value.trim().slice(0, max);
 }
 
+function cleanContact(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/[^\u0020-\u007E]/g, "");
+}
+
 function phoneKey(value: string): string {
-  const digits = value.replace(/\D/g, "");
+  const withoutExtension = value.replace(/(?:ext\.?|extension|x)\s*\d+\s*$/i, "");
+  const digits = withoutExtension.replace(/\D/g, "");
   if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
   if (digits.length >= 10) return digits.slice(-10);
   return "";

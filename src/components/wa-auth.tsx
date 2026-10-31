@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { usd } from "@/lib/format";
+import { closedHeaderCopy, usd } from "@/lib/format";
 import { orderMoney } from "@/lib/metrics";
 import { roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
@@ -154,10 +154,8 @@ export function WaAuth({ orderId }: { orderId: string }) {
           <h4 className="font-semibold">Customer copy</h4>
           <Button className="no-print" small type="button" onClick={printCopy}>Print copy</Button>
         </div>
-        <p className="mt-2 text-sm">{order.status === "closed" ? (order.closeSnapshot?.storeName?.trim() || "Header not recorded") : settings.storeName}</p>
-        <p className="text-sm text-muted">{order.status === "closed"
-          ? ([order.closeSnapshot?.storeAddress, order.closeSnapshot?.storeCity, order.closeSnapshot?.storePhone].filter(Boolean).join(" · ") || "Header not recorded")
-          : ([settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || "Add the street and phone in Settings. The invoice has to show them.")}</p>
+        <p className="mt-2 text-sm">{closedHeaderCopy(order, settings).name}</p>
+        <p className="text-sm text-muted">{closedHeaderCopy(order, settings).line || (order.status === "closed" ? "" : "Add the street and phone in Settings. The invoice has to show them.")}</p>
         <p className="mt-2 text-sm">{copyName} · {copyPhone}{wa.address ? ` · ${wa.address}` : ""}</p>
         <p className="text-sm">{copyModel ? vehicleTitle(copyYear, copyMake, copyModel) : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : copyVin ? `VIN ${vinTail(copyVin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
         <p className="mt-2 text-sm">{order.jobs.map((job) => `${job.code}. ${job.concern}`).join(" · ")}</p>

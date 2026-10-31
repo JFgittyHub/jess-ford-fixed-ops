@@ -304,6 +304,8 @@ export interface CloseSnapshot {
   storeAddress?: string;
   storeCity?: string;
   storePhone?: string;
+  /** Last-visit hint frozen when the repair order was closed. */
+  lastVisitNote?: string;
 }
 
 /** A new consent after reopen. The original authorization fields stay as they were. */

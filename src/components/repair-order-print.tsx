@@ -1,4 +1,4 @@
-import { clockTime, feeCharge, roStatusLabel, usd } from "@/lib/format";
+import { clockTime, closedHeaderCopy, feeCharge, roStatusLabel, usd } from "@/lib/format";
 import { CUSTOMER_MILEAGE_OVERRIDE } from "@/lib/mileage";
 import { orderMoney, vehicleTitle } from "@/lib/metrics";
 import { customerCopyIdentity } from "@/lib/ownership";
@@ -26,12 +26,9 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
 
   if (!order) return null;
   const snap = order.closeSnapshot;
-  const closed = order.status === "closed";
-  const recordedName = closed && snap?.storeName?.trim() ? snap.storeName.trim() : "";
-  const headerName = closed ? (recordedName || "Header not recorded") : settings.storeName;
-  const headerLine = closed
-    ? (recordedName ? [snap?.storeAddress, snap?.storeCity, snap?.storePhone].filter(Boolean).join(" · ") || recordedName : "Header not recorded")
-    : [settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || settings.city;
+  const header = closedHeaderCopy(order, settings);
+  const headerName = header.name;
+  const headerLine = header.line;
   const copy = customerCopyIdentity(order, customer);
   const version = closedRows.reduce((max, row) => Math.max(max, row.version ?? 1), order.status === "closed" ? 1 : 0);
   const money = orderMoney(order);

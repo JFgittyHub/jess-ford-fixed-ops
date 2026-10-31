@@ -265,6 +265,11 @@ function capacityWarning(input: {
   return null;
 }
 
+/** How many appointments one advisor can take that day. Zero when the store is closed. */
+export function advisorDayCapacity(scheduling: SchedulingSettings, iso: string): number {
+  return shopDay(scheduling, iso).advisorCap;
+}
+
 function shopDay(scheduling: SchedulingSettings, iso: string): {
   closed: boolean;
   openMinutes: number;

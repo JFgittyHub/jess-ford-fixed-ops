@@ -394,7 +394,7 @@ function HoverCard({
       <p className="mt-1 text-sm">{detail.concern}</p>
       <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-muted">{detail.status}</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" className="btn btn-ghost btn-small" onClick={() => onEdit(row.id)}>Edit details</button>
+        <button type="button" className="btn btn-ghost btn-small min-h-11 min-w-11" onClick={() => onEdit(row.id)}>Edit details</button>
         {onCancel && row.status !== "cancelled" ? <button type="button" className="btn btn-ghost btn-small" onClick={() => onCancel(row.id)}>Cancel appointment</button> : null}
         {detail.canWrite ? (
           <button type="button" className="btn btn-primary btn-small" onClick={() => onWrite(row.id)}>Write repair order</button>

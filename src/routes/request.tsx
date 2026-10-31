@@ -163,7 +163,7 @@ function RequestPage() {
           : result.reason === "vin"
             ? (vinScheduleError(vin) || "Enter a 17-character VIN.")
             : result.reason === "limit"
-              ? "This phone, email, or browser already has several requests waiting."
+              ? `This phone, email, or browser already has ${"limit" in result && result.limit != null ? result.limit : 3} requests waiting.`
               : "Enter the visit details and try again.");
       return;
     }
@@ -359,7 +359,7 @@ function RequestPage() {
           <div>
             <p className="mb-2 text-sm font-semibold">Time</p>
             {times.length === 0 ? <p className="text-sm text-muted">No open times in the booking window for this advisor.</p> : (
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Open times">
+              <div className="tap-targets flex flex-wrap gap-2" role="group" aria-label="Open times">
                 {times.map((item) => (
                   <Button key={item} small type="button" tone={pickedTime === item ? "primary" : "ghost"} aria-pressed={pickedTime === item} onClick={() => setTime(item)}>
                     {item}

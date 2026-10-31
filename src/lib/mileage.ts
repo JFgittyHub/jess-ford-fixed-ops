@@ -11,7 +11,7 @@ export interface MileageVisit {
 }
 
 export interface MileageShop {
-  orders: Array<Pick<RepairOrder, "id" | "number" | "vehicleId" | "mileage" | "mileageOut" | "openedOn"> & { openedAt?: string | null; storeId?: string }>;
+  orders: Array<Pick<RepairOrder, "id" | "number" | "vehicleId" | "mileage" | "mileageOut" | "openedOn"> & { status?: RepairOrder["status"]; openedAt?: string | null; storeId?: string }>;
   vehicles: Pick<Vehicle, "id" | "vin">[];
 }
 
@@ -126,7 +126,7 @@ export function formatVisitDate(iso: string) {
 export function lastVisitMileage(
   shops: MileageShop[],
   vehicle: Pick<Vehicle, "id" | "vin"> | undefined,
-  options: { excludeOrderId?: string; openedAt?: string; openedOn?: string; number?: number; storeId?: string } = {},
+  options: { excludeOrderId?: string; openedAt?: string; openedOn?: string; number?: number; storeId?: string; closedOnly?: boolean } = {},
 ): MileageVisit | null {
   if (!vehicle) return null;
   const cutoff = { openedAt: options.openedAt, openedOn: options.openedOn, number: options.number, storeId: options.storeId };
@@ -135,6 +135,7 @@ export function lastVisitMileage(
   for (const shop of shops) {
     const vinById = new Map(shop.vehicles.map((row) => [row.id, row.vin ?? ""]));
     for (const order of shop.orders) {
+      if (options.closedOnly && order.status && order.status !== "closed") continue;
       if (options.excludeOrderId && order.id === options.excludeOrderId) continue;
       if (!rankBefore(order, cutoff)) continue;
       const reading = visitReading(order);

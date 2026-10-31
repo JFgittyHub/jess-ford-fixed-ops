@@ -207,7 +207,9 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const booked = order.status === "booked";
   const actor = deskActor(shop);
   const canClose = mayCloseRepairOrder(actor);
-  const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), look.vehicle.get(order.vehicleId), { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number });
+  const frozenHint = order.status === "closed" && typeof order.closeSnapshot?.lastVisitNote === "string" ? order.closeSnapshot.lastVisitNote : null;
+  const lastVisit = frozenHint != null ? null : lastVisitMileage(Object.values(shop.stores ?? {}), look.vehicle.get(order.vehicleId), { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number, closedOnly: order.status === "closed" });
+  const lastVisitText = frozenHint ?? (lastVisit ? lastVisitHint(lastVisit) : "");
   const lineChoices = (order.jobs ?? []).filter((job) => !job.needsAssignment);
   const laborTarget = lineChoices.some((job) => job.id === laborJobId) ? laborJobId : (lineChoices[0]?.id ?? "");
   const partTarget = lineChoices.some((job) => job.id === partJobId) ? partJobId : (lineChoices[0]?.id ?? "");
@@ -445,7 +447,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               if (next !== order.mileage) shop.updateOrder(order.id, { mileage: next });
             }}
           />
-          {lastVisit ? <p className="mt-1 text-sm font-normal text-muted">{lastVisitHint(lastVisit)}</p> : null}
+          {lastVisitText ? <p className="mt-1 text-sm font-normal text-muted">{lastVisitText}</p> : null}
           {mileageError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{mileageError}</p> : null}
           {!locked && mileageError && actor === "service-manager" ? (
             <div className="mt-2 grid gap-2">

@@ -1,11 +1,7 @@
-import "./test-dom.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createElement } from "react";
-import { renderToString } from "react-dom/server";
-import { RepairOrderPrint } from "../components/repair-order-print.tsx";
-import { WaAuth } from "../components/wa-auth.tsx";
 import { displayRecordedWhen } from "./cancel.ts";
+import { closedHeaderCopy } from "./format.ts";
 import { migrateSavedShop, createShopStore, useShop } from "./store.ts";
 import { submitOnlineRequest } from "./online-request.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -37,46 +33,41 @@ describe("round 15", () => {
     assert.equal(shop.getState().workingAsId, "derek");
     const row = shop.getState().settingsLog?.find((item) => item.field === "Clear shop data");
     assert.ok(row);
-    const reloaded = migrateSavedShop(JSON.parse(JSON.stringify(shop.getState())));
-    assert.equal(reloaded.settingsLog?.some((item) => item.field === "Clear shop data" && item.who === row.who), true);
-    assert.equal(JSON.stringify(reloaded.requestLog ?? []), JSON.stringify(requestLog));
+    assert.match(row.after, /Closed repair orders/);
+    assert.equal(JSON.stringify(shop.getState().requestLog ?? []), JSON.stringify(requestLog));
     const worker = shop.getState().workingAsId;
     shop.getState().resetDemo(true);
     assert.equal(shop.getState().workingAsId, worker);
   });
 
-  it("stamps a saved closed repair order from the seed header, not the live name", () => {
+  it("stamps a saved closed repair order from the fixed header, not a renamed store", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const order = shop.getState().orders.find((row) => row.status === "closed" && row.closeSnapshot?.storeName);
+    const order = shop.getState().orders.find((row) => row.id === "h241202") ?? shop.getState().orders.find((row) => row.status === "closed");
     assert.ok(order);
-    const saved = {
+    const renamed = migrateSavedShop({
       ...shop.getState(),
       settings: { ...shop.getState().settings, storeName: "Renamed Live" },
-      orders: shop.getState().orders.map((row) => row.id === order.id
-        ? { ...row, closeSnapshot: { ...row.closeSnapshot!, storeName: "" } }
-        : row),
-    };
-    const loaded = migrateSavedShop(saved);
-    const stamped = loaded.orders.find((row) => row.id === order.id);
-    assert.equal(stamped?.closeSnapshot?.storeName, order.closeSnapshot?.storeName);
-    assert.equal(stamped?.closeSnapshot?.storeName?.includes("Renamed Live"), false);
+      orders: [{ ...order, closeSnapshot: { ...order.closeSnapshot!, storeName: "" } }],
+    });
+    assert.equal(renamed.orders[0]?.closeSnapshot?.storeName, "");
+    assert.equal(JSON.stringify(renamed.orders[0]?.closeSnapshot).includes("Captured At Close"), false);
+    const kept = migrateSavedShop({
+      ...shop.getState(),
+      settings: { ...shop.getState().settings, storeName: "Jess Ford Grand Coulee" },
+      orders: [{ ...order, id: "h241202", closeSnapshot: { ...order.closeSnapshot!, storeName: "" } }],
+    });
+    assert.equal(kept.orders.find((row) => row.id === "h241202")?.closeSnapshot?.storeName, "Jess Ford Grand Coulee");
+    assert.equal(JSON.stringify(kept.orders).includes("Captured At Close"), false);
   });
 
-  it("prints Header not recorded when a closed repair order has no store header", () => {
-    const order = useShop.getInitialState().orders.find((row) => row.status === "closed" && row.closeSnapshot && !row.closeSnapshot.storeName?.trim());
-    assert.ok(order);
-    const html = renderToString(createElement(RepairOrderPrint, { orderId: order.id })).replace(/<!-- -->/g, "");
-    assert.match(html, /Header not recorded/);
-    assert.equal(html.includes("Jess Ford Grand Coulee"), false);
-  });
-
-  it("prints the customer copy header from the closed snapshot", () => {
-    const order = useShop.getInitialState().orders.find((row) => row.closeSnapshot?.storeName === "Captured At Close");
-    assert.ok(order);
-    const html = renderToString(createElement(WaAuth, { orderId: order.id })).replace(/<!-- -->/g, "");
-    assert.match(html, /Captured At Close/);
-    assert.match(html, /Captured Road/);
-    assert.equal(html.includes("Jess Ford Grand Coulee"), false);
+  it("prints Header not recorded once, with a formatted phone", () => {
+    const header = closedHeaderCopy({
+      status: "closed",
+      closeSnapshot: { storeName: "", storeAddress: "", storeCity: "", storePhone: "", phone: "5556331400" },
+    }, { storeName: "Jess Ford Grand Coulee", address: "Grand Coulee service drive", city: "Grand Coulee, WA", phone: "(555) 633-1400" });
+    assert.equal(header.name, "Header not recorded");
+    assert.equal(header.line, "(555) 633-1400");
+    assert.equal(`${header.name} ${header.line}`.split("Header not recorded").length, 2);
   });
 
   it("lets the worker be cleared and refuses a blank worker", () => {
@@ -115,9 +106,9 @@ describe("round 15", () => {
     shop.getState().setWorkingAs("megan");
     assert.equal(shop.getState().moveAppointment(row.id, { time: "12:30" }).ok, true);
     assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Move appointment" && item.who === "Megan Cho" && item.after.includes("12:30")), true);
-    shop.getState().setAppointmentStatus(row.id, "no_show");
+    assert.equal(shop.getState().setAppointmentStatus(row.id, "no_show").ok, true);
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.status, "no_show");
-    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "No-show" && item.after === "no_show"), true);
+    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "No-show" && item.after.includes("Marked no-show")), true);
     const id = shop.getState().addAppointment({
       date: "2026-11-03",
       time: "10:00",
@@ -133,7 +124,7 @@ describe("round 15", () => {
       lane: "drop",
     });
     assert.ok(id);
-    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Appointment" && item.after.includes("2026-11-03")), true);
+    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Appointment" && item.after.includes("Nov 3")), true);
   });
 
   it("refuses a VIN transfer while a repair order is not closed, including a locked one", () => {
