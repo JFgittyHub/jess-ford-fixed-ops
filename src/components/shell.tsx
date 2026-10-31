@@ -114,10 +114,11 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const activeStoreId = useShop((state) => state.activeStoreId);
   const switchStore = useShop((state) => state.switchStore);
   const advisors = useShop((state) => state.advisors);
-  const managers = useShop((state) => (state.serviceManagers ?? []).filter((row) => row.active !== false));
+  const serviceManagers = useShop((state) => state.serviceManagers);
   const techs = useShop((state) => state.techs);
   const workingAsId = useShop((state) => state.workingAsId);
   const setWorkingAs = useShop((state) => state.setWorkingAs);
+  const managers = (serviceManagers ?? []).filter((row) => row.active !== false);
   const managerIds = new Set(managers.map((row) => row.id));
   const staffId = managers.some((row) => row.id === workingAsId) || advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
     ? workingAsId

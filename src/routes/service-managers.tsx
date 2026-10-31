@@ -19,6 +19,7 @@ function ServiceManagersPage() {
   const [laborPercent, setLaborPercent] = useState("5");
   const [partsPercent, setPartsPercent] = useState("2");
   const [error, setError] = useState("");
+  const [pendingAdd, setPendingAdd] = useState<{ number: string; name: string; base: number; labor: number; parts: number } | null>(null);
   const managers = shop.serviceManagers ?? [];
   const activeCount = managers.filter((row) => row.active !== false).length;
   const ids = new Set(managers.map((row) => row.id));
@@ -44,6 +45,11 @@ function ServiceManagersPage() {
           const parts = Number(partsPercent);
           if (!number.trim() || !name.trim() || !Number.isFinite(basePay) || !Number.isFinite(labor) || !Number.isFinite(parts)) {
             setError("Need a number, a name, and a pay plan.");
+            return;
+          }
+          if (activeCount >= 1) {
+            setPendingAdd({ number: number.trim(), name: name.trim(), base: basePay, labor, parts });
+            setError("");
             return;
           }
           const result = addServiceManager({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts });
@@ -79,6 +85,28 @@ function ServiceManagersPage() {
         </div>
         {error ? <p role="alert" className="text-sm text-primary md:col-span-6">{error}</p> : null}
       </form>
+      {pendingAdd ? (
+        <section className="card mt-4 grid gap-2">
+          <p>{secondServiceManagerWarning(shop.settings.storeName, [...managers.filter((row) => row.active !== false).map((row) => row.name), pendingAdd.name])}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" tone="primary" onClick={() => {
+              const result = addServiceManager({ number: pendingAdd.number, name: pendingAdd.name, base: pendingAdd.base, laborPercent: pendingAdd.labor, partsPercent: pendingAdd.parts });
+              setPendingAdd(null);
+              if (!result.ok) {
+                setError(result.error ?? "That service manager was not saved.");
+                return;
+              }
+              setNumber("");
+              setName("");
+              setBase("4200");
+              setLaborPercent("5");
+              setPartsPercent("2");
+              setError("");
+            }}>Continue</Button>
+            <Button type="button" onClick={() => setPendingAdd(null)}>Cancel</Button>
+          </div>
+        </section>
+      ) : null}
 
       <div className="mt-4 overflow-x-auto card p-0">
         <table className="data-table min-w-[48rem]">
@@ -157,6 +185,10 @@ function ServiceManagersPage() {
       </section>
     </Shell>
   );
+}
+
+export function secondServiceManagerWarning(storeName: string, names: string[]) {
+  return `${storeName} will have ${names.length} service managers (${names.join(", ")}). Continue?`;
 }
 
 function managerChangeLine(row: RoleChange, name: string) {

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
-import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
+import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
 import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
@@ -176,7 +176,7 @@ const OPERATIONAL_KEYS = [
 
 /** Customers, roster, tickets, or other shop work. Empty budgets and pay types do not count. */
 export function shopHasOperationalData(state: ShopData): boolean {
-  return OPERATIONAL_KEYS.some((key) => state[key].length > 0);
+  return OPERATIONAL_KEYS.some((key) => Array.isArray(state[key]) && state[key].length > 0);
 }
 
 /**
@@ -964,7 +964,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
   if (!Array.isArray(saved.orders)) {
     const lifted = Array.isArray(saved.advisors)
       ? liftServiceManagers(advisorRows(saved), Array.isArray(saved.serviceManagers) ? saved.serviceManagers : undefined)
-      : {};
+      : { serviceManagers: Array.isArray(saved.serviceManagers) ? saved.serviceManagers : [] };
     return {
       ...saved,
       ...lifted,
@@ -973,8 +973,8 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       settings: withScheduling(saved.settings) ?? saved.settings,
     } as ShopState;
   }
-  const techList = Array.isArray(saved.techs) ? saved.techs : [];
-  const vehicleList = Array.isArray(saved.vehicles) ? saved.vehicles : [];
+  const techList = Array.isArray(saved.techs) ? saved.techs.filter((tech) => tech && typeof tech === "object") : [];
+  const vehicleList = Array.isArray(saved.vehicles) ? saved.vehicles.filter((vehicle) => vehicle && typeof vehicle === "object") : [];
   const historyIds = new Set(
     (Array.isArray(saved.closedHistory) ? saved.closedHistory : [])
       .filter((row) => row && typeof row === "object")
@@ -1052,11 +1052,12 @@ export function migrateSavedShop(persisted: unknown): ShopState {
     appointments: Array.isArray(saved.appointments)
       ? saved.appointments.filter((row) => row && typeof row === "object").map((row) => {
           const vehicle = vehicleList.find((item) => item.id === row.vehicleId);
-          const lines = Array.isArray(row.lines) && row.lines.length > 0
-            ? row.lines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
+          const rawLines = Array.isArray(row.lines) ? row.lines.filter((line) => line && typeof line === "object") : [];
+          const lines = rawLines.length > 0
+            ? rawLines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
             : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
           const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
-          const known = techList.some((tech) => tech.id === row.techId) ? row.techId : "";
+          const known = techList.some((tech) => tech && tech.id === row.techId) ? row.techId : "";
           const priorLane = row.lane;
           return {
             ...row,
@@ -2236,7 +2237,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             field: "punch",
             before: punch.startedAt,
             after: endedAt,
-            text: `${who.name} resolved the punch. Ended ${endedAt}.`,
+            text: `${who.name} resolved the punch. Ended ${displayRecordedWhen(endedAt)}.`,
           }))) : shop.orders,
         }));
         return { ok: true, error: null };

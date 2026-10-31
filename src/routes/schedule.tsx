@@ -24,7 +24,8 @@ export const Route = createFileRoute("/schedule")({ component: SchedulePage });
 const LENGTHS = [30, 60, 90, 120, 180, 240];
 
 function laborHours(row: Appointment, laborOps: { id: string; hours: number }[]) {
-  return row.laborOpIds.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
+  const ids = Array.isArray(row.laborOpIds) ? row.laborOpIds : [];
+  return ids.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
 }
 const STARTS = Array.from({ length: 22 }, (_, index) => {
   const mins = 7 * 60 + index * 30;

@@ -198,7 +198,10 @@ describe("round 12", () => {
     assert.equal(saved?.needsReview, false);
     assert.match(saved?.note ?? "", /No close time/);
     assert.equal(saved?.resolvedBy, "Derek Lang");
-    assert.match(shop.getState().orders.find((row) => row.id === order.id)?.history?.at(-1)?.text ?? "", /resolved the punch/);
+    const resolved = shop.getState().orders.find((row) => row.id === order.id)?.history?.at(-1)?.text ?? "";
+    assert.match(resolved, /resolved the punch/);
+    assert.match(resolved, /Ended /);
+    assert.doesNotMatch(resolved, /\d{4}-\d{2}-\d{2}T/);
   });
 
   it("orders visits by instant, then store, then number, independent of list order", () => {

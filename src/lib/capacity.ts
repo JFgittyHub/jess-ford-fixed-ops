@@ -57,7 +57,8 @@ export type OnlineSlot = {
 const EPSILON = 1e-9;
 
 export function laborHoursFor(laborOpIds: string[], minutes: number, laborOps: { id: string; hours: number }[]): number {
-  const fromOps = laborOpIds.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
+  const ids = Array.isArray(laborOpIds) ? laborOpIds : [];
+  const fromOps = ids.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
   const hours = fromOps > 0 ? fromOps : Math.max(0, minutes) / 60;
   return round2(hours);
 }

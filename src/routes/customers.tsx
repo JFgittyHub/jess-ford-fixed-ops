@@ -233,10 +233,15 @@ function CustomersPage() {
         {(shop.ownershipLog ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">No vehicle transfers on this store.</p> : (
           <ul className="mt-2 grid gap-1 text-sm">
             {(shop.ownershipLog ?? []).map((row) => {
-              const from = shop.customers.find((customer) => customer.id === row.beforeCustomerId)?.name ?? row.beforeCustomerId;
-              const to = shop.customers.find((customer) => customer.id === row.afterCustomerId)?.name ?? row.afterCustomerId;
-              const sameVehicle = row.beforeVehicleId === row.afterVehicleId;
-              return <li key={`${row.at}-${row.beforeVehicleId}-${row.afterVehicleId}`}>{row.who || "Unnamed"} transferred {row.vin} from {from} to {to}.{row.reason ? ` ${row.reason}.` : ""} {sameVehicle ? "" : `Vehicle ${row.beforeVehicleId} to ${row.afterVehicleId}. `}{displayRecordedWhen(row.at)}</li>;
+              const from = shop.customers.find((customer) => customer.id === row.beforeCustomerId)?.name ?? "the previous owner";
+              const to = shop.customers.find((customer) => customer.id === row.afterCustomerId)?.name ?? "the new owner";
+              const vehicle = shop.vehicles.find((item) => item.id === row.afterVehicleId)
+                ?? shop.vehicles.find((item) => item.id === row.beforeVehicleId)
+                ?? shop.vehicles.find((item) => item.vin && row.vin && item.vin.toUpperCase() === row.vin.toUpperCase());
+              const vin = (vehicle?.vin || row.vin || "").replace(/\s/g, "").toUpperCase();
+              const tail = vin.length >= 8 ? vin.slice(-8) : vin;
+              const title = vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "Vehicle";
+              return <li key={`${row.at}-${row.beforeVehicleId}-${row.afterVehicleId}`}>{row.who || "Unnamed"} transferred {title}{tail ? ` · ${tail}` : ""} from {from} to {to}.{row.reason ? ` ${row.reason}.` : ""} {displayRecordedWhen(row.at)}</li>;
             })}
           </ul>
         )}
