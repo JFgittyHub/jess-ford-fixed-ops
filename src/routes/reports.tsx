@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button } from "@/components/ui";
 import { monthLabel, num, ordinal, dayOfMonth, pct, usd } from "@/lib/format";
 import { digest } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/reports")({ component: ReportsPage });
+export const Route = createFileRoute("/reports")({ component: guardLocked(ReportsPage) });
 
 function moneyCell(value: number) {
   return <td className="tabular-nums text-right">{usd(value)}</td>;

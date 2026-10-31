@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button, Field } from "@/components/ui";
 import { KIND_LABEL } from "@/lib/pay";
 import { useShop } from "@/lib/store";
 import type { PayKind } from "@/lib/types";
 
-export const Route = createFileRoute("/pay-types")({ component: PayTypesPage });
+export const Route = createFileRoute("/pay-types")({ component: guardLocked(PayTypesPage) });
 
 const KINDS: PayKind[] = ["customer", "warranty", "internal"];
 

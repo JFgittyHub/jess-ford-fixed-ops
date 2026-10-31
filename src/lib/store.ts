@@ -19,6 +19,7 @@ import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopSto
 import { formatVisitDate, lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, openedInstant, preparedReason } from "./mileage";
 import { earliestVisitStart, firstOwnership, mergeVinDuplicates, transferOwnership, transferReason } from "./ownership";
 import { RO_CREATE_REFUSAL, RO_WRITE_REFUSAL, roCreationEnabled, roWritesEnabled } from "./ro-flags";
+import { sectionLockEnabled } from "./section-lock";
 import { inRange, MONEY_MAX, HOURS_MAX, QTY_MAX, asText, phoneDigits, NAME_MAX, TEXT_MAX, REASON_MAX } from "./range";
 import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, linkLaborAndParts, mileageOverrideAllows, noWorkCloseError, unbookRepairOrder } from "./ro";
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
@@ -123,7 +124,7 @@ interface ShopActions {
   updateFee: (id: string, patch: Partial<Pick<FeeLine, "name" | "amount" | "cap">>) => void;
   removeFee: (id: string) => void;
   updatePayType: (id: string, patch: Partial<{ name: string; rate: number; kind: PayKind }>) => void;
-  removePayType: (id: string) => "ok" | "used" | "last";
+  removePayType: (id: string) => "ok" | "used" | "last" | "locked";
   attachInspection: (orderId: string) => void;
   setInspectionTech: (orderId: string, techId: string) => void;
   setInspectionPoint: (orderId: string, pointId: string, patch: Partial<Pick<MpiPoint, "status" | "reading" | "note">>) => void;
@@ -566,19 +567,22 @@ function applyVinClaim(state: ShopData, input: {
     if (fromVehicle && fromVehicle.id !== vehicleId && !normalizeVin(fromVehicle.vin) && !vehicleInUse(state, fromVehicle.id, input.orderId ?? "")) {
       vehicles = vehicles.filter((row) => row.id !== fromVehicle.id);
     }
-    let orders = state.orders.map((order) => {
-      if (order.id === input.orderId) return order;
-      if (order.vehicleId !== vehicleId || order.customerId !== previousCustomerId) return order;
-      if (order.status === "closed" || order.authorizationLocked) return order;
-      return appendHistory(order, entry(who, {
-        kind: "note",
-        field: "vin",
-        before: previousCustomerId,
-        after: typed.id,
-        text: `This vehicle was transferred to ${typed.name} on ${formatVisitDate(today())}.`,
-      }));
-    });
-    if (input.orderId) {
+    let orders = state.orders;
+    if (roWritesEnabled()) {
+      orders = state.orders.map((order) => {
+        if (order.id === input.orderId) return order;
+        if (order.vehicleId !== vehicleId || order.customerId !== previousCustomerId) return order;
+        if (order.status === "closed" || order.authorizationLocked) return order;
+        return appendHistory(order, entry(who, {
+          kind: "note",
+          field: "vin",
+          before: previousCustomerId,
+          after: typed.id,
+          text: `This vehicle was transferred to ${typed.name} on ${formatVisitDate(today())}.`,
+        }));
+      });
+    }
+    if (roWritesEnabled() && input.orderId) {
       orders = mapOrder(orders, input.orderId, (live) => {
         if (lockedOrder(live)) return live;
         return appendHistory({ ...live, vehicleId, customerId: typed.id }, entry(who, {
@@ -621,7 +625,7 @@ function applyVinClaim(state: ShopData, input: {
       vehicles = [{ id: vehicleId, customerId: typed.id, year: input.year || 0, make: input.make || "Ford", model: input.model || "", vin: nextVin, ownership: [firstOwnership(typed.id, now().toISOString(), who)] }, ...vehicles];
     }
   }
-  if (input.orderId) {
+  if (roWritesEnabled() && input.orderId) {
     const source = orders.find((row) => row.id === input.orderId);
     const previousId = source?.vehicleId ?? "";
     orders = mapOrder(orders, input.orderId, (live) => {
@@ -1931,6 +1935,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }),
         })),
       invoiceOrder: () => {
+        if (sectionLockEnabled()) return;
         // Month close counts Closed repair orders in the reports. It never writes a status.
       },
       closeOrder: (orderId) => {
@@ -2365,6 +2370,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }),
       addLaborOp: (op) =>
         set((state) => {
+          if (sectionLockEnabled()) return state;
           const opcode = op.opcode.trim().toUpperCase();
           const description = op.description.trim();
           if (!inRange(op.hours, 0.01, HOURS_MAX)) return state;
@@ -2375,7 +2381,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return { laborOps: [...state.laborOps, next].sort((a, b) => a.opcode.localeCompare(b.opcode)) };
         }),
       updateLaborOp: (id, patch) =>
-        set((state) => ({
+        set((state) => {
+          if (sectionLockEnabled()) return state;
+          return {
           laborOps: state.laborOps.map((op) => {
             if (op.id !== id) return op;
             const next = { ...op };
@@ -2390,9 +2398,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             if (typeof patch.payType === "string") next.payType = patch.payType;
             return next;
           }),
-        })),
-      removeLaborOp: (id) => set((state) => ({ laborOps: state.laborOps.filter((op) => op.id !== id) })),
+        };
+        }),
+      removeLaborOp: (id) => set((state) => (sectionLockEnabled() ? state : { laborOps: state.laborOps.filter((op) => op.id !== id) })),
       addPayType: (input) => {
+        if (sectionLockEnabled()) return false;
         const name = typeof input.name === "string" ? input.name.trim() : "";
         if (!name || !inRange(input.rate, 0, MONEY_MAX)) return false;
         let added = false;
@@ -2410,6 +2420,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       updatePayType: (id, patch) =>
         set((state) => {
+          if (sectionLockEnabled()) return state;
           if (rosterEditorError(state)) return state;
           const who = namedActor(state);
           if (!who) return state;
@@ -2434,6 +2445,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return { payTypes, settings, roleLog };
         }),
       removePayType: (id) => {
+        if (sectionLockEnabled()) return "locked";
         const state = useShop.getState();
         if (state.payTypes.length <= 1) return "last";
         const used =
@@ -2444,6 +2456,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return "ok";
       },
       addFee: (input) => {
+        if (sectionLockEnabled()) return false;
         const name = asText(input.name, NAME_MAX);
         if (!name || !inRange(input.amount, 0, MONEY_MAX) || !rosterEditor(get()) || !namedActor(get())) return false;
         set((state) => {
@@ -2460,6 +2473,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       updateFee: (id, patch) =>
         set((state) => {
+          if (sectionLockEnabled()) return state;
           if (!rosterEditor(state) || !namedActor(state)) return state;
           const current = state.settings.fees.find((line) => line.id === id);
           const fees = state.settings.fees.map((line) => {
@@ -2480,6 +2494,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }),
       removeFee: (id) =>
         set((state) => {
+          if (sectionLockEnabled()) return state;
           if (!rosterEditor(state) || !namedActor(state)) return state;
           const current = state.settings.fees.find((line) => line.id === id);
           const fees = state.settings.fees.filter((line) => line.id !== id);
@@ -2619,8 +2634,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!name || !model || typeof input.phone !== "string") return { customerId: "", vehicleId: "", error: "Add the customer name and model.", warning: null };
         const phone = input.phone.trim();
         if (phone && phoneDigits(phone).length !== 10) return { customerId: "", vehicleId: "", error: "Enter a 10-digit phone number.", warning: null };
+        if (input.vin != null && typeof input.vin !== "string") return { customerId: "", vehicleId: "", error: "Enter a 17-character VIN.", warning: null };
         const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
-        const vinError = vinEntryError(vinText);
+        const vinError = vinScheduleError(vinText);
         if (vinError) return { customerId: "", vehicleId: "", error: vinError, warning: null };
         const state = get();
         const existing = vinText ? state.vehicles.find((row) => currentVehicle(row) && sameVin(row.vin, vinText)) : undefined;
@@ -2865,6 +2881,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
         );
         if (staffError) return { ok: false, error: staffError };
+        if (patch.vin != null && typeof patch.vin !== "string") return { ok: false, error: "Enter a 17-character VIN." };
+        const nextVin = patch.vin === undefined ? current.vin : patch.vin;
+        const vinError = typeof nextVin === "string" && nextVin.trim() ? vinScheduleError(nextVin) : null;
+        if (vinError) return { ok: false, error: vinError };
         set((state) => {
           const current = state.appointments.find((row) => row.id === id);
           const requested = patch.status ?? current?.status ?? "scheduled";
@@ -2902,7 +2922,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       addAppointment: (input, id) => {
         const appointmentId = id ?? uid("ap");
-        const vin = normalizeVin(input.vin || "");
+        if (input.vin != null && typeof input.vin !== "string") return "";
+        const vin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
         if (vin && vinScheduleError(vin)) return "";
         set((state) => {
           const raw = input.lines?.length ? input.lines : [{ id: "", code: "A", concern: input.concern }];
@@ -3150,6 +3171,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       approveOnlineRequest: (id, linkCustomerId) => {
         const state = get();
+        const who = namedActor(state);
+        if (!who || !rosterEditor(state)) return { ok: false, reason: "role" };
         const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
         if (!request) return { ok: false, reason: "missing" };
         const plan = planApproval({
@@ -3167,17 +3190,21 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           appointments: [...current.appointments, plan.appointment].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
           onlineRequests: current.onlineRequests.map((row) => (row.id === id ? plan.request : row)),
           notices: [...(current.notices ?? []), plan.notice],
+          roleLog: [...(current.roleLog ?? []), roleChangeRow(who, id, "pending", "approved", request.customerName)],
         }));
         return { ok: true, appointmentId: plan.appointment.id, noticeId: plan.notice.id };
       },
       declineOnlineRequest: (id) => {
         const state = get();
+        const who = namedActor(state);
+        if (!who || !rosterEditor(state)) return { ok: false, reason: "role" };
         const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
         if (!request) return { ok: false, reason: "missing" };
         const notice = decisionNotice({ id: uid("nt"), at: now().toISOString(), request, kind: "decline" });
         set((current) => ({
           onlineRequests: current.onlineRequests.map((row) => (row.id === id ? { ...row, status: "declined" as const } : row)),
           notices: [...(current.notices ?? []), notice],
+          roleLog: [...(current.roleLog ?? []), roleChangeRow(who, id, "pending", "declined", request.customerName)],
         }));
         return { ok: true, noticeId: notice.id };
       },
@@ -3218,31 +3245,45 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           };
         }),
       setOnHand: (partId, onHand) =>
-        set((state) => ({
+        set((state) => {
+          if (sectionLockEnabled()) return state;
+          return {
           parts: state.parts.map((part) => (part.id === partId && inRange(onHand, 0, QTY_MAX) && Number.isInteger(onHand) ? { ...part, onHand } : part)),
-        })),
+        };
+        }),
       addSku: (sku) =>
         set((state) => {
+          if (sectionLockEnabled()) return state;
           if (typeof sku.number !== "string" || typeof sku.description !== "string") return state;
           if (!inRange(sku.cost, 0, MONEY_MAX) || !inRange(sku.list, 0, MONEY_MAX)) return state;
           if (!Number.isInteger(sku.onHand) || !inRange(sku.onHand, 0, QTY_MAX) || !Number.isInteger(sku.onOrder) || !inRange(sku.onOrder, 0, QTY_MAX)) return state;
           return { parts: [{ ...sku, number: sku.number.slice(0, 32), description: sku.description.slice(0, TEXT_MAX), id: uid("sku") }, ...state.parts] };
         }),
       addExpense: (txn) =>
-        set((state) => ({
+        set((state) => {
+          if (sectionLockEnabled()) return state;
+          return {
           expenses: inRange(txn.amount, 0, MONEY_MAX) ? [{ ...txn, id: uid("ex"), amount: money2(txn.amount) }, ...state.expenses] : state.expenses,
-        })),
-      removeExpense: (id) => set((state) => ({ expenses: state.expenses.filter((txn) => txn.id !== id) })),
+        };
+        }),
+      removeExpense: (id) => set((state) => (sectionLockEnabled() ? state : { expenses: state.expenses.filter((txn) => txn.id !== id) })),
       setBudget: (id, monthly) =>
-        set((state) => ({
+        set((state) => {
+          if (sectionLockEnabled()) return state;
+          return {
           budgets: state.budgets.map((row) => (row.id === id && inRange(monthly, 0, MONEY_MAX) ? { ...row, monthly: money2(monthly) } : row)),
-        })),
+        };
+        }),
       setOverhead: (id, monthly) =>
-        set((state) => ({
+        set((state) => {
+          if (sectionLockEnabled()) return state;
+          return {
           overhead: state.overhead.map((row) => (row.id === id && inRange(monthly, 0, MONEY_MAX) ? { ...row, monthly: money2(monthly) } : row)),
-        })),
+        };
+        }),
       sendCampaign: (input) =>
         set((state) => {
+          if (sectionLockEnabled()) return state;
           if (!input.name.trim() || !input.message.trim() || input.recipientIds.length === 0) return state;
           const row: Campaign = {
             id: uid("cp"),

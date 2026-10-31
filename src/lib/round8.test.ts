@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { lastVisitMileage } from "./mileage.ts";
 import { createShopStore, migrateSavedShop } from "./store.ts";
+import { fullVin } from "./vin.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import type { RepairOrder } from "./types.ts";
 
@@ -98,7 +99,7 @@ describe("round 8", () => {
     const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
     shop.getState().addAdvisor({ number: "1", name: "Megan Cho", base: 4000, laborPercent: 5, partsPercent: 2 });
     shop.getState().setWorkingAs(shop.getState().advisors[0]?.id ?? "");
-    const created = shop.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford", vin: "1FTAB12C8NKA00001" });
+    const created = shop.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford", vin: fullVin({ prefix: "1FTAB12C", year: 2019, plant: "G", serial: 1 }) });
     const id = shop.getState().createOrder({
       customerId: created.customerId,
       vehicleId: created.vehicleId,

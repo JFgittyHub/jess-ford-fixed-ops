@@ -9,6 +9,7 @@ import { mpiCounts } from "@/lib/mpi";
 import { lookups, orderMoney } from "@/lib/metrics";
 import { partSell, payKindOf, rateFor } from "@/lib/pay";
 import { normalizeWa, waLimit } from "@/lib/wa";
+import { RO_WRITE_REFUSAL, roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
 import type { BayStatus, RepairOrder, RoStatus } from "@/lib/types";
 import { RepairOrderPrint, printRepairOrder } from "./repair-order-print";
@@ -36,6 +37,7 @@ function TechTime({ order }: { order: RepairOrder }) {
   }, []);
   const techIds = [...new Set(order.labor.map((line) => line.techId).filter(Boolean))];
   const closed = order.status === "closed";
+  const viewOnly = !roWritesEnabled();
   return (
     <section className="mt-6">
       <h3 className="font-display text-2xl leading-none">Tech time</h3>
@@ -58,7 +60,7 @@ function TechTime({ order }: { order: RepairOrder }) {
                 {waiting.map((row) => (
                   <div key={row.id} className="mt-1">
                     <p className="text-sm text-[#8a3b2a]">Needs service manager review. {row.note}</p>
-                    {actor === "service-manager" ? (
+                    {actor === "service-manager" && !viewOnly ? (
                       <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(event) => {
                         event.preventDefault();
                         const field = new FormData(event.currentTarget).get("ended");
@@ -76,7 +78,7 @@ function TechTime({ order }: { order: RepairOrder }) {
                   </div>
                 ))}
               </div>
-              {onThis ? (
+              {viewOnly ? null : onThis ? (
                 <Button onClick={() => { const result = shop.clockOut(techId); setClockError(result.error ?? ""); }}>Clock out {tech?.name ?? "technician"}</Button>
               ) : closed ? null : (
                 <Button tone="primary" onClick={() => { const result = shop.clockIn(techId, order.id); setClockError(result.error ?? ""); }}>{open ? "Move clock here" : "Clock in"}</Button>
@@ -199,7 +201,8 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   }
 
   const sealed = order.status === "closed";
-  const locked = sealed;
+  const viewOnly = !roWritesEnabled();
+  const locked = sealed || viewOnly;
   const booked = order.status === "booked";
   const actor = deskActor(shop);
   const canClose = mayCloseRepairOrder(actor);
@@ -249,13 +252,14 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
       title={`RO ${order.number}`}
       description={customer || sealedView?.customerName ? `${sealedView?.customerName || customer?.name} · ${vehicle ? `${sealedView?.year || vehicle.year} ${sealedView?.make || vehicle.make || "Ford"} ${sealedView?.model || vehicle.model}` : "Vehicle"}` : "Repair order"}
     >
+      {viewOnly ? <p className="mb-4 text-sm font-semibold" role="status">{RO_WRITE_REFUSAL}</p> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "closed" ? "good" : undefined}>{roStatusLabel(order)}</Pill>
         <p className="text-sm text-muted">Advisor on this repair order: {advisor?.name ?? "Unassigned"}</p>
         {order.promiseTime ? <span className="text-sm text-muted">Promise {clockTime(order.promiseTime)}</span> : null}
         <span className="text-sm tabular-nums text-muted">In {order.mileage.toLocaleString("en-US")}{order.mileageOut != null ? ` · Out ${order.mileageOut.toLocaleString("en-US")}` : ""}</span>
         {order.inspection && (mpi.red > 0 || mpi.yellow > 0) ? (
-          <button type="button" className="inline-flex items-center gap-1 border-0 bg-transparent p-0" onClick={() => setTab("sheet")}>
+          <button type="button" className="inline-flex items-center gap-1 border-0 bg-transparent p-0" disabled={viewOnly} onClick={() => setTab("sheet")}>
             {mpi.red > 0 ? <span className="mpi-count mpi-red">{mpi.red} red</span> : null}
             {mpi.yellow > 0 ? <span className="mpi-count mpi-yellow">{mpi.yellow} yellow</span> : null}
           </button>
@@ -290,7 +294,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           </select>
         </Field>
         <Field label="Bay status">
-          <select className="field" disabled={sealed} value={order.bay ?? "dispatch"} onChange={(event) => shop.updateOrder(order.id, { bay: event.target.value as BayStatus })}>
+          <select className="field" disabled={locked} value={order.bay ?? "dispatch"} onChange={(event) => shop.updateOrder(order.id, { bay: event.target.value as BayStatus })}>
             {BAYS.map((bay) => <option key={bay} value={bay}>{BAY_LABEL[bay]}</option>)}
           </select>
         </Field>
@@ -343,7 +347,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             }}
           />
           {vinWarning ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{vinWarning}</p> : null}
-          {vinReplace ? (
+          {!locked && vinReplace ? (
             <div className="mt-2 flex flex-wrap gap-2">
               <Button
                 small
@@ -360,7 +364,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               <Button small type="button" onClick={() => { setVinDraft(vehicleVin); setVinReplace(false); setVinTransfer(false); setVinWarning(""); }}>Keep the VIN</Button>
             </div>
           ) : null}
-          {vinTransfer ? (
+          {!locked && vinTransfer ? (
             <div className="mt-2 grid gap-2">
               <Field label="Reason for the transfer">
                 <input className="field" aria-label="Reason for the transfer" value={vinReason} onChange={(event) => setVinReason(event.target.value)} />
@@ -455,7 +459,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         <Field label="Mileage out">
           <input
             className="field tabular-nums"
-            disabled={sealed}
+            disabled={locked}
             inputMode="numeric"
             value={outDraft}
             placeholder="When it leaves"
@@ -464,7 +468,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               setOutError("");
             }}
             onBlur={() => {
-              if (sealed) return;
+              if (locked) return;
               if (!outDraft.trim()) {
                 setOutError("");
                 shop.updateOrder(order.id, { mileageOut: null });
@@ -489,7 +493,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             }}
           />
           {outError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{outError}</p> : null}
-          {!sealed && (outError.startsWith("Mileage out can't be more than 10,000") || outError.startsWith("Add a reason")) && actor === "service-manager" ? (
+          {!locked && (outError.startsWith("Mileage out can't be more than 10,000") || outError.startsWith("Add a reason")) && actor === "service-manager" ? (
             <div className="mt-2 grid gap-2">
               <textarea className="field min-h-16" maxLength={500} aria-label="Mileage out reason" placeholder="Reason, at least 10 characters" value={outReason} onChange={(event) => setOutReason(event.target.value)} />
               <Button
@@ -799,7 +803,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           <p className="text-sm text-muted">{displayRecordedName(order.closedBy)} · {displayRecordedWhen(order.closedAt)}</p>
           <p className="text-sm text-muted">This repair order is closed. It can be viewed, and it can't be changed.</p>
         </div>
-      ) : (
+      ) : viewOnly ? null : (
       <div className="mt-4 flex flex-wrap gap-2">
         {booked ? (
           <>
@@ -816,7 +820,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         )}
       </div>
       )}
-      {!sealed && canClose ? (
+      {!viewOnly && !sealed && canClose ? (
         <NoWorkCloseForm
           note={noWorkNote}
           error={noWorkError}
@@ -827,8 +831,8 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           }}
         />
       ) : null}
-      {!sealed && !canClose ? <p className="mt-2 text-sm text-muted">An advisor or service manager closes this repair order.</p> : null}
-      {!booked && !sealed && (!readyToInvoice(order) || !hasBookedWork(order)) ? (
+      {!viewOnly && !sealed && !canClose ? <p className="mt-2 text-sm text-muted">An advisor or service manager closes this repair order.</p> : null}
+      {!viewOnly && !booked && !sealed && (!readyToInvoice(order) || !hasBookedWork(order)) ? (
         <ul className="mt-2 grid gap-1 text-sm text-muted">
           <li>Book stays off until this repair order is ready:</li>
           {!order.labor.some((line) => line.hours > 0) ? <li>Add labor hours.</li> : null}
@@ -838,13 +842,13 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           {gaps.filter((gap) => /^(Concern|Cause|Correction) on line /.test(gap)).map((gap) => <li key={gap}>{gap}</li>)}
         </ul>
       ) : null}
-      {!sealed && !booked && readyToInvoice(order) && hasBookedWork(order) && gaps.some((gap) => /^(Concern|Cause|Correction) on line /.test(gap)) ? (
+      {!viewOnly && !sealed && !booked && readyToInvoice(order) && hasBookedWork(order) && gaps.some((gap) => /^(Concern|Cause|Correction) on line /.test(gap)) ? (
         <ul className="mt-2 grid gap-1 text-sm text-muted">
           <li>Book stays available. Close still needs:</li>
           {gaps.filter((gap) => /^(Concern|Cause|Correction) on line /.test(gap)).map((gap) => <li key={gap}>{gap}</li>)}
         </ul>
       ) : null}
-      {closeError ? (
+      {!viewOnly && closeError ? (
         <div role="alert" className="mt-2 grid gap-1 text-sm text-[#8a3b2a]">
           {closeError.split("\n").map((gap) => {
             const match = /^(Concern|Cause|Correction) on line (\S+)/.exec(gap);
@@ -868,7 +872,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           })}
         </div>
       ) : null}
-      {booked && gaps.length > 0 ? (
+      {!viewOnly && booked && gaps.length > 0 ? (
         <ul className="mt-2 grid gap-1 text-sm text-muted">
           {gaps.map((gap) => {
             const match = /^(Concern|Cause|Correction) on line (\S+)/.exec(gap);

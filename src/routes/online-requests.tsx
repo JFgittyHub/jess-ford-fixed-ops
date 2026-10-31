@@ -8,7 +8,7 @@ export const Route = createFileRoute("/online-requests")({ component: OnlineRequ
 function OnlineRequestsPage() {
   const router = useRouter();
   useEffect(() => {
-    void router.navigate({ to: "/schedule", replace: true });
+    void router.navigate({ to: "/schedule", hash: "online-requests", replace: true });
   }, [router]);
-  return <SchedulePage />;
+  return <SchedulePage openRequests />;
 }

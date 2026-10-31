@@ -1,4 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { guardLocked } from "@/lib/locked-route";
 import { useMemo, useState } from "react";
 import { NoShowMark } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
@@ -10,7 +11,7 @@ import { isSold, lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { Campaign } from "@/lib/types";
 
-export const Route = createFileRoute("/customers")({ component: CustomersPage });
+export const Route = createFileRoute("/customers")({ component: guardLocked(CustomersPage) });
 
 const AUDIENCES: { id: Campaign["audience"]; label: string }[] = [
   { id: "due7", label: "Not seen in 7 days" },

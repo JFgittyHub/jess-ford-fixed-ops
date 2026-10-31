@@ -83,7 +83,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function ComingLater() {
+export function ComingLater() {
   return (
     <section className="card" aria-label={SECTION_LOCK_HINT}>
       <h1 className="font-display text-4xl leading-none">{SECTION_LOCK_NOTICE}</h1>
@@ -251,9 +251,6 @@ function OpenDesk({ children }: { children: ReactNode }) {
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
           <p>
             This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
-          </p>
-          <p className="mt-2">
-            <Link to="/request" className="underline">Customer booking page</Link>
           </p>
         </footer>
         {scrolled && backTo ? (

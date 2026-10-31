@@ -1,3 +1,5 @@
+import { devOverridesAllowed } from "./dev-overrides";
+
 /**
  * Sample customers, repair orders, and scorecard months are off unless this
  * is on. Set `VITE_DEMO_MODE` to the exact string `true` or `1` (spaces around
@@ -39,8 +41,10 @@ function readDemoEnv(): string {
 }
 
 function readDemoFlag(): string | null {
-  const fromTest = (globalThis as { __JF_DEMO_MODE__?: string }).__JF_DEMO_MODE__;
-  if (typeof fromTest === "string") return fromTest;
+  if (devOverridesAllowed()) {
+    const fromTest = (globalThis as { __JF_DEMO_MODE__?: string }).__JF_DEMO_MODE__;
+    if (typeof fromTest === "string") return fromTest;
+  }
   try {
     const env = import.meta.env as { VITE_DEMO_MODE?: string } | undefined;
     if (!env) return null;

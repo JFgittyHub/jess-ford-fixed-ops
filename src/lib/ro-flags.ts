@@ -1,3 +1,5 @@
+import { devOverridesAllowed } from "./dev-overrides";
+
 /**
  * This build reflects repair orders from Dealertrack. It does not create them
  * and it does not change them. Scheduling, staff setup, and store settings stay
@@ -12,6 +14,7 @@ export const RO_WRITE_REFUSAL = "Read-only — repair orders come from Dealertra
 type FlagName = "__RO_CREATION_ENABLED__" | "__RO_WRITES_ENABLED__";
 
 function flag(name: FlagName, fallback: boolean) {
+  if (!devOverridesAllowed()) return fallback;
   const override = (globalThis as Record<string, unknown>)[name];
   return typeof override === "boolean" ? override : fallback;
 }

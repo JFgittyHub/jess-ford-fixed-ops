@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { usd } from "@/lib/format";
 import { orderMoney } from "@/lib/metrics";
+import { roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
 import { vehicleTitle } from "@/lib/metrics";
 import { normalizeWa, vinTail, waLimit, type WaChoice } from "@/lib/wa";
@@ -24,7 +25,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
   const [extra, setExtra] = useState({ date: "", time: "", employee: "", person: "", phone: "", work: "", amount: "" });
 
   if (!order) return null;
-  const locked = order.status === "closed" || Boolean(order.authorizationLocked);
+  const locked = order.status === "closed" || Boolean(order.authorizationLocked) || !roWritesEnabled();
   const wa = normalizeWa(order.wa);
   const money = orderMoney(order);
   const limit = waLimit(wa);
@@ -71,7 +72,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
           <input className="field" disabled={locked} value={wa.initials} onChange={(event) => updateWa(order.id, { initials: event.target.value })} />
         </Field>
         <Field label="Customer address">
-          <input className="field" readOnly aria-readonly="true" value={wa.address} />
+          <input className="field" readOnly disabled={locked} aria-readonly="true" value={wa.address} />
           <p className="text-sm text-muted">Same as the address on this repair order.</p>
         </Field>
         <Field label="Date">

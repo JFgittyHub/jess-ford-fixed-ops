@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardLocked } from "@/lib/locked-route";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
 import { BAY_LABEL, clockTime, formatDuration, punchHours, reviewCap, roStatusLabel, today as shopToday } from "@/lib/format";
 import { lookups } from "@/lib/metrics";
+import { RO_WRITE_REFUSAL, roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
 import type { BayStatus, RepairOrder, TimeLog } from "@/lib/types";
 
-export const Route = createFileRoute("/tech-board")({ component: TechBoardPage });
+export const Route = createFileRoute("/tech-board")({ component: guardLocked(TechBoardPage) });
 
 function useNow() {
   const [now, setNow] = useState(() => Date.now());
@@ -58,6 +60,7 @@ function TechBoardPage() {
             ? "Add a technician on the roster, then pick them here. There is no password."
             : "Pick a technician. The board shows the open repair orders assigned to that person. There is no password."}
         </p>
+        {!roWritesEnabled() ? <p className="mt-3 text-sm text-muted">{RO_WRITE_REFUSAL}</p> : null}
         <div className="mt-5 max-w-md">{picker}</div>
       </Shell>
     );
@@ -87,7 +90,7 @@ function TechBoardPage() {
           <p className="text-sm text-muted">Status</p>
           <p className="mt-1 font-display text-3xl leading-none">{open ? "On the clock" : "Off the clock"}</p>
           <p className="mt-2 text-sm text-muted">{current ? `RO ${current.number}` : "No repair order punched"}</p>
-          {open && current?.status === "closed" ? (
+          {roWritesEnabled() && open && current?.status === "closed" ? (
             <Button onClick={() => shop.clockOut(tech.id)}>Clock out {tech.name}</Button>
           ) : null}
         </article>
@@ -129,6 +132,7 @@ function TechBoardPage() {
                 {lines.map((line) => <li key={line.id}>{line.opcode} · {line.description}</li>)}
               </ul>
               <p className="mt-2 text-sm">{order.concern}</p>
+              {roWritesEnabled() ? (
               <div className="mt-4 flex flex-wrap gap-2">
                 {onThis ? (
                   <Button onClick={() => { const result = shop.clockOut(tech.id); setClockError(result.error ?? ""); }}>Clock out {tech.name}</Button>
@@ -136,6 +140,7 @@ function TechBoardPage() {
                   <Button tone="primary" onClick={() => { const result = shop.clockIn(tech.id, order.id); setClockError(result.error ?? ""); }}>{open ? "Move clock here" : "Clock in"}</Button>
                 )}
               </div>
+              ) : <p className="mt-4 text-sm text-muted">Read-only — repair orders come from Dealertrack.</p>}
             </article>
           );
         })}

@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Calendar } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours } from "@/components/appointment-calendar";
@@ -12,6 +12,7 @@ import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
 import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
+import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
 import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
@@ -36,18 +37,23 @@ const STARTS = Array.from({ length: 22 }, (_, index) => {
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 });
 
-export function SchedulePage() {
+export function wantsOnlineRequests(hash: string) {
+  return hash.replace(/^#/, "") === "online-requests";
+}
+
+export function SchedulePage({ openRequests = false }: { openRequests?: boolean }) {
   const storeId = useShop((state) => state.activeStoreId);
   return (
     <Shell>
-      <ScheduleDesk key={storeId} />
+      <ScheduleDesk key={storeId} openRequests={openRequests} />
     </Shell>
   );
 }
 
-function ScheduleDesk() {
+function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const shop = useShop();
   const navigate = useNavigate();
+  const locationHash = useRouterState({ select: (state) => state.location.hash });
   const look = lookups(shop);
   const [preset, setPreset] = useState<Appointment | null>(null);
   const [seed, setSeed] = useState<DeskSeed>(() => deskSeedFor(shop));
@@ -60,12 +66,23 @@ function ScheduleDesk() {
   const [day, setDay] = useState(today());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(() => openRequests || wantsOnlineRequests(locationHash));
+  const [timesOpen, setTimesOpen] = useState(false);
+  const ignoreRequestsHash = useRef(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
+  useEffect(() => {
+    if (ignoreRequestsHash.current) {
+      ignoreRequestsHash.current = false;
+      return;
+    }
+    if (openRequests || wantsOnlineRequests(locationHash)) setRequestsOpen(true);
+  }, [openRequests, locationHash]);
+
   if (liveSeed !== seed) {
     setSeed(liveSeed);
     setSelectedId(null);
@@ -117,6 +134,15 @@ function ScheduleDesk() {
         techId: techFilter,
       }).map((slot) => slot.time))]
     : [];
+  const pendingCount = (shop.onlineRequests ?? []).filter((row) => row.status === "pending").length;
+
+  function closeRequests() {
+    setRequestsOpen(false);
+    if (wantsOnlineRequests(locationHash)) {
+      ignoreRequestsHash.current = true;
+      void navigate({ to: "/schedule", replace: true });
+    }
+  }
 
   function capacityFor(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }, ignoreId?: string) {
     const result = assessAppointment({
@@ -196,11 +222,13 @@ function ScheduleDesk() {
             <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
-            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests are on this calendar.
+            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>
+          <Button small id="online-requests" onClick={() => setRequestsOpen(true)}>Online requests ({pendingCount})</Button>
+          <Button small onClick={() => setTimesOpen(true)}>Online times</Button>
           <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
           <Button small onClick={() => setDay((value) => addDays(value, -1))}>Previous</Button>
           <p className="min-w-40 text-center text-sm font-semibold">{dayLabel(day)}</p>
@@ -208,51 +236,6 @@ function ScheduleDesk() {
           <Button small onClick={() => setDay((value) => addDays(value, 1))}>Next</Button>
         </div>
       </div>
-
-      <section className="card mt-4" aria-label="Online requests" id="online-requests">
-        <h2 className="font-display text-3xl leading-none">Online requests ({(shop.onlineRequests ?? []).filter((row) => row.status === "pending").length})</h2>
-        <p className="mt-1 max-w-xl text-sm text-muted">Pending requests for this store hold their time. Approve turns one into an appointment on this calendar. Decline frees the time. Advisors and service managers book from this calendar.</p>
-        <OnlineRequestList
-          rows={(shop.onlineRequests ?? []).filter((row) => row.status === "pending")}
-          customers={shop.customers}
-          suggested={(row) => matchRequestCustomer(shop.customers, shop.vehicles, row)?.customerId ?? ""}
-          onApprove={(id, linkCustomerId) => { shop.approveOnlineRequest(id, linkCustomerId); }}
-          onDecline={(id) => { shop.declineOnlineRequest(id); }}
-        />
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-          <p className="max-w-xl text-sm text-muted">Approval, decline, and the day-before reminder are simulated here. The texting adapter is off, so nothing leaves this desk.</p>
-          <Button onClick={() => shop.simulateDayBeforeReminders()}>Simulate day-before reminders</Button>
-        </div>
-        <NoticeLog rows={shop.notices ?? []} />
-      </section>
-
-      <section className="card mt-4" aria-label="Online times">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="font-display text-3xl leading-none">Online times</h2>
-            <p className="mt-1 max-w-xl text-sm text-muted">Customers only see a time when the technician still has hours for this service and the advisor is not full. A full time is left off.</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Field label="Service">
-              <select className="field" value={serviceId} onChange={(event) => patchSeed({ serviceId: event.target.value })}>
-                {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Technician">
-              <select className="field" value={techFilter} onChange={(event) => patchSeed({ onlineTechId: event.target.value })}>
-                {board.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
-              </select>
-            </Field>
-          </div>
-        </div>
-        {onlineTimes.length === 0 ? (
-          <p className="mt-3 text-sm text-muted">No online openings for this technician on this day.</p>
-        ) : (
-          <ul className="mt-3 flex flex-wrap gap-2">
-            {onlineTimes.map((time) => <li key={time} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(time)}</li>)}
-          </ul>
-        )}
-      </section>
 
       {board.length === 0 ? (
         <p className="card mt-4 text-muted">No technicians are on a board yet. The day columns show up when a technician is on Express, Main shop, or Internals.</p>
@@ -295,8 +278,8 @@ function ScheduleDesk() {
               ? row.laborOpIds.map((id) => shop.laborOps.find((op) => op.id === id)?.opcode).filter(Boolean).join(", ")
               : "No labor ops",
             status: appointmentStatusLabel(row.status),
-            canWrite: !row.orderId && row.status !== "no_show" && row.status !== "cancelled" && !repairOrderWriterError(shop),
-            writeNote: repairOrderWriterError(shop) ?? undefined,
+            canWrite: roCreationEnabled() && !row.orderId && row.status !== "no_show" && row.status !== "cancelled" && !repairOrderWriterError(shop),
+            writeNote: !roCreationEnabled() ? "Repair orders come from Dealertrack." : repairOrderWriterError(shop) ?? undefined,
           };
         }}
       />
@@ -330,6 +313,43 @@ function ScheduleDesk() {
         onReinstate={reinstate}
       />
       {actionError && !selected ? <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{actionError}</p> : null}
+
+      <Modal open={requestsOpen} onClose={closeRequests} wide title={`Online requests (${pendingCount})`} description="Pending requests for this store hold their time. Approve turns one into an appointment on this calendar. Decline frees the time.">
+        <OnlineRequestList
+          rows={(shop.onlineRequests ?? []).filter((row) => row.status === "pending")}
+          customers={shop.customers}
+          suggested={(row) => matchRequestCustomer(shop.customers, shop.vehicles, row)?.customerId ?? ""}
+          onApprove={(id, linkCustomerId) => { shop.approveOnlineRequest(id, linkCustomerId); }}
+          onDecline={(id) => { shop.declineOnlineRequest(id); }}
+        />
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+          <p className="max-w-xl text-sm text-muted">Approval, decline, and the day-before reminder are simulated here. The texting adapter is off, so nothing leaves this desk.</p>
+          <Button onClick={() => shop.simulateDayBeforeReminders()}>Simulate day-before reminders</Button>
+        </div>
+        <NoticeLog rows={shop.notices ?? []} />
+      </Modal>
+
+      <Modal open={timesOpen} onClose={() => setTimesOpen(false)} wide title="Online times" description="Customers only see a time when the technician still has hours for this service and the advisor is not full. A full time is left off.">
+        <div className="flex flex-wrap gap-3">
+          <Field label="Service">
+            <select className="field" value={serviceId} onChange={(event) => patchSeed({ serviceId: event.target.value })}>
+              {services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Technician">
+            <select className="field" value={techFilter} onChange={(event) => patchSeed({ onlineTechId: event.target.value })}>
+              {board.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        {onlineTimes.length === 0 ? (
+          <p className="mt-3 text-sm text-muted">No online openings for this technician on this day.</p>
+        ) : (
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {onlineTimes.map((slot) => <li key={slot} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(slot)}</li>)}
+          </ul>
+        )}
+      </Modal>
 
       <Modal open={booking} onClose={() => setBooking(false)} title="Book an appointment" description={`${dayLabel(date)} at ${clockTime(time)}.`}>
         <AppointmentFields
@@ -493,7 +513,7 @@ function Selected({
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
         <Button small onClick={onEdit}>Edit details</Button>
-        {row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : writeBlock ? <p className="text-sm text-muted">{writeBlock}</p> : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
+        {!roCreationEnabled() ? <p className="text-sm text-muted">Repair orders come from Dealertrack.</p> : row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : writeBlock ? <p className="text-sm text-muted">{writeBlock}</p> : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
+import { fullVin } from "./vin.ts";
 
 /**
  * Two bookings on the same tech and time both save.
@@ -60,7 +61,7 @@ describe("appointment actions", () => {
     const vehicle = shop.getState().vehicles.find((item) => item.id === row.vehicleId);
     assert.ok(vehicle);
     const original = vehicle.vin;
-    const typed = "1FTEW1EP5NKD12345";
+    const typed = fullVin({ prefix: "1FTEW1EP", year: 2022, plant: "D", serial: 345 });
     assert.notEqual(typed, original);
 
     shop.getState().updateAppointment(row.id, { vin: `  ${typed.toLowerCase()}  ` });

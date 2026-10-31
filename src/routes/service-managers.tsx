@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button, Field } from "@/components/ui";
 import { displayRecordedWhen } from "@/lib/cancel";
 import { useShop } from "@/lib/store";
 import type { RoleChange } from "@/lib/types";
 
-export const Route = createFileRoute("/service-managers")({ component: ServiceManagersPage });
+export const Route = createFileRoute("/service-managers")({ component: guardLocked(ServiceManagersPage) });
 
 function ServiceManagersPage() {
   const shop = useShop();
