@@ -7,7 +7,7 @@ import { feeCharge, feeTotal, salesTax, today, usd } from "@/lib/format";
 import { lastVisitMileage, mileageFloorMessage } from "@/lib/mileage";
 import { lineLetter } from "@/lib/jobs";
 import { partSell, rateFor } from "@/lib/pay";
-import { useShop } from "@/lib/store";
+import { repairOrderWriterError, useShop } from "@/lib/store";
 
 export const Route = createFileRoute("/estimates")({ component: EstimatesPage });
 
@@ -263,7 +263,7 @@ function EstimatesPage() {
           {error ? <p className="mt-2 text-sm text-primary">{error}</p> : null}
           <div className="mt-4 flex flex-wrap gap-2">
             <Button onClick={printRepairOrder}>Print estimate</Button>
-            <Button tone="primary" onClick={openOrder}>Open as repair order</Button>
+            {repairOrderWriterError(shop) ? <p className="text-sm text-muted">{repairOrderWriterError(shop)}</p> : <Button tone="primary" onClick={openOrder}>Open as repair order</Button>}
           </div>
         </aside>
       </div>

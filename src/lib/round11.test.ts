@@ -94,9 +94,15 @@ describe("round 11", () => {
     assert.equal(shop.getState().vehicles.find((row) => row.id === created.vehicleId)?.vin, vinA);
     assert.notEqual(shop.getState().orders.find((row) => row.id === openId)?.vehicleId, created.vehicleId);
     assert.equal(shop.getState().orders.find((row) => row.id === "closed-copy")?.vehicleId, created.vehicleId);
+    const closedBefore = JSON.stringify(shop.getState().orders.find((row) => row.id === "closed-copy"));
     shop.getState().updateOpenContact(openId, { phone: "5095550100" });
-    assert.equal(shop.getState().customers.find((row) => row.id === created.customerId)?.phone, "5095550199");
-    assert.notEqual(shop.getState().orders.find((row) => row.id === openId)?.customerId, created.customerId);
+    assert.equal(shop.getState().customers.filter((row) => row.formerRecord).length, 0);
+    assert.equal(shop.getState().customers.find((row) => row.id === created.customerId)?.phone, "5095550100");
+    assert.equal(shop.getState().orders.find((row) => row.id === openId)?.customerId, created.customerId);
+    assert.equal(shop.getState().orders.find((row) => row.id === openId)?.vehicleId, shop.getState().orders.find((row) => row.id === openId)?.vehicleId);
+    assert.match(shop.getState().orders.find((row) => row.id === openId)?.history?.at(-1)?.text ?? "", /5095550199/);
+    assert.match(shop.getState().orders.find((row) => row.id === openId)?.history?.at(-1)?.text ?? "", /5095550100/);
+    assert.equal(JSON.stringify(shop.getState().orders.find((row) => row.id === "closed-copy")), closedBefore);
   });
 
   it("requires a transfer confirm, keeps the typed customer, and logs the old and new records", () => {
@@ -147,7 +153,7 @@ describe("round 11", () => {
     assert.equal(pat?.name, "Pat Newowner");
     assert.equal(pat?.phone, "5095550177");
     assert.equal(shop.getState().vehicles.find((row) => row.id === shop.getState().orders.find((order) => order.id === moved.orderId)?.vehicleId)?.customerId, pat?.id);
-    assert.match(shop.getState().orders.find((order) => order.id === moved.orderId)?.history?.[0]?.text ?? "", /Transferred VIN/);
+    assert.match(shop.getState().orders.find((order) => order.id === moved.orderId)?.history?.map((row) => row.text).join(" ") ?? "", /Transferred VIN/);
     const log = shop.getState().ownershipLog?.[0];
     assert.equal(log?.beforeCustomerId, helen.customerId);
     assert.equal(log?.afterCustomerId, pat?.id);
@@ -183,13 +189,14 @@ describe("round 11", () => {
   it("lets an advisor appoint the first service manager even when repair orders are closed", () => {
     const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
     assert.equal(shop.getState().addAdvisor({ number: "1", name: "Pat Reyes", base: 4000, laborPercent: 5, partsPercent: 2 }), true);
-    assert.equal(shop.getState().addTech({ number: "9", name: "Marcus Hale", skill: "a", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" }), true);
     const pat = shop.getState().advisors[0];
+    shop.getState().setWorkingAs(pat.id);
+    assert.equal(shop.getState().addTech({ number: "9", name: "Marcus Hale", skill: "a", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" }), true);
     const marcus = shop.getState().techs[0];
     shop.setState({
       orders: [{ id: "cl", number: 1, status: "closed", openedOn: "2026-10-01", customerId: "", vehicleId: "", concern: "", jobs: [], mileage: 1, mileageOut: 1, fees: [], taxRate: 0, labor: [], parts: [], invoicedOn: "2026-10-01", stockApplied: false, inspection: null, bay: "ready", promiseTime: "", advisorId: pat.id }],
     });
-    shop.getState().setWorkingAs("");
+    shop.setState({ workingAsId: "" });
     assert.match(shop.getState().appointFirstServiceManager(pat.id).error ?? "", /who is working/);
     shop.getState().setWorkingAs(marcus.id);
     assert.match(shop.getState().appointFirstServiceManager(pat.id).error ?? "", /advisor/);
@@ -297,7 +304,7 @@ describe("round 11", () => {
     assert.equal(shop.getState().clockIn("marcus", first).ok, true);
     shop.setState({
       orders: shop.getState().orders.map((row) => (row.id === first ? { ...row, status: "closed" as const, authorizationLocked: true, closedAt: null } : row)),
-      timeLogs: shop.getState().timeLogs.map((row) => (row.orderId === first ? { ...row, needsReview: true, note: "No close time is on this repair order, so the punch stays open for service manager review." } : row)),
+      timeLogs: shop.getState().timeLogs.map((row) => (row.orderId === first ? { ...row, needsReview: true, clockedOutAt: new Date(Date.parse(row.startedAt) + 3_600_000).toISOString(), note: "No close time is on this repair order, so the punch stays open for service manager review." } : row)),
     });
     const blocked = shop.getState().clockIn("marcus", second);
     assert.equal(blocked.ok, false);
@@ -309,10 +316,11 @@ describe("round 11", () => {
     shop.getState().setWorkingAs("marcus");
     assert.match(shop.getState().resolveFlaggedPunch(punch?.id ?? "", new Date().toISOString()).error ?? "", /service manager/);
     shop.getState().setWorkingAs("derek");
-    assert.equal(shop.getState().resolveFlaggedPunch(punch?.id ?? "", new Date().toISOString()).ok, true);
+    assert.equal(shop.getState().resolveFlaggedPunch(punch?.id ?? "", new Date(Date.parse(punch?.startedAt ?? "") + 1_200_000).toISOString()).ok, true);
     const ended = shop.getState().timeLogs.find((row) => row.id === punch?.id);
     assert.equal(typeof ended?.endedAt, "string");
-    assert.match(shop.getState().orders.find((row) => row.id === first)?.history?.at(-1)?.text ?? "", /resolved the punch/);
+    assert.match(ended?.note ?? "", /resolved the punch/);
+    assert.equal(shop.getState().orders.find((row) => row.id === first)?.history?.some((row) => /resolved the punch/.test(row.text)) ?? false, false);
     assert.equal(shop.getState().clockIn("marcus", second).ok, true);
   });
 

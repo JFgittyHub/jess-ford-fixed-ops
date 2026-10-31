@@ -7,7 +7,7 @@ import { mileageReasonError } from "@/lib/ro";
 import { deskActor } from "@/lib/cancel";
 import { rateFor } from "@/lib/pay";
 import { noShowSuffix } from "@/lib/no-show-label";
-import { useShop } from "@/lib/store";
+import { repairOrderWriterError, useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
 type DraftLine = { id: string; concern: string };
@@ -202,7 +202,7 @@ function NewOrderForm({
             }),
           });
           if (!id) {
-            setFormError(floor ?? "Mileage in has to be greater than zero.");
+            setFormError(repairOrderWriterError(shop) ?? floor ?? "Mileage in has to be greater than zero.");
             return;
           }
           setFormError("");

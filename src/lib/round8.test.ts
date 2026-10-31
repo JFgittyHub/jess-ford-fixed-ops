@@ -96,6 +96,8 @@ describe("round 8", () => {
 
   it("refuses resetDemo outside demo mode", () => {
     const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
+    shop.getState().addAdvisor({ number: "1", name: "Megan Cho", base: 4000, laborPercent: 5, partsPercent: 2 });
+    shop.getState().setWorkingAs(shop.getState().advisors[0]?.id ?? "");
     const created = shop.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford", vin: "1FTAB12C8NKA00001" });
     const id = shop.getState().createOrder({
       customerId: created.customerId,
@@ -156,12 +158,10 @@ describe("round 8", () => {
     assert.equal(row?.after, "8069");
     assert.equal(row?.reason, "customer drove a loaner");
     shop.setState({
-      orders: shop.getState().orders.map((order) => (order.id === id ? { ...order, mileage: 80696 } : order)),
+      orders: shop.getState().orders.map((order) => (order.id === id ? { ...order, mileage: 80696, mileageOut: 90000 } : order)),
     });
-    shop.getState().updateOrder(id, { mileage: 8069 });
-    assert.equal(shop.getState().orders.find((order) => order.id === id)?.mileage, 8069);
     const legal = shop.getState().recordMileageOverride(id, 81000, "this is not below the floor");
-    assert.equal(legal.ok, true);
+    assert.equal(legal.ok, true, legal.error ?? "");
     const note = shop.getState().orders.find((order) => order.id === id)?.history?.at(-1);
     assert.equal(note?.kind, "note");
     assert.match(note?.text ?? "", /Mileage in changed from/);
@@ -272,6 +272,8 @@ describe("round 8", () => {
     assert.equal(shop.getState().addFee({ name: "Shop", amount: Number.POSITIVE_INFINITY }), false);
     assert.equal(shop.getState().addFee({ name: "Shop", amount: 1e308 }), false);
     const live = createShopStore({ demoMode: false, storage: memoryStorage() });
+    live.getState().addAdvisor({ number: "1", name: "Megan Cho", base: 4000, laborPercent: 5, partsPercent: 2 });
+    live.getState().setWorkingAs(live.getState().advisors[0]?.id ?? "");
     const bare = live.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford" });
     assert.equal(live.getState().vehicles.find((row) => row.id === bare.vehicleId)?.vin, "");
     const demo = createShopStore({ demoMode: true, storage: memoryStorage() });

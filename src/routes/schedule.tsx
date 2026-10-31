@@ -4,16 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours } from "@/components/appointment-calendar";
 import { CancelForm, CancelledHistory, DeskCancelActions } from "@/components/cancel-appointment";
 import { NewOrder } from "@/components/new-order";
+import { NoticeLog } from "@/components/notice-log";
 import { NoShowMark } from "@/components/no-show-mark";
+import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
 import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
+import { repairOrderWriterError } from "@/lib/store";
 import { snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
-import { requestHolds } from "@/lib/online-request";
+import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
+import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
 import { useShop } from "@/lib/store";
@@ -32,7 +36,7 @@ const STARTS = Array.from({ length: 22 }, (_, index) => {
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 });
 
-function SchedulePage() {
+export function SchedulePage() {
   const storeId = useShop((state) => state.activeStoreId);
   return (
     <Shell>
@@ -192,7 +196,7 @@ function ScheduleDesk() {
             <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
-            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests hold the same hours and are listed under Online requests.
+            {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests are on this calendar.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -204,6 +208,23 @@ function ScheduleDesk() {
           <Button small onClick={() => setDay((value) => addDays(value, 1))}>Next</Button>
         </div>
       </div>
+
+      <section className="card mt-4" aria-label="Online requests" id="online-requests">
+        <h2 className="font-display text-3xl leading-none">Online requests ({(shop.onlineRequests ?? []).filter((row) => row.status === "pending").length})</h2>
+        <p className="mt-1 max-w-xl text-sm text-muted">Pending requests for this store hold their time. Approve turns one into an appointment on this calendar. Decline frees the time. Advisors and service managers book from this calendar.</p>
+        <OnlineRequestList
+          rows={(shop.onlineRequests ?? []).filter((row) => row.status === "pending")}
+          customers={shop.customers}
+          suggested={(row) => matchRequestCustomer(shop.customers, shop.vehicles, row)?.customerId ?? ""}
+          onApprove={(id, linkCustomerId) => { shop.approveOnlineRequest(id, linkCustomerId); }}
+          onDecline={(id) => { shop.declineOnlineRequest(id); }}
+        />
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
+          <p className="max-w-xl text-sm text-muted">Approval, decline, and the day-before reminder are simulated here. The texting adapter is off, so nothing leaves this desk.</p>
+          <Button onClick={() => shop.simulateDayBeforeReminders()}>Simulate day-before reminders</Button>
+        </div>
+        <NoticeLog rows={shop.notices ?? []} />
+      </section>
 
       <section className="card mt-4" aria-label="Online times">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -234,7 +255,7 @@ function ScheduleDesk() {
       </section>
 
       {board.length === 0 ? (
-        <p className="card mt-4 text-muted">No technicians are on a board yet. Add someone on the roster and put them on Express, Main shop, or Internals. The day columns show up after that.</p>
+        <p className="card mt-4 text-muted">No technicians are on a board yet. The day columns show up when a technician is on Express, Main shop, or Internals.</p>
       ) : (
       <AppointmentCalendar
         appointments={onBoard}
@@ -274,7 +295,8 @@ function ScheduleDesk() {
               ? row.laborOpIds.map((id) => shop.laborOps.find((op) => op.id === id)?.opcode).filter(Boolean).join(", ")
               : "No labor ops",
             status: appointmentStatusLabel(row.status),
-            canWrite: !row.orderId && row.status !== "no_show" && row.status !== "cancelled",
+            canWrite: !row.orderId && row.status !== "no_show" && row.status !== "cancelled" && !repairOrderWriterError(shop),
+            writeNote: repairOrderWriterError(shop) ?? undefined,
           };
         }}
       />
@@ -296,6 +318,7 @@ function ScheduleDesk() {
           cancelBlock={blockFor(selected)}
           onOpenOrder={selected.orderId && shop.orders.some((order) => order.id === selected.orderId) ? () => openRepairOrder(selected.orderId as string) : undefined}
           onReinstate={() => reinstate(selected.id)}
+          writeBlock={repairOrderWriterError(shop)}
         />
       ) : null}
 
@@ -432,6 +455,7 @@ function Selected({
   onReinstate,
   cancelBlock,
   onOpenOrder,
+  writeBlock,
 }: {
   row: Appointment;
   name: string;
@@ -447,6 +471,7 @@ function Selected({
   onReinstate: () => void;
   cancelBlock: string | null;
   onOpenOrder?: () => void;
+  writeBlock: string | null;
 }) {
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
@@ -468,7 +493,7 @@ function Selected({
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
         <Button small onClick={onEdit}>Edit details</Button>
-        {row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
+        {row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : writeBlock ? <p className="text-sm text-muted">{writeBlock}</p> : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>
     </div>
   );
@@ -588,7 +613,7 @@ function AppointmentFields({
         </select>
       </Field>
       <Field label="VIN">
-        <input className="field font-mono uppercase" value={vin} maxLength={17} spellCheck={false} onChange={(event) => { setVin(event.target.value.toUpperCase()); setTransferWarning(""); }} />
+        <input className="field font-mono uppercase" value={vin} spellCheck={false} onChange={(event) => { setVin(normalizeVin(event.target.value).slice(0, 17)); setTransferWarning(""); }} />
       </Field>
       {transferWarning ? (
         <div className="grid gap-2">

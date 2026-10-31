@@ -135,20 +135,20 @@ function ServiceManagersPage() {
                   <CommitField label={`${manager.name} name`} value={manager.name} className="field" onCommit={(value) => updateServiceManager(manager.id, { name: value }).ok} onReject={(message) => setError(message)} />
                 </td>
                 <td>
-                  <input className="field w-28 tabular-nums" aria-label={`${manager.name} base`} type="number" min={0} step={1} value={manager.base} onChange={(event) => {
-                    const result = updateServiceManager(manager.id, { base: Number(event.target.value) || 0 });
+                  <NumberCommit label={`${manager.name} base`} value={manager.base} className="field w-28 tabular-nums" onCommit={(value) => {
+                    const result = updateServiceManager(manager.id, { base: value });
                     setError(result.ok ? "" : result.error ?? "");
                   }} />
                 </td>
                 <td>
-                  <input className="field w-24 tabular-nums" aria-label={`${manager.name} labor percent`} type="number" min={0} step={0.1} value={manager.laborPercent} onChange={(event) => {
-                    const result = updateServiceManager(manager.id, { laborPercent: Number(event.target.value) || 0 });
+                  <NumberCommit label={`${manager.name} labor percent`} value={manager.laborPercent} className="field w-24 tabular-nums" step={0.1} onCommit={(value) => {
+                    const result = updateServiceManager(manager.id, { laborPercent: value });
                     setError(result.ok ? "" : result.error ?? "");
                   }} />
                 </td>
                 <td>
-                  <input className="field w-24 tabular-nums" aria-label={`${manager.name} parts percent`} type="number" min={0} step={0.1} value={manager.partsPercent} onChange={(event) => {
-                    const result = updateServiceManager(manager.id, { partsPercent: Number(event.target.value) || 0 });
+                  <NumberCommit label={`${manager.name} parts percent`} value={manager.partsPercent} className="field w-24 tabular-nums" step={0.1} onCommit={(value) => {
+                    const result = updateServiceManager(manager.id, { partsPercent: value });
                     setError(result.ok ? "" : result.error ?? "");
                   }} />
                 </td>
@@ -197,6 +197,35 @@ function managerChangeLine(row: RoleChange, name: string) {
   if (row.after === "removed") return `${who} removed ${name}. Was ${row.before}. ${when}`;
   if (row.after === "service-manager") return `${who} added ${name} as service manager. ${when}`;
   return `${who} changed ${name} from ${row.before} to ${row.after}. ${when}`;
+}
+
+function NumberCommit({
+  label,
+  value,
+  className,
+  step = 1,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  className: string;
+  step?: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      className={className}
+      aria-label={label}
+      type="number"
+      min={0}
+      step={step}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => onCommit(Number(draft) || 0)}
+    />
+  );
 }
 
 function CommitField({

@@ -294,7 +294,7 @@ describe("round 6", () => {
     const id = openOrder(shop);
     const shopFee = shop.getState().settings.fees.find((row) => row.basis === "percent");
     assert.ok(shopFee);
-    const before = shop.getState().orders.find((row) => row.id === id)?.history?.length ?? 0;
+    const before = shop.getState().orders.find((row) => row.id === id)?.history?.filter((row) => row.kind === "fee-changed").length ?? 0;
     shop.getState().updateFee(shopFee.id, { cap: shopFee.cap + 15 });
     const order = shop.getState().orders.find((row) => row.id === id);
     assert.equal(order?.fees.find((row) => row.id === shopFee.id)?.cap, shopFee.cap + 15);

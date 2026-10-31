@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { NewOrder } from "@/components/new-order";
 import { OrderEditor } from "@/components/order-editor";
 import { Shell } from "@/components/shell";
 import { Button, Pill } from "@/components/ui";
@@ -8,6 +7,7 @@ import { displayRecordedName, displayRecordedWhen } from "@/lib/cancel";
 import { BAY_LABEL, daySpan, monthName, roStatusLabel, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
 import { closedRecord, isAdvisorClosed, isSold, isWorkOpen, lookups, orderMoney } from "@/lib/metrics";
+import { roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
 import type { BayStatus, ClosedRecord, RepairOrder } from "@/lib/types";
 
@@ -24,7 +24,6 @@ function OrdersPage() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [writing, setWriting] = useState(false);
 
   useEffect(() => {
     if (focusOrderId) {
@@ -84,9 +83,10 @@ function OrdersPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Repair orders</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
-          <p className="mt-2 max-w-xl text-muted">{openCount} open. {closedCount} closed in {monthName()}. Book a ticket when the hours, technician, and cost are on it. An advisor closes it, and that is what counts in the month.</p>
+          <p className="mt-2 max-w-xl text-muted">{openCount} open. {closedCount} closed in {monthName()}. These repair orders reflect Dealertrack. Scheduling stays on this desk.</p>
+          {shop.dataset === "sample" ? <p className="mt-2 text-sm text-muted">Sample data — in production these come from Dealertrack.</p> : null}
+          {!roWritesEnabled() ? <p className="mt-2 text-sm text-muted">Read-only — repair orders come from Dealertrack.</p> : null}
         </div>
-        <Button tone="primary" onClick={() => setWriting(true)}>Write RO</Button>
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
@@ -215,7 +215,6 @@ function OrdersPage() {
         </div>
       </div>
       <OrderEditor orderId={openId} onClose={() => setOpenId(null)} />
-      <NewOrder open={writing} onClose={() => setWriting(false)} />
     </Shell>
   );
 }

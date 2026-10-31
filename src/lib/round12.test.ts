@@ -14,10 +14,10 @@ describe("round 12", () => {
   it("uses one transfer rule, writes nothing until the repair order exists, and retires the old copy", () => {
     const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
     shop.getState().addAdvisor({ number: "1", name: "Megan Cho", base: 4000, laborPercent: 5, partsPercent: 2 });
-    shop.getState().addTech({ number: "9", name: "Marcus Hale", skill: "a", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" });
     const megan = shop.getState().advisors[0];
-    const marcus = shop.getState().techs[0];
     shop.getState().setWorkingAs(megan.id);
+    shop.getState().addTech({ number: "9", name: "Marcus Hale", skill: "a", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" });
+    const marcus = shop.getState().techs[0];
     const helen = shop.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford", vin: vinA });
     const helenOrder = shop.getState().createOrder({
       customerId: helen.customerId,
@@ -90,7 +90,7 @@ describe("round 12", () => {
     assert.equal(log.length, 1);
     assert.equal(log[0]?.beforeVehicleId, helen.vehicleId);
     assert.equal(log[0]?.afterVehicleId, helen.vehicleId);
-    assert.match(shop.getState().orders.find((row) => row.id === opened.orderId)?.history?.[0]?.text ?? "", /Transferred VIN/);
+    assert.match(shop.getState().orders.find((row) => row.id === opened.orderId)?.history?.map((row) => row.text).join(" ") ?? "", /Transferred VIN/);
     const history = vehicleHistoryEntries(shop.getState().orders, current[0], shop.getState().customers, shop.getState().vehicles);
     assert.equal(history.some((row) => row.kind === "divider" && row.text.startsWith("New owner: Pat Newowner, since ")), true);
     assert.equal(history.some((row) => row.kind === "order" && row.ownerName === "Helen Cho"), true);
@@ -198,10 +198,11 @@ describe("round 12", () => {
     assert.equal(saved?.needsReview, false);
     assert.match(saved?.note ?? "", /No close time/);
     assert.equal(saved?.resolvedBy, "Derek Lang");
-    const resolved = shop.getState().orders.find((row) => row.id === order.id)?.history?.at(-1)?.text ?? "";
+    const resolved = shop.getState().timeLogs.find((row) => row.id === punch?.id)?.note ?? "";
     assert.match(resolved, /resolved the punch/);
     assert.match(resolved, /Ended /);
     assert.doesNotMatch(resolved, /\d{4}-\d{2}-\d{2}T/);
+    assert.equal(shop.getState().orders.find((row) => row.id === order.id)?.history?.some((row) => /resolved the punch/.test(row.text)), false);
   });
 
   it("orders visits by instant, then store, then number, independent of list order", () => {

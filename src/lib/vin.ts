@@ -20,9 +20,9 @@ const YEAR_CODE: Record<number, string> = {
   2027: "V",
 };
 
-/** Upper case, with spaces removed, before a compare or a save. */
+/** Upper case, with spaces and dashes removed, before a compare, a length check, or a save. */
 export function normalizeVin(value: string): string {
-  return value.toUpperCase().replace(/\s+/g, "");
+  return value.toUpperCase().replace(/[\s-]+/g, "");
 }
 
 export function isFullVin(value: string): boolean {
@@ -40,7 +40,18 @@ export function vinEntryError(value: unknown): string | null {
   return null;
 }
 
-/** A bad check digit warns. It does not block saving or closing. */
+/**
+ * Appointment save. Blank is allowed. Letters I, O, and Q are refused.
+ * A bad check digit does not save. Closing a repair order still only warns.
+ */
+export function vinScheduleError(value: string): string | null {
+  const entry = vinEntryError(value);
+  if (entry) return entry;
+  if (vinCheckWarning(value)) return "The VIN check digit doesn't match. Check it before you save.";
+  return null;
+}
+
+/** A bad check digit warns. It does not block saving or closing a repair order. */
 export function vinCheckWarning(value: string): string | null {
   if (vinEntryError(value) || !isFullVin(value)) return null;
   const vin = normalizeVin(value);

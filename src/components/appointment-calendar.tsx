@@ -142,6 +142,7 @@ export type ApptSummary = {
   ops: string;
   status: string;
   canWrite: boolean;
+  writeNote?: string;
 };
 
 export function AppointmentCalendar({
@@ -399,6 +400,7 @@ function HoverCard({
           <button type="button" className="btn btn-primary btn-small" onClick={() => onWrite(row.id)}>Write repair order</button>
         ) : null}
       </div>
+      {!detail.canWrite && detail.writeNote ? <p className="mt-2 text-sm text-muted">{detail.writeNote}</p> : null}
       {!detail.canWrite && row.orderId ? <p className="mt-2 text-sm text-muted">Already on a repair order.</p> : null}
     </div>
   );

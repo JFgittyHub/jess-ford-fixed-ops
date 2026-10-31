@@ -122,7 +122,7 @@ function draft(customerId: string, vehicleId: string, advisorId: string, techId:
     advisorId,
     concern: "Oil change",
     lines: [{ id: "", code: "A", concern: "Oil change" }],
-    vin: "1FTDEMO00000001AA",
+    vin: "",
     laborOpIds: [],
     techId,
     lane: "drop",

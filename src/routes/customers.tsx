@@ -1,6 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { NewOrder } from "@/components/new-order";
 import { NoShowMark } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
 import { Button, Field, Pill } from "@/components/ui";
@@ -216,9 +215,7 @@ function CustomersPage() {
                   <div className="flex flex-wrap gap-2">
                     {row.open ? (
                       <Button small onClick={() => { setFocus(row.open!.id); void navigate({ to: "/orders" }); }}>Open RO</Button>
-                    ) : (
-                      <Button small tone="primary" onClick={() => setWriting(row.customer.id)}>Write RO</Button>
-                    )}
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -246,14 +243,6 @@ function CustomersPage() {
           </ul>
         )}
       </section>
-      <NewOrder
-        open={writing !== null}
-        onClose={() => setWriting(null)}
-        preset={writing ? {
-          customerId: writing,
-          vehicleId: look.vehicle ? shop.vehicles.find((vehicle) => vehicle.customerId === writing)?.id : undefined,
-        } : undefined}
-      />
     </Shell>
   );
 }

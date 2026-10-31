@@ -388,6 +388,7 @@ function loadShop() {
       appointment("appt-mina", "mina", "mina-suv", "advisor-mina", "scheduled"),
     ],
     orders: [],
+    workingAsId: "advisor-glenn",
   });
 }
 

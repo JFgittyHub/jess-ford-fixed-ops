@@ -160,6 +160,9 @@ export function mileageOutGapMessage(mileageIn: number, mileageOut: number | nul
   return null;
 }
 
+/** Customer-facing print. Staff history keeps the mileage, the date, and the reason. */
+export const CUSTOMER_MILEAGE_OVERRIDE = "Mileage verified by service manager";
+
 export function mileageInOverrideText(entered: number, last: MileageVisit, reason: string) {
   const value = entered.toLocaleString("en-US");
   const floor = last.mileage.toLocaleString("en-US");

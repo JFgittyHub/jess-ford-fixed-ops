@@ -1,4 +1,5 @@
 import { clockTime, feeCharge, roStatusLabel, usd } from "@/lib/format";
+import { CUSTOMER_MILEAGE_OVERRIDE } from "@/lib/mileage";
 import { orderMoney, vehicleTitle } from "@/lib/metrics";
 import { customerCopyIdentity } from "@/lib/ownership";
 import { payLabel } from "@/lib/pay";
@@ -58,12 +59,12 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
         </div>
         <div>
           <h2>Vehicle</h2>
-          <p>{snap ? vehicleTitle(snap.year, snap.make, snap.model) : vehicle ? vehicleTitle(vehicle.year, vehicle.make || "Ford", vehicle.model) : "—"}</p>
+          <p>{order.status === "closed" && !snap ? "Not captured" : snap ? vehicleTitle(snap.year, snap.make, snap.model) : vehicle ? vehicleTitle(vehicle.year, vehicle.make || "Ford", vehicle.model) : "—"}</p>
           <p>{(snap?.plate || wa.plate) ? `Plate ${snap?.plate || wa.plate}` : (snap?.vin || vehicle?.vin) ? `VIN ${vinTail(snap?.vin || vehicle?.vin || "")}` : ""}</p>
           <p>In {order.mileage.toLocaleString("en-US")} miles</p>
           <p>Out {order.mileageOut != null ? `${order.mileageOut.toLocaleString("en-US")} miles` : "—"}</p>
           {(order.history ?? []).filter((row) => row.kind === "mileage-override").map((row) => (
-            <p key={`${row.at}-${row.field ?? "mileage"}`}>{row.text}</p>
+            <p key={`${row.at}-${row.field ?? "mileage"}`}>{CUSTOMER_MILEAGE_OVERRIDE}</p>
           ))}
         </div>
       </section>

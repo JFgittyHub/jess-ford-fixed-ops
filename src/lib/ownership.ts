@@ -1,7 +1,7 @@
 import { displayRecordedWhen } from "./cancel";
 import { openedInstant } from "./mileage";
 import type { Customer, OwnershipSpan, RepairOrder, Vehicle } from "./types";
-import { normalizeVin } from "./vin";
+import { isFullVin, normalizeVin } from "./vin";
 
 /** A transfer reason is required, trimmed, and kept to 500 characters. */
 export function transferReason(value: unknown): { text: string } | { error: string } {
@@ -86,11 +86,16 @@ export function vehicleHistoryEntries(orders: RepairOrder[], vehicle: Vehicle, c
   for (const order of ordersOnVin(orders, vehicles, vehicle.vin, vehicle.id)) {
     const owner = ownerName(order, customers);
     const instant = openedInstant(order);
-    const span = spans.find((row) => {
+    let span = spans.find((row) => {
       const start = Date.parse(row.startedAt);
       const end = row.endedAt ? Date.parse(row.endedAt) : Number.POSITIVE_INFINITY;
       return Number.isFinite(start) && instant >= start && instant < end;
     });
+    const ownerId = order.customerId;
+    if (ownerId && span && span.customerId !== ownerId) {
+      const owned = [...spans].reverse().find((row) => row.customerId === ownerId);
+      if (owned) span = owned;
+    }
     const key = span ? `${span.customerId}:${span.startedAt}` : owner;
     if (key !== shown) {
       if (span && span.startedAt !== firstStart) {
@@ -104,16 +109,93 @@ export function vehicleHistoryEntries(orders: RepairOrder[], vehicle: Vehicle, c
   return lines;
 }
 
+function visitInstant(orders: RepairOrder[], vehicleId: string, pick: "min" | "max") {
+  let best = pick === "min" ? Number.POSITIVE_INFINITY : 0;
+  let found = false;
+  for (const order of orders) {
+    if (order.vehicleId !== vehicleId) continue;
+    const instant = openedInstant(order);
+    if (!Number.isFinite(instant) || instant <= 0) continue;
+    found = true;
+    best = pick === "min" ? Math.min(best, instant) : Math.max(best, instant);
+  }
+  return found ? best : 0;
+}
+
+/**
+ * One current vehicle per full VIN. The latest owner stays current.
+ * Closed repair orders are returned as the same objects.
+ */
+export function mergeVinDuplicates(vehicles: Vehicle[], orders: RepairOrder[]): { vehicles: Vehicle[]; orders: RepairOrder[] } {
+  const groups = new Map<string, Vehicle[]>();
+  const kept: Vehicle[] = [];
+  for (const vehicle of vehicles) {
+    const key = normalizeVin(vehicle?.vin || "");
+    if (!vehicle || !isFullVin(key)) {
+      if (vehicle) kept.push(vehicle);
+      continue;
+    }
+    const list = groups.get(key) ?? [];
+    list.push(vehicle);
+    groups.set(key, list);
+  }
+  const redirect = new Map<string, string>();
+  for (const [vin, group] of groups) {
+    if (group.length === 1) {
+      kept.push(group[0]);
+      continue;
+    }
+    const ranked = group
+      .map((vehicle, index) => ({ vehicle, index, latest: visitInstant(orders, vehicle.id, "max") }))
+      .sort((a, b) => a.latest - b.latest || a.index - b.index);
+    const survivor = ranked[ranked.length - 1].vehicle;
+    let cursor = 0;
+    const spans: OwnershipSpan[] = ranked.map((row, index) => {
+      const earliest = visitInstant(orders, row.vehicle.id, "min") || row.latest || cursor + 1;
+      const startedAt = new Date(Math.max(earliest, cursor + 1)).toISOString();
+      cursor = Date.parse(startedAt);
+      const last = index === ranked.length - 1;
+      return {
+        customerId: row.vehicle.customerId,
+        startedAt,
+        endedAt: last ? null : new Date(cursor + 1).toISOString(),
+        who: "",
+        whoId: "",
+        reason: last ? "" : "Merged duplicate VIN on load",
+      };
+    });
+    for (let index = 0; index < spans.length - 1; index += 1) {
+      spans[index] = { ...spans[index], endedAt: spans[index + 1].startedAt };
+    }
+    kept.push({
+      ...survivor,
+      vin,
+      customerId: survivor.customerId,
+      transferredTo: undefined,
+      ownership: spans,
+    });
+    for (const row of group) {
+      if (row.id !== survivor.id) redirect.set(row.id, survivor.id);
+    }
+  }
+  if (redirect.size === 0) return { vehicles, orders };
+  const nextOrders = orders.map((order) => {
+    const nextId = redirect.get(order.vehicleId);
+    if (!nextId || order.status === "closed" || order.authorizationLocked) return order;
+    return { ...order, vehicleId: nextId };
+  });
+  return { vehicles: kept, orders: nextOrders };
+}
+
 /** Customer copy of this repair order only. A closed ticket uses its snapshot. Previous owners are not included. */
 export function customerCopyIdentity(
   order: Pick<RepairOrder, "status" | "closeSnapshot">,
   customer: Pick<Customer, "name" | "phone"> | undefined,
 ): { name: string; phone: string } {
   if (order.status === "closed") {
-    return {
-      name: order.closeSnapshot?.customerName?.trim() || "—",
-      phone: order.closeSnapshot?.phone ?? "",
-    };
+    const name = order.closeSnapshot?.customerName?.trim() || "";
+    const phone = order.closeSnapshot?.phone?.trim() || "";
+    return { name: name || "Not captured", phone: phone || "Not captured" };
   }
   return { name: customer?.name?.trim() || "—", phone: customer?.phone ?? "" };
 }
