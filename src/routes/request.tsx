@@ -16,6 +16,19 @@ const STORES: { id: StoreId; label: string }[] = [
   { id: "pullman", label: "Pullman" },
 ];
 
+function requestDeviceId() {
+  try {
+    const key = "jf-request-device";
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const next = `dev-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(key, next);
+    return next;
+  } catch {
+    return "";
+  }
+}
+
 function RequestPage() {
   const shop = useShop();
   const dataset = useShop((state) => state.dataset);
@@ -140,6 +153,7 @@ function RequestPage() {
       vin,
       note: customerNote,
       plate,
+      deviceId: requestDeviceId(),
     });
     if (!result.ok) {
       setError(result.reason === "full"
@@ -149,7 +163,7 @@ function RequestPage() {
           : result.reason === "vin"
             ? (vinScheduleError(vin) || "Enter a 17-character VIN.")
             : result.reason === "limit"
-              ? "This phone or email already has 3 requests waiting."
+              ? "This phone, email, or browser already has several requests waiting."
               : "Enter the visit details and try again.");
       return;
     }
@@ -174,7 +188,7 @@ function RequestPage() {
       <p className="mt-3 max-w-2xl text-muted">
         Pick a service, a day, a time, and waiter or drop-off. This stays a request until the shop confirms it. The menu shows labor time only.
       </p>
-      <div role="group" aria-label="Store" className="mt-4 flex flex-wrap gap-2">
+      <div role="group" aria-label="Store" className="tap-targets mt-4 flex flex-wrap gap-2">
         {STORES.map((store) => (
           <Button
             key={store.id}
@@ -262,9 +276,17 @@ function RequestPage() {
               setStep("visit");
               return;
             }
+            if (!vin.trim()) {
+              setError("Enter a 17-character VIN.");
+              return;
+            }
             const vinProblem = vinScheduleError(vin);
             if (!name.trim() || !make.trim() || !model.trim() || !plate.trim() || vinProblem) {
               setError(vinProblem || "Enter your name, make, model, VIN, and plate.");
+              return;
+            }
+            if (!phone.trim() && !email.trim()) {
+              setError("Enter a phone number or an email.");
               return;
             }
             setError("");

@@ -19,6 +19,7 @@ const day = "2027-01-06";
 describe("round 4 close rules", () => {
   it("rejects a closed status from updateOrder and does not fall back to the first advisor", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const id = blankOrder(shop);
     const before = order(shop, id).status;
     shop.getState().updateOrder(id, { status: "closed", concern: "Still here" });

@@ -54,6 +54,7 @@ describe("no-work close", () => {
 
   it("blocks parts, labor charges, tech time, a nonzero total, and a payment", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const partsId = blankOrder(shop);
     shop.getState().addPartLine(partsId, { partId: "pads", number: "BL", description: "Pad", qty: 1, cost: 1, price: 10, payType: "cp" });
     assertBlocked(shop, partsId);
@@ -121,6 +122,7 @@ describe("no-work close", () => {
 
   it("leaves month-close sales, hours, and hours per RO unchanged and counts the close", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const id = blankOrder(shop);
     const advisorId = order(shop, id).advisorId;
     const before = digest(shop.getState());

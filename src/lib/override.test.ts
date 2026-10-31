@@ -55,6 +55,7 @@ describe("capacity overrides", () => {
 
   it("writes nothing when the booking fits, including a later edit that still fits", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("jordan");
     const before = shop.getState().appointments.length;
     const saved = shop.getState().saveAdvisorAppointment(draft(shop.getState(), { minutes: 30, concern: "Oil change" }));
     assert.equal(saved.overrideId, null);
@@ -69,12 +70,14 @@ describe("capacity overrides", () => {
 
   it("does not record an override for a raw appointment save", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("jordan");
     shop.getState().addAppointment(draft(shop.getState(), { minutes: 690, concern: "Long job" }));
     assert.equal(shop.getState().overrides.length, 0);
   });
 
   it("records advisor capacity, and both sides when hours and the advisor are full", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("jordan");
     const state = shop.getState();
     for (let index = 0; index < 10; index += 1) {
       const result = state.saveAdvisorAppointment(draft(state, { time: slot(index), minutes: 30, concern: `Visit ${index}` }));

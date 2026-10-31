@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
-import { deskActor } from "@/lib/cancel";
+import { deskActor, displayRecordedWhen } from "@/lib/cancel";
 import { isLockedPath, SECTION_LOCK_HINT, SECTION_LOCK_NOTICE } from "@/lib/section-lock";
 import { shopHasOperationalData, useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
@@ -148,6 +148,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [storeNameDraft, setStoreNameDraft] = useState(settings.storeName);
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
@@ -168,6 +169,20 @@ function OpenDesk({ children }: { children: ReactNode }) {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => {
+    setStoreNameDraft(settings.storeName);
+  }, [settings.storeName]);
+
+  function commitStoreName() {
+    const next = storeNameDraft.trim();
+    const current = useShop.getState().settings.storeName;
+    if (!next || next === current) {
+      setStoreNameDraft(current);
+      return;
+    }
+    updateSettings({ storeName: next });
+  }
 
   function goBack() {
     const stack = historyRef.current;
@@ -202,7 +217,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="tap-targets flex flex-wrap items-center gap-2">
               {managers.length + advisors.length + techs.length > 0 ? (
                 <label className="flex items-center gap-2 text-xs text-muted">
                   <span className="max-w-[9.5rem] leading-snug">Working as isn't a real sign-in yet.</span>
@@ -270,18 +285,26 @@ function OpenDesk({ children }: { children: ReactNode }) {
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={(event) => {
             event.preventDefault();
+            commitStoreName();
             setOpen(false);
           }}
         >
           {!canEditSettings ? <p role="status" className="text-sm text-[#8a3b2a] sm:col-span-2">Only an advisor or service manager can change store settings.</p> : null}
           <Field label="Store name">
-            <input className="field" maxLength={80} disabled={!canEditSettings} value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
+            <input
+              className="field"
+              maxLength={80}
+              disabled={!canEditSettings}
+              value={storeNameDraft}
+              onChange={(event) => setStoreNameDraft(event.target.value)}
+              onBlur={() => commitStoreName()}
+            />
           </Field>
           <Field label="Street address">
             <input className="field" disabled={!canEditSettings} value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />
           </Field>
           <Field label="Shop phone">
-            <input className="field" disabled={!canEditSettings} value={settings.phone} onChange={(event) => updateSettings({ phone: event.target.value })} />
+            <input className="field" maxLength={20} disabled={!canEditSettings} value={settings.phone} onChange={(event) => updateSettings({ phone: event.target.value })} />
           </Field>
           <Field label="City">
             <input className="field" disabled={!canEditSettings} value={settings.city} onChange={(event) => updateSettings({ city: event.target.value })} />
@@ -329,10 +352,15 @@ function OpenDesk({ children }: { children: ReactNode }) {
                   setOpen(false);
                 }}
               >
-                {confirmClear ? "Clear shop data now" : "Clear shop data"}
+                {confirmClear ? "Clear open work now" : "Clear shop data"}
               </Button>
             ) : null}
           </div>
+          {confirmClear ? (
+            <p role="status" className="text-sm text-muted sm:col-span-2">
+              This removes open repair orders and the sample schedule. Closed repair orders, the change log, the request log, and the advisor, technician, and service manager rosters stay.
+            </p>
+          ) : null}
           {actor === "service-manager" ? (
             <section className="sm:col-span-2" aria-label="Change log">
               <h2 className="font-display text-2xl leading-none">Change log</h2>
@@ -340,10 +368,10 @@ function OpenDesk({ children }: { children: ReactNode }) {
               {settingsLog.length === 0 && requestLog.length === 0 ? <p className="mt-2 text-sm text-muted">No changes on this store yet.</p> : (
                 <ul className="mt-2 grid max-h-48 gap-1 overflow-auto text-sm">
                   {settingsLog.map((row) => (
-                    <li key={`${row.at}-${row.field}-${row.after}`}>{row.who} · {row.field} · {row.before || "blank"} → {row.after || "blank"} · {row.at}</li>
+                    <li key={`${row.at}-${row.field}-${row.after}`}>{row.who} · {row.field} · {row.before || "blank"} → {row.after || "blank"} · {displayRecordedWhen(row.at)}</li>
                   ))}
                   {requestLog.map((row) => (
-                    <li key={`${row.at}-${row.requestId}-${row.action}`}>{row.who} · {row.action} request {row.requestId} · {row.at}</li>
+                    <li key={`${row.at}-${row.requestId}-${row.action}`}>{row.who} · {row.action} request {row.requestId} · {displayRecordedWhen(row.at)}</li>
                   ))}
                 </ul>
               )}

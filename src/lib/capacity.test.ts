@@ -73,6 +73,7 @@ describe("capacity engine", () => {
     assert.equal(other.length > 0, true);
 
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const before = shop.getState().appointments.length;
     shop.getState().addAppointment(draft("10:00", 600));
     shop.getState().addAppointment(draft("10:00", 60));

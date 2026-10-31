@@ -12,6 +12,7 @@ import { fullVin } from "./vin.ts";
 describe("appointment actions", () => {
   it("books, moves, updates, and links an appointment", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const before = shop.getState().appointments.map((row) => row.id);
     const customer = shop.getState().customers[0];
     const vehicle = shop.getState().vehicles.find((row) => row.customerId === customer.id);
@@ -73,6 +74,7 @@ describe("appointment actions", () => {
 
   it("refuses to remove a tech who still has appointments until those are reassigned", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     assert.equal(
       shop.getState().addTech({
         number: "99",
@@ -106,6 +108,7 @@ describe("appointment actions", () => {
 
   it("still blocks removal when the tech is on a repair order", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const techId = "chris";
     assert.equal(shop.getState().appointments.some((row) => row.techId === techId), true);
     assert.equal(shop.getState().removeTech(techId), "used");

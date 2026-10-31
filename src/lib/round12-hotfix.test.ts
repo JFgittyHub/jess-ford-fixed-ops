@@ -144,6 +144,7 @@ describe("round 12 hotfix", () => {
 
   it("refuses a bad VIN on addAppointment and keeps spaces and dashes out of the 17 characters", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const before = shop.getState().appointments.length;
     const badDigit = `${vinA.slice(0, 8)}${vinA[8] === "0" ? "1" : "0"}${vinA.slice(9)}`;
     assert.notEqual(vinCheckDigit(badDigit), badDigit[8]);

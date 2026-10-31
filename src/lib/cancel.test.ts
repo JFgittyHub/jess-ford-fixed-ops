@@ -71,17 +71,19 @@ describe("cancel an appointment", () => {
     const saved = book(shop.getState(), "Advisor cancel");
     assert.equal(shop.getState().cancelAppointment(saved.appointmentId, { reason: "customer-request" }).ok, true);
 
+    shop.getState().setWorkingAs("megan");
+    const techVisit = book(shop.getState(), "Tech cannot cancel");
     shop.getState().setWorkingAs("marcus");
     assert.equal(deskActor(shop.getState()), "technician");
-    const techVisit = book(shop.getState(), "Tech cannot cancel");
     const refused = shop.getState().cancelAppointment(techVisit.appointmentId, { reason: "customer-request" });
     assert.equal(refused.ok, false);
     assert.match(refused.error ?? "", /advisor or service manager/);
     assert.equal(shop.getState().appointments.find((row) => row.id === techVisit.appointmentId)?.status, "scheduled");
 
+    shop.getState().setWorkingAs("megan");
+    const customerVisit = book(shop.getState(), "Customer cannot cancel");
     shop.setState({ workingAsId: "" });
     assert.equal(deskActor(shop.getState()), "customer");
-    const customerVisit = book(shop.getState(), "Customer cannot cancel");
     const customerRefused = shop.getState().cancelAppointment(customerVisit.appointmentId, { reason: "customer-request" });
     assert.equal(customerRefused.ok, false);
     assert.equal(shop.getState().appointments.find((row) => row.id === customerVisit.appointmentId)?.status, "scheduled");
@@ -292,7 +294,7 @@ describe("cancel an appointment", () => {
     assert.equal(shop.getState().overrides.length, logged + 1);
     assert.equal(shop.getState().appointments.find((row) => row.id === heavy.appointmentId)?.status, "scheduled");
 
-    shop.getState().setWorkingAs("marcus");
+    shop.getState().setWorkingAs("jordan");
     const blockedActor = book(shop.getState(), "Tech reinstate");
     shop.setState({ workingAsId: "megan" });
     assert.equal(shop.getState().cancelAppointment(blockedActor.appointmentId, { reason: "customer-request" }).ok, true);
@@ -393,6 +395,7 @@ describe("cancel an appointment", () => {
 
   it("refuses a technician or advisor who is not on the store when moving or editing", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const saved = book(shop.getState(), "Stay on this store");
     const row = shop.getState().appointments.find((item) => item.id === saved.appointmentId);
     assert.ok(row);

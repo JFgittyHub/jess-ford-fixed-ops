@@ -11,6 +11,7 @@ import type { Appointment } from "./types.ts";
 describe("No-show", () => {
   it("marks the appointment and leaves the flag on the customer at that store", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const helen = shop.getState().customers.find((row) => row.name === "Helen Cho");
     assert.ok(helen);
     const vehicle = shop.getState().vehicles.find((row) => row.customerId === helen.id);
@@ -46,6 +47,7 @@ describe("No-show", () => {
 
   it("counts a No-show saved from the appointment edit, and keeps the sample mark", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const seeded = shop.getState().appointments.find((row) => row.status === "no_show");
     assert.ok(seeded);
     const seededCustomer = shop.getState().customers.find((row) => row.id === seeded.customerId);

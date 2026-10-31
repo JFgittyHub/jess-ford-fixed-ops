@@ -38,6 +38,7 @@ describe("round 6", () => {
     assert.equal(order?.history?.some((entry) => entry.kind === "diagnosis-cleared" && entry.blocksNoWork), true);
     const again = createShopStore({ demoMode: true, storage: memoryStorage() });
     again.setState({ orders: loaded.orders ?? [], customers: loaded.customers ?? [], vehicles: loaded.vehicles ?? [], timeLogs: [] });
+    again.getState().setWorkingAs("megan");
     assert.match(again.getState().closeOrderWithNoWork(id, "Customer never arrived for work").error ?? "", /Inspection or diagnosis is recorded/);
     assert.equal(again.getState().closeOrderWithNoWork(id, "Customer never arrived for work").error?.includes(".."), false);
   });
@@ -245,6 +246,7 @@ describe("round 6", () => {
 
   it("kills the close-role, first-advisor, last-name, and removed-line gaps", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const id = openOrder(shop);
     const first = shop.getState().advisors[0];
     shop.setState({ workingAsId: "nobody" });

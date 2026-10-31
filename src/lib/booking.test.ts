@@ -32,6 +32,7 @@ describe("booking after a store switch", () => {
     assert.equal(deskSeedOnStore(next, pullman), next);
 
     const pullmanBefore = pullman.appointments.length;
+    shop.getState().setWorkingAs(pullman.advisors[0].id);
     const saved = pullman.saveAdvisorAppointment(draft(next, { concern: "Switch store brake inspection" }));
     assert.equal(saved.ok, true, saved.error ?? "");
     assert.equal(saved.error, null);
@@ -96,6 +97,7 @@ describe("booking after a store switch", () => {
     const before = pullman.appointments.length;
     const couleeBefore = pullman.stores["grand-coulee"].appointments.length;
     const overrides = pullman.overrides.length;
+    shop.getState().setWorkingAs(pullman.advisors[0].id);
 
     const both = pullman.saveAdvisorAppointment(draft(seed, { advisorId: couleeAdvisor, techId: couleeTech, concern: "Ghost both" }));
     assert.equal(both.ok, false);
@@ -136,6 +138,7 @@ describe("booking after a store switch", () => {
 
   it("says why Book it cannot save when the vehicle or the concern is missing", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const seed = deskSeedFor(shop.getState());
     const before = shop.getState().appointments.length;
     assert.equal(bookingFormBlock({ vehicleId: "", lines: [{ concern: "Oil" }] }), VEHICLE_MISSING);

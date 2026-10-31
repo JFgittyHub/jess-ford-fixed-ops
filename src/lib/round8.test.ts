@@ -278,6 +278,7 @@ describe("round 8", () => {
     const bare = live.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford" });
     assert.equal(live.getState().vehicles.find((row) => row.id === bare.vehicleId)?.vin, "");
     const demo = createShopStore({ demoMode: true, storage: memoryStorage() });
+    demo.getState().setWorkingAs("megan");
     const generated = demo.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford" });
     assert.equal(demo.getState().vehicles.find((row) => row.id === generated.vehicleId)?.vin.length, 17);
   });

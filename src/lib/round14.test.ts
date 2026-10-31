@@ -35,11 +35,19 @@ describe("round 14", () => {
     assert.equal(shop.getState().orders.length, before);
     assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Clear shop data"), false);
     shop.getState().setWorkingAs("derek");
+    const worker = shop.getState().workingAsId;
+    const closed = shop.getState().orders.filter((row) => row.status === "closed").map((row) => JSON.stringify(row));
+    const advisors = shop.getState().advisors.length;
     shop.getState().clearShop();
-    assert.equal(shop.getState().orders.length, 0);
+    assert.ok(closed.length > 0);
+    assert.deepEqual(shop.getState().orders.map((row) => JSON.stringify(row)), closed);
+    assert.equal(shop.getState().dataset, "sample");
+    assert.equal(shop.getState().advisors.length, advisors);
+    assert.equal(shop.getState().appointments.length, 0);
     assert.equal(shop.getState().settingsLog?.some((row) => row.who === "Derek Lang" && row.field === "Clear shop data"), true);
     shop.getState().resetDemo(true);
     assert.equal(shop.getState().dataset, "sample");
+    assert.equal(shop.getState().workingAsId, worker);
     assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Load sample month" && row.who === "Derek Lang"), true);
   });
 
@@ -58,16 +66,13 @@ describe("round 14", () => {
   });
 
   it("prints a closed repair order from the store header captured at close", () => {
-    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const order = shop.getState().orders.find((row) => row.status === "closed" && row.closeSnapshot?.storeName);
+    const order = useShop.getInitialState().orders.find((row) => row.closeSnapshot?.storeName === "Captured At Close");
     assert.ok(order);
-    shop.getState().setWorkingAs("megan");
-    shop.getState().updateSettings({ storeName: "Renamed Later", address: "New road", city: "Other", phone: "5550000000" });
-    useShop.setState(shop.getState());
     const html = renderToString(createElement(RepairOrderPrint, { orderId: order.id })).replace(/<!-- -->/g, "");
-    assert.match(html, new RegExp(order.closeSnapshot?.storeName ?? "Jess Ford"));
-    assert.equal(html.includes("Renamed Later"), false);
-    assert.equal(html.includes("New road"), false);
+    assert.match(html, /Captured At Close/);
+    assert.match(html, /Captured Road/);
+    assert.equal(html.includes("Jess Ford Grand Coulee"), false);
+    assert.equal(html.includes("Grand Coulee service drive"), false);
   });
 
   it("keeps vehicle history out of print and off the repair order being viewed", () => {
@@ -173,7 +178,12 @@ describe("round 14", () => {
       vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 31 }), plate: "HEAVY", appointmentId: null,
     } satisfies OnlineRequest;
     shop.setState({ onlineRequests: [request] });
-    const approved = shop.getState().approveOnlineRequest(request.id, "");
+    const held = shop.getState().approveOnlineRequest(request.id, "");
+    assert.equal(held.ok, false);
+    if (!held.ok) assert.equal(held.reason, "warning");
+    assert.equal(shop.getState().onlineRequests.find((row) => row.id === request.id)?.status, "pending");
+    assert.equal(shop.getState().overrides.length, 0);
+    const approved = shop.getState().approveOnlineRequest(request.id, "", true);
     assert.equal(approved.ok, true);
     if (approved.ok) assert.match(approved.warning ?? "", /You can still book it/);
     assert.equal(shop.getState().overrides.some((row) => row.appointmentId && row.reason === "tech-hours"), true);

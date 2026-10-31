@@ -136,6 +136,7 @@ describe("round 7", () => {
 
   it("lets a service manager log a mileage below the last visit and refuses everyone else", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const created = shop.getState().createCustomer({ name: "Helen Cho", phone: "5095550199", year: 2019, model: "F-150", make: "Ford" });
     shop.setState({
       orders: [{
@@ -321,6 +322,7 @@ describe("round 7", () => {
 
   it("does not let a new appointment rewrite an existing vehicle VIN", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const vehicle = shop.getState().vehicles[0];
     const original = vehicle.vin;
     const typed = fullVin({ prefix: "1FTEW1EP", year: 2020, plant: "A", serial: 999111 });

@@ -76,6 +76,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [cancelId, setCancelId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [requestNote, setRequestNote] = useState("");
+  const [approveGate, setApproveGate] = useState<{ id: string; linkCustomerId?: string; warning: string } | null>(null);
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
@@ -325,8 +326,14 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           canAct={actor === "advisor" || actor === "service-manager"}
           onApprove={(id, linkCustomerId) => {
             const result = shop.approveOnlineRequest(id, linkCustomerId);
+            if (!result.ok && result.reason === "warning" && result.warning) {
+              setApproveGate({ id, linkCustomerId, warning: result.warning });
+              setRequestNote("");
+              return;
+            }
+            setApproveGate(null);
             if (result.ok) {
-              setRequestNote(result.warning ?? "");
+              setRequestNote("");
               return;
             }
             setRequestNote(result.reason === "vin"
@@ -340,10 +347,20 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             setRequestNote(result.ok ? "" : "Only an advisor or service manager can approve or decline a request.");
           }}
         />
-        {requestNote && requestNote.includes("You can still book it.") ? (
-          <p role="status" className="mt-3 rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{requestNote}</p>
+        {approveGate ? (
+          <div className="mt-3 grid gap-2">
+            <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{approveGate.warning}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" onClick={() => setApproveGate(null)}>Cancel</Button>
+              <Button tone="primary" type="button" onClick={() => {
+                const result = shop.approveOnlineRequest(approveGate.id, approveGate.linkCustomerId, true);
+                setApproveGate(null);
+                setRequestNote(result.ok ? "" : "That request was not approved.");
+              }}>Override</Button>
+            </div>
+          </div>
         ) : null}
-        {requestNote && !requestNote.includes("You can still book it.") ? (
+        {requestNote ? (
           <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{requestNote}</p>
         ) : null}
         <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
@@ -608,7 +625,7 @@ function AppointmentFields({
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
   const capacity = capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
-  const alertText = formError || (owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked;
+  const alertText = transferWarning ? null : (formError || (owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
   return (
     <form
@@ -631,7 +648,7 @@ function AppointmentFields({
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsTransfer) {
           setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
-          setFormError(null);
+          setFormError(result.error ?? null);
           return;
         }
         setTransferWarning("");
@@ -685,6 +702,7 @@ function AppointmentFields({
           <Field label="Reason for the transfer">
             <input className="field" aria-label="Reason for the transfer" value={transferReason} onChange={(event) => setTransferReason(event.target.value)} />
           </Field>
+          {formError ? <p role="alert" className="text-sm text-[#8a3b2a]">{formError}</p> : null}
           <div className="flex flex-wrap gap-2">
             <Button type="button" small onClick={() => { transferRef.current = true; formRef.current?.requestSubmit(); }}>Transfer the vehicle</Button>
             <Button type="button" small onClick={() => { setTransferWarning(""); setTransferReason(""); setVin(""); }}>Fix the VIN</Button>

@@ -39,6 +39,7 @@ describe("two stores", () => {
       assert.equal(new Set(last8).size, last8.length);
     }
 
+    shop.getState().setWorkingAs(shop.getState().advisors[0].id);
     const created = shop.getState().createCustomer({ name: "Pullman Only", phone: "5553329999", year: 2021, model: "Escape" });
     assert.equal(shop.getState().customers.some((row) => row.id === created.customerId), true);
     shop.getState().switchStore("grand-coulee");
@@ -64,6 +65,7 @@ describe("two stores", () => {
     assert.equal(shop.getState().settings.scheduling.onlineMenu.every((row) => !("price" in row)), true);
 
     shop.getState().switchStore("pullman");
+    shop.getState().setWorkingAs(shop.getState().advisors[0].id);
     assert.equal(shop.getState().settings.scheduling.bookingWindow.daysAhead, 14);
     assert.equal(shop.getState().settings.scheduling.bookingWindow.minLeadHours, 0);
     assert.equal(shop.getState().settings.scheduling.hours[6]?.close, "16:00");

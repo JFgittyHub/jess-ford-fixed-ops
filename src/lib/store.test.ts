@@ -178,7 +178,7 @@ describe("shop store", () => {
       workingAsId: "derek",
     });
     shop.getState().clearShop();
-    assert.equal(shop.getState().dataset, "shop");
+    assert.equal(shop.getState().dataset, "sample");
     assert.equal(shop.getState().settings.storeName, "Coulee");
     shop.getState().resetDemo(true);
     assert.equal(shop.getState().dataset, "sample");
@@ -274,6 +274,7 @@ describe("shop store", () => {
     const seedCustomers = visit.getState().customers.map((row) => row.name);
     const seedAdvisors = visit.getState().advisors.map((row) => row.name);
 
+    visit.getState().setWorkingAs("megan");
     visit.getState().createCustomer({ name: "Helen Typed", phone: "5095550199", year: 2020, model: "F-150" });
     assert.equal(
       visit.getState().addAdvisor({ number: "9901", name: "Typed Advisor", base: 1000, laborPercent: 1, partsPercent: 1 }),
@@ -303,6 +304,7 @@ describe("shop store", () => {
     });
     backing.setItem(SHOP_STORAGE_KEY, real);
     const visit = createShopStore({ demoMode: true, storage: backing });
+    visit.getState().setWorkingAs("megan");
     visit.getState().createCustomer({ name: "Helen Typed", phone: "5095550199", year: 2020, model: "F-150" });
     await visit.persist.rehydrate();
     assert.equal(backing.getItem(SHOP_STORAGE_KEY), real);

@@ -26,12 +26,11 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
 
   if (!order) return null;
   const snap = order.closeSnapshot;
-  const closedHeader = order.status === "closed" && snap?.storeName
-    ? { storeName: snap.storeName, address: snap.storeAddress ?? "", city: snap.storeCity ?? "", phone: snap.storePhone ?? "" }
-    : null;
-  const headerName = closedHeader?.storeName || settings.storeName;
-  const headerLine = closedHeader
-    ? [closedHeader.address, closedHeader.city, closedHeader.phone].filter(Boolean).join(" · ") || closedHeader.city
+  const closed = order.status === "closed";
+  const recordedName = closed && snap?.storeName?.trim() ? snap.storeName.trim() : "";
+  const headerName = closed ? (recordedName || "Header not recorded") : settings.storeName;
+  const headerLine = closed
+    ? (recordedName ? [snap?.storeAddress, snap?.storeCity, snap?.storePhone].filter(Boolean).join(" · ") || recordedName : "Header not recorded")
     : [settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || settings.city;
   const copy = customerCopyIdentity(order, customer);
   const version = closedRows.reduce((max, row) => Math.max(max, row.version ?? 1), order.status === "closed" ? 1 : 0);

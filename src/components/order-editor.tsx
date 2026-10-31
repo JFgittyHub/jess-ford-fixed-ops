@@ -921,6 +921,8 @@ export function VehicleHistory({ vehicleId, vin, excludeOrderId }: { vehicleId: 
     ?? vehicles.find((row) => vin && normalizeVin(row.vin) === normalizeVin(vin));
   const entries = (vehicle ? vehicleHistoryEntries(orders, vehicle, customers, vehicles) : [])
     .filter((entry) => entry.kind === "divider" || entry.order.id !== excludeOrderId);
+  const spans = vehicle?.ownership ?? [];
+  const currentOwnerId = spans.find((row) => !row.endedAt)?.customerId ?? spans[spans.length - 1]?.customerId ?? "";
   return (
     <section aria-label="Vehicle history" className="no-print mt-6">
       <details>
@@ -929,8 +931,8 @@ export function VehicleHistory({ vehicleId, vin, excludeOrderId }: { vehicleId: 
           <ul className="mt-2 grid gap-1 text-sm">
             {entries.map((entry) => (
               entry.kind === "divider"
-                ? <li key={entry.text} className="mt-2 font-semibold">{entry.text}</li>
-                : <li key={entry.order.id}>RO {entry.order.number} · {entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
+                ? <li key={entry.text} className="owner-band mt-3 rounded-md border border-[#011b65] bg-[#e6e8f0] px-3 py-2 font-semibold text-[#011b65]">{entry.text}</li>
+                : <li key={entry.order.id}>RO {entry.order.number} · {currentOwnerId && entry.order.customerId !== currentOwnerId ? `Previous owner · ${entry.ownerName}` : entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
             ))}
           </ul>
         )}

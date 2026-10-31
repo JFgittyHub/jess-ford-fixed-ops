@@ -380,7 +380,7 @@ describe("desk client mount", () => {
   });
 
   it("accepts and declines a pending request from the appointments calendar", async () => {
-    deskState(createSeed());
+    deskState({ ...createSeed(), workingAsId: "megan" });
     const state = useShop.getState();
     const customer = state.customers[0];
     const vehicle = state.vehicles.find((row) => row.customerId === customer.id);
