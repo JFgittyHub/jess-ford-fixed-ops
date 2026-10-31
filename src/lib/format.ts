@@ -86,9 +86,20 @@ export function shortDate(iso: string) {
   return `${Number(m)}/${Number(d)}`;
 }
 
-export function punchHours(startedAt: string, endedAt: string | null, now = Date.now()) {
+/** A flagged punch stops at the repair order's close time, or at its start when there is no close time. */
+export function reviewCap(row: { startedAt: string; endedAt: string | null; needsReview?: boolean }, closedAt?: string | null): string | null {
+  if (row.endedAt || !row.needsReview) return null;
+  if (closedAt && Number.isFinite(Date.parse(closedAt)) && Date.parse(closedAt) >= Date.parse(row.startedAt)) return closedAt;
+  return row.startedAt;
+}
+
+export function punchHours(startedAt: string, endedAt: string | null, now = Date.now(), capAt?: string | null) {
   const start = new Date(startedAt).getTime();
-  const end = endedAt ? new Date(endedAt).getTime() : now;
+  let end = endedAt ? new Date(endedAt).getTime() : now;
+  if (capAt) {
+    const cap = new Date(capAt).getTime();
+    if (Number.isFinite(cap)) end = Math.min(end, cap);
+  }
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
   return (end - start) / 3_600_000;
 }
@@ -125,8 +136,17 @@ export const STATUS_LABEL = {
   parts: "Waiting parts",
   ready: "Ready",
   booked: "Booked",
-  invoiced: "Invoiced",
+  closed: "Closed",
 } as const;
+
+/** Badge label. Work steps stay Open. A no-work close is named on its own. */
+export function roStatusLabel(order: { status: string; closeType?: string | null }) {
+  if (order.status === "closed" && order.closeType === "no_work") return "Closed — no work ($0)";
+  if (order.status === "closed") return "Closed";
+  if (order.status === "booked") return "Booked";
+  if (order.status === "open" || order.status === "working" || order.status === "parts" || order.status === "ready") return "Open";
+  return "Open";
+}
 
 export const BAY_LABEL = {
   lot: "On the lot",
@@ -142,7 +162,7 @@ export const BAY_LABEL = {
 export function bayFromStatus(status: string) {
   if (status === "working") return "working" as const;
   if (status === "parts") return "parts" as const;
-  if (status === "ready" || status === "invoiced") return "ready" as const;
+  if (status === "ready" || status === "booked" || status === "closed") return "ready" as const;
   return "dispatch" as const;
 }
 

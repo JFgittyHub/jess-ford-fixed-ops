@@ -211,8 +211,10 @@ function freshParty(input: {
 }
 
 function vehicleFromRequest(id: string, customerId: string, request: OnlineRequest): Vehicle {
-  const model = [request.make, request.model].filter(Boolean).join(" ") || request.model || "Vehicle";
-  return { id, customerId, year: request.year || 2020, model, vin: request.vin };
+  const make = request.make?.trim() || "Ford";
+  let model = request.model?.trim() || "Vehicle";
+  if (model.toLowerCase().startsWith(`${make.toLowerCase()} `)) model = model.slice(make.length).trim() || "Vehicle";
+  return { id, customerId, year: request.year || 2020, make, model, vin: request.vin };
 }
 
 function vehicleByVin(customerId: string, vehicles: Vehicle[], vin: string): Vehicle | undefined {

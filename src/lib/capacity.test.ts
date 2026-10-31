@@ -6,6 +6,7 @@ import {
   assessAppointment,
   evaluateCapacity,
   onlineSlots,
+  overrideReason,
   type CapacityLoad,
 } from "./capacity.ts";
 import { defaultScheduling } from "./scheduling.ts";
@@ -122,7 +123,10 @@ describe("capacity engine", () => {
 
     const stranger = propose(coulee, [], { techId: "holly", laborHours: 0.5 });
     assert.equal(stranger.open, false);
-    assert.match(stranger.warning ?? "", /isn't on this store/);
+    assert.equal(stranger.warning, null);
+    assert.match(stranger.blocked ?? "", /isn't on this store/);
+    assert.equal(advisorBookingNote(stranger)?.includes("You can still book it"), false);
+    assert.equal(overrideReason(stranger), null);
 
     const couleeMenu = menu(coulee, "gc-oil", 6);
     const pullmanMenu = menu(pullman, "pl-oil", 6);

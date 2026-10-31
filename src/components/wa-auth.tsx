@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { usd } from "@/lib/format";
 import { orderMoney } from "@/lib/metrics";
+import { roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
+import { vehicleTitle } from "@/lib/metrics";
 import { normalizeWa, vinTail, waLimit, type WaChoice } from "@/lib/wa";
 import { Button, Field } from "./ui";
 
@@ -23,7 +25,7 @@ export function WaAuth({ orderId }: { orderId: string }) {
   const [extra, setExtra] = useState({ date: "", time: "", employee: "", person: "", phone: "", work: "", amount: "" });
 
   if (!order) return null;
-  const locked = order.status === "invoiced";
+  const locked = order.status === "closed" || Boolean(order.authorizationLocked) || !roWritesEnabled();
   const wa = normalizeWa(order.wa);
   const money = orderMoney(order);
   const limit = waLimit(wa);
@@ -31,11 +33,19 @@ export function WaAuth({ orderId }: { orderId: string }) {
   const over = ready && money.ticket > (limit as number) + 0.009;
   const customer = customers.find((row) => row.id === order.customerId);
   const vehicle = vehicles.find((row) => row.id === order.vehicleId);
+  const snap = locked ? order.closeSnapshot : undefined;
+  const copyName = snap?.customerName || customer?.name;
+  const copyPhone = snap?.phone || customer?.phone;
+  const copyVin = snap?.vin || vehicle?.vin || "";
+  const copyYear = snap?.year || vehicle?.year || "";
+  const copyMake = snap?.make || vehicle?.make || "Ford";
+  const copyModel = snap?.model || vehicle?.model || "";
   const advisor = advisors.find((row) => row.id === order.advisorId);
 
   return (
     <section className="mt-4 card">
       <h3 className="font-display text-2xl leading-none">Washington authorization</h3>
+      {wa.choice ? null : <p className="mt-2 text-sm">Not captured</p>}
       <p className="mt-2 text-sm">
         You are entitled to a written price estimate for the repairs you have authorized. You are also entitled to require the repair facility to obtain your oral or written authorization to exceed the written price estimate. Your initials indicate your selection.
       </p>
@@ -62,7 +72,8 @@ export function WaAuth({ orderId }: { orderId: string }) {
           <input className="field" disabled={locked} value={wa.initials} onChange={(event) => updateWa(order.id, { initials: event.target.value })} />
         </Field>
         <Field label="Customer address">
-          <input className="field" disabled={locked} value={wa.address} onChange={(event) => updateWa(order.id, { address: event.target.value })} />
+          <input className="field" readOnly disabled={locked} aria-readonly="true" value={wa.address} />
+          <p className="text-sm text-muted">Same as the address on this repair order.</p>
         </Field>
         <Field label="Date">
           <input className="field" disabled={locked} type="date" value={wa.date} onChange={(event) => updateWa(order.id, { date: event.target.value })} />
@@ -145,8 +156,8 @@ export function WaAuth({ orderId }: { orderId: string }) {
         </div>
         <p className="mt-2 text-sm">{settings.storeName}</p>
         <p className="text-sm text-muted">{[settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || "Add the street and phone in Settings. The invoice has to show them."}</p>
-        <p className="mt-2 text-sm">{customer?.name} · {customer?.phone}{wa.address ? ` · ${wa.address}` : ""}</p>
-        <p className="text-sm">{vehicle ? `${vehicle.year} Ford ${vehicle.model}` : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : vehicle ? `VIN ${vinTail(vehicle.vin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
+        <p className="mt-2 text-sm">{copyName} · {copyPhone}{wa.address ? ` · ${wa.address}` : ""}</p>
+        <p className="text-sm">{copyModel ? vehicleTitle(copyYear, copyMake, copyModel) : "Vehicle"} · {wa.plate ? `Plate ${wa.plate}` : copyVin ? `VIN ${vinTail(copyVin)}` : "No vehicle id"} · {order.mileage.toLocaleString("en-US")} mi</p>
         <p className="mt-2 text-sm">{order.jobs.map((job) => `${job.code}. ${job.concern}`).join(" · ")}</p>
         <p className="mt-2 text-sm">Labor {usd(money.labor)} · Parts {usd(money.parts)} · Total before tax {usd(money.ticket)}</p>
         <ul className="mt-1 text-sm text-muted">

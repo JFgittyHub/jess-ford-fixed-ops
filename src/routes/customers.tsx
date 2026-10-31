@@ -1,15 +1,17 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { guardLocked } from "@/lib/locked-route";
 import { useMemo, useState } from "react";
-import { NewOrder } from "@/components/new-order";
 import { NoShowMark } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
 import { Button, Field, Pill } from "@/components/ui";
+import { displayRecordedWhen } from "@/lib/cancel";
+import { vehicleHistoryEntries } from "@/lib/ownership";
 import { daySpan, today } from "@/lib/format";
 import { isSold, lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { Campaign } from "@/lib/types";
 
-export const Route = createFileRoute("/customers")({ component: CustomersPage });
+export const Route = createFileRoute("/customers")({ component: guardLocked(CustomersPage) });
 
 const AUDIENCES: { id: Campaign["audience"]; label: string }[] = [
   { id: "due7", label: "Not seen in 7 days" },
@@ -41,7 +43,7 @@ function CustomersPage() {
       const orders = shop.orders.filter((order) => order.customerId === customer.id);
       const sold = orders.filter(isSold);
       const last = orders.reduce<string>((max, order) => (order.openedOn > max ? order.openedOn : max), "");
-      const open = orders.find((order) => order.status !== "invoiced");
+      const open = orders.find((order) => order.status !== "closed");
       const age = last ? daySpan(last) : 999;
       return { customer, vehicles, visits: sold.length, last, age, open };
     });
@@ -166,7 +168,7 @@ function CustomersPage() {
               <tr key={row.customer.id}>
                 <td>
                   <span className="flex flex-wrap items-baseline gap-2 font-semibold">
-                    {row.customer.name}
+                    {row.customer.name}{row.customer.formerRecord ? " · former record" : ""}
                     <NoShowMark count={row.customer.noShows} />
                   </span>
                   <span className="text-sm text-muted">{row.customer.phone}</span>
@@ -180,6 +182,27 @@ function CustomersPage() {
                     <span key={vehicle.id} className="block">
                       {vehicle.year} Ford {vehicle.model}
                       <span className="block font-mono text-xs text-muted">{vehicle.vin}</span>
+                      {(vehicle.ownership ?? []).map((span) => {
+                        const person = shop.customers.find((customer) => customer.id === span.customerId);
+                        return (
+                          <span key={`${vehicle.id}-${span.startedAt}`} className="block text-xs text-muted">
+                            {span.endedAt ? "Previous owner" : "Owner"}: {person?.name ?? span.customerId}
+                            {person?.phone ? ` · ${person.phone}` : ""}
+                            {" · "}{displayRecordedWhen(span.startedAt)}
+                            {span.endedAt ? ` to ${displayRecordedWhen(span.endedAt)}` : ""}
+                            {span.who ? ` · recorded by ${span.who}` : ""}
+                            {span.reason ? ` · ${span.reason}` : ""}
+                          </span>
+                        );
+                      })}
+                      <p className="mt-1 text-xs font-semibold">Service history</p>
+                      <ul className="grid gap-1 text-xs">
+                        {vehicleHistoryEntries(shop.orders, vehicle, shop.customers, shop.vehicles).map((entry) => (
+                          entry.kind === "divider"
+                            ? <li key={entry.text} className="font-semibold text-ink">{entry.text}</li>
+                            : <li key={entry.order.id}>RO {entry.order.number} · {entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
+                        ))}
+                      </ul>
                     </span>
                   ))}
                 </td>
@@ -193,9 +216,7 @@ function CustomersPage() {
                   <div className="flex flex-wrap gap-2">
                     {row.open ? (
                       <Button small onClick={() => { setFocus(row.open!.id); void navigate({ to: "/orders" }); }}>Open RO</Button>
-                    ) : (
-                      <Button small tone="primary" onClick={() => setWriting(row.customer.id)}>Write RO</Button>
-                    )}
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -205,14 +226,24 @@ function CustomersPage() {
         </table>
       </div>
       <p className="mt-2 text-sm text-muted">Showing {Math.min(40, rows.length)} of {rows.length}.</p>
-      <NewOrder
-        open={writing !== null}
-        onClose={() => setWriting(null)}
-        preset={writing ? {
-          customerId: writing,
-          vehicleId: look.vehicle ? shop.vehicles.find((vehicle) => vehicle.customerId === writing)?.id : undefined,
-        } : undefined}
-      />
+      <section className="mt-4">
+        <h2 className="font-display text-2xl leading-none">Ownership changes</h2>
+        {(shop.ownershipLog ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">No vehicle transfers on this store.</p> : (
+          <ul className="mt-2 grid gap-1 text-sm">
+            {(shop.ownershipLog ?? []).map((row) => {
+              const from = shop.customers.find((customer) => customer.id === row.beforeCustomerId)?.name ?? "the previous owner";
+              const to = shop.customers.find((customer) => customer.id === row.afterCustomerId)?.name ?? "the new owner";
+              const vehicle = shop.vehicles.find((item) => item.id === row.afterVehicleId)
+                ?? shop.vehicles.find((item) => item.id === row.beforeVehicleId)
+                ?? shop.vehicles.find((item) => item.vin && row.vin && item.vin.toUpperCase() === row.vin.toUpperCase());
+              const vin = (vehicle?.vin || row.vin || "").replace(/\s/g, "").toUpperCase();
+              const tail = vin.length >= 8 ? vin.slice(-8) : vin;
+              const title = vehicle ? `${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : "Vehicle";
+              return <li key={`${row.at}-${row.beforeVehicleId}-${row.afterVehicleId}`}>{row.who || "Unnamed"} transferred {title}{tail ? ` · ${tail}` : ""} from {from} to {to}.{row.reason ? ` ${row.reason}.` : ""} {displayRecordedWhen(row.at)}</li>;
+            })}
+          </ul>
+        )}
+      </section>
     </Shell>
   );
 }

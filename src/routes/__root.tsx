@@ -3,6 +3,17 @@ import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
+function DeskApp() {
+  return (
+    <>
+      <PreviewHostBridge />
+      <AuthProvider>
+        <Outlet />
+      </AuthProvider>
+    </>
+  );
+}
+
 const APP_NAME = "Jess Ford";
 
 export const Route = createRootRoute({
@@ -27,18 +38,20 @@ export const Route = createRootRoute({
       { rel: "apple-touch-icon", href: "/__grok/icon-180.png" },
     ],
   }),
-  component: () => (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <PreviewHostBridge />
-        <AuthProvider>
-          <Outlet />
-        </AuthProvider>
-        <Scripts />
-      </body>
-    </html>
-  ),
+  component: () => {
+    // Client-mount tests render into a div. The browser and the production
+    // document still get the html shell.
+    if ((globalThis as { __JF_SHELL_MOUNT__?: boolean }).__JF_SHELL_MOUNT__) return <DeskApp />;
+    return (
+      <html lang="en" suppressHydrationWarning>
+        <head>
+          <HeadContent />
+        </head>
+        <body>
+          <DeskApp />
+          <Scripts />
+        </body>
+      </html>
+    );
+  },
 });

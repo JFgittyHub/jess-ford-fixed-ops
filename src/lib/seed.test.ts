@@ -37,11 +37,14 @@ describe("shop sample data", () => {
     assert.equal(shop.orders.find((order) => order.id === "open-ruth")?.openedOn, "2026-10-17");
     assert.equal(shop.parts.find((part) => part.id === "oil")?.lastSale, "2026-10-17");
     assert.equal(shop.parts.find((part) => part.id === "purge")?.lastSale, "2026-09-02");
-    const closed = shop.orders.filter((order) => order.status === "invoiced");
+    const closed = shop.orders.filter((order) => order.status === "closed");
     assert.ok(closed.length > 0);
     for (const order of closed) {
       assert.equal(order.invoicedOn?.slice(0, 7), "2026-10");
       assert.ok((order.invoicedOn ?? "") < today);
+      assert.equal(order.closedBy ?? "", "");
+      assert.equal(order.closedAt ?? null, null);
+      assert.notEqual(order.closeType, "no_work");
     }
     assert.ok(shop.expenses.length > 0);
     for (const row of shop.expenses) {
@@ -58,7 +61,7 @@ describe("shop sample data", () => {
     assert.equal(shop.orders.find((order) => order.id === "open-ruth")?.openedOn, "2026-01-30");
     assert.equal(shop.parts.find((part) => part.id === "purge")?.lastSale, "2025-12-16");
     assert.equal(
-      shop.orders.some((order) => order.status === "invoiced"),
+      shop.orders.some((order) => order.status === "closed"),
       false,
     );
     assert.equal(shop.expenses.length, 0);

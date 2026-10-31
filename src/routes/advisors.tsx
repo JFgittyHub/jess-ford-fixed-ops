@@ -1,12 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button, Field } from "@/components/ui";
+import { displayRecordedWhen } from "@/lib/cancel";
 import { dayOfMonth, daysInMonth, usd } from "@/lib/format";
 import { isSold, orderMoney } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/advisors")({ component: AdvisorsPage });
+export const Route = createFileRoute("/advisors")({ component: guardLocked(AdvisorsPage) });
 
 function AdvisorsPage() {
   const shop = useShop();
@@ -108,7 +110,7 @@ function AdvisorsPage() {
                 <td>
                   <Button small onClick={() => {
                     const result = removeAdvisor(advisor.id);
-                    setError(result === "ok" ? "" : `${advisor.name} is still on a repair order or appointment.`);
+                    setError(result === "ok" ? "" : result === "role" ? "Only a service manager can remove an advisor." : `${advisor.name} is still on a repair order or appointment.`);
                   }}>Remove</Button>
                 </td>
               </tr>
@@ -116,11 +118,33 @@ function AdvisorsPage() {
           </tbody>
         </table>
       </div>
+      <section className="mt-4">
+        <h2 className="font-display text-2xl leading-none">Role changes</h2>
+        {(shop.roleLog ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">No role changes on this store.</p> : (
+          <ul className="mt-2 grid gap-1 text-sm">
+            {(shop.roleLog ?? []).map((row) => {
+              const named = row.advisorName || shop.advisors.find((advisor) => advisor.id === row.advisorId)?.name;
+              const when = displayRecordedWhen(row.at);
+              const subject = named ?? row.advisorId;
+              const line = row.after === "removed"
+                ? `${row.who || "Unnamed"} removed ${subject}.`
+                : row.after === "service-manager"
+                  ? `${row.who || "Unnamed"} made ${subject} service manager.`
+                  : row.before === "service-manager"
+                    ? `${row.who || "Unnamed"} changed ${subject} from service manager to advisor.`
+                    : named
+                      ? `${row.who || "Unnamed"} changed ${subject} from ${row.before} to ${row.after}.`
+                      : `${row.who || "Unnamed"} renamed ${row.before} to ${row.after}.`;
+              return <li key={`${row.at}-${row.advisorId}-${row.after}`}>{line} {when}</li>;
+            })}
+          </ul>
+        )}
+      </section>
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {shop.advisors.map((advisor) => {
           const mine = sold.filter((order) => order.advisorId === advisor.id);
-          const openCount = shop.orders.filter((order) => order.advisorId === advisor.id && order.status !== "invoiced").length;
+          const openCount = shop.orders.filter((order) => order.advisorId === advisor.id && order.status !== "closed").length;
           const laborSales = mine.reduce((sum, order) => sum + orderMoney(order).labor, 0);
           const partsSales = mine.reduce((sum, order) => sum + orderMoney(order).parts, 0);
           const basePay = advisor.base * pace;
@@ -129,7 +153,7 @@ function AdvisorsPage() {
           return (
             <article key={advisor.id} className="card">
               <h2 className="font-display text-3xl leading-none">#{advisor.number} {advisor.name}</h2>
-              <p className="mt-1 text-sm text-muted">{mine.length} invoiced · {openCount} still open</p>
+              <p className="mt-1 text-sm text-muted">{mine.length} closed · {openCount} still open</p>
               <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
                 <div><dt className="text-muted">Labor sales</dt><dd className="tabular-nums font-semibold">{usd(laborSales)}</dd></div>
                 <div><dt className="text-muted">Parts sales</dt><dd className="tabular-nums font-semibold">{usd(partsSales)}</dd></div>

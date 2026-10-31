@@ -1,18 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { NewOrder } from "@/components/new-order";
 import { OrderEditor } from "@/components/order-editor";
 import { Shell } from "@/components/shell";
 import { Button, Pill } from "@/components/ui";
-import { BAY_LABEL, daySpan, monthName, STATUS_LABEL, usd } from "@/lib/format";
+import { displayRecordedName, displayRecordedWhen } from "@/lib/cancel";
+import { BAY_LABEL, daySpan, monthName, roStatusLabel, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
-import { isOpen, isSold, lookups, orderMoney } from "@/lib/metrics";
+import { closedRecord, isAdvisorClosed, isSold, isWorkOpen, lookups, orderMoney } from "@/lib/metrics";
+import { roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
-import type { BayStatus, ClosedRecord, RepairOrder, RoStatus } from "@/lib/types";
+import type { BayStatus, ClosedRecord, RepairOrder } from "@/lib/types";
 
 export const Route = createFileRoute("/orders")({ component: OrdersPage });
 
-type Filter = "open" | "booked" | "sold" | "closed" | "all";
+type Filter = "open" | "booked" | "closed" | "all";
 
 function OrdersPage() {
   const shop = useShop();
@@ -23,7 +24,6 @@ function OrdersPage() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [writing, setWriting] = useState(false);
 
   useEffect(() => {
     if (focusOrderId) {
@@ -35,10 +35,9 @@ function OrdersPage() {
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return shop.orders.filter((order) => {
-      if (filter === "open" && (!isOpen(order) || order.status === "booked")) return false;
+      if (filter === "open" && !isWorkOpen(order)) return false;
       if (filter === "booked" && order.status !== "booked") return false;
-      if (filter === "sold" && !isSold(order)) return false;
-      if (filter === "closed" && order.status !== "invoiced") return false;
+      if (filter === "closed" && !isAdvisorClosed(order)) return false;
       if (!q) return true;
       const customer = look.customer.get(order.customerId);
       const vehicle = look.vehicle.get(order.vehicleId);
@@ -52,10 +51,17 @@ function OrdersPage() {
   const history = useMemo(() => {
     const q = query.trim().toLowerCase();
     const digits = q.replace(/\D/g, "");
-    return shop.closedHistory.filter((row) => {
-      return matchesHistory(row, q, digits);
-    }).sort((a, b) => b.closedOn.localeCompare(a.closedOn) || b.number - a.number);
-  }, [shop.closedHistory, query]);
+    const live = new Map(shop.orders.map((order) => [order.id, order]));
+    const fromLive = shop.orders.filter(isAdvisorClosed).map((order) => {
+      const saved = shop.closedHistory.find((row) => row.orderId === order.id);
+      return saved ?? closedRecord(order, look.customer.get(order.customerId), look.vehicle.get(order.vehicleId));
+    });
+    const orphans = shop.closedHistory.filter((row) => {
+      const current = live.get(row.orderId);
+      return !current;
+    });
+    return [...fromLive, ...orphans].filter((row) => matchesHistory(row, q, digits)).sort((a, b) => b.closedOn.localeCompare(a.closedOn) || b.number - a.number);
+  }, [shop.orders, shop.closedHistory, query, look]);
 
   const listed = useMemo(() => {
     if (filter !== "closed") return rows;
@@ -68,8 +74,8 @@ function OrdersPage() {
   const safePage = Math.min(page, pageCount - 1);
   const visible = listed.slice(safePage * pageSize, safePage * pageSize + pageSize);
   const visibleHistory = history.slice(safePage * pageSize, safePage * pageSize + pageSize);
-  const openCount = shop.orders.filter((order) => isOpen(order) && order.status !== "booked").length;
-  const soldCount = shop.orders.filter(isSold).length;
+  const openCount = shop.orders.filter(isWorkOpen).length;
+  const closedCount = shop.orders.filter(isSold).length;
 
   return (
     <Shell>
@@ -77,15 +83,16 @@ function OrdersPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Repair orders</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
-          <p className="mt-2 max-w-xl text-muted">{openCount} open. {soldCount} closed in {monthName()}. Book a ticket when it is ready, then close it. Close is what moves absorption.</p>
+          <p className="mt-2 max-w-xl text-muted">{openCount} open. {closedCount} closed in {monthName()}. These repair orders reflect Dealertrack. Scheduling stays on this desk.</p>
+          {shop.dataset === "sample" ? <p className="mt-2 text-sm text-muted">Sample data — in production these come from Dealertrack.</p> : null}
+          {!roWritesEnabled() ? <p className="mt-2 text-sm text-muted">Read-only — repair orders come from Dealertrack.</p> : null}
         </div>
-        <Button tone="primary" onClick={() => setWriting(true)}>Write RO</Button>
       </div>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {(["open", "booked", "sold", "closed", "all"] as const).map((item) => (
+        {(["open", "booked", "closed", "all"] as const).map((item) => (
           <Button key={item} small tone={filter === item ? "primary" : "ghost"} onClick={() => { setFilter(item); setPage(0); }}>
-            {item === "open" ? "Open" : item === "booked" ? "Booked" : item === "sold" ? "Invoiced" : item === "closed" ? "Closed" : "All"}
+            {item === "open" ? "Open" : item === "booked" ? "Booked" : item === "closed" ? "Closed" : "All"}
           </Button>
         ))}
         <input
@@ -143,7 +150,17 @@ function OrdersPage() {
             {filter === "closed" ? visibleHistory.map((row) => (
               <tr key={row.id} className="clickable" onClick={() => setOpenId(row.orderId)}>
                 <td className="tabular-nums font-semibold">{row.number}</td>
-                <td className="tabular-nums">{row.closedOn}</td>
+                <td className="tabular-nums">
+                  {row.closeType === "no_work" ? (
+                    <>
+                      <span className="block font-semibold">Closed — no work ($0)</span>
+                      <span className="block">{row.closedOn}</span>
+                      {row.closeNote ? <span className="block text-sm text-muted">{row.closeNote}</span> : null}
+                      {row.droppedFeesNote ? <span className="block text-sm text-muted">{row.droppedFeesNote}</span> : null}
+                      <span className="block text-sm text-muted">{displayRecordedName(row.closedBy)} · {displayRecordedWhen(row.closedAt)}</span>
+                    </>
+                  ) : row.closedOn}
+                </td>
                 <td>
                   <span className="block font-semibold">{row.customerName}</span>
                   <span className="block text-sm text-muted">{row.vehicle}</span>
@@ -181,7 +198,7 @@ function OrdersPage() {
                       ? <span className="text-muted">—</span>
                       : order.labor.map((line) => line.opcode).join(", ")}
                   </td>
-                  <td><Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "invoiced" ? "good" : undefined}>{STATUS_LABEL[order.status as RoStatus]}</Pill></td>
+                  <td><Pill tone={order.status === "parts" ? "bad" : order.status === "ready" || order.status === "booked" || order.status === "closed" ? "good" : undefined}>{roStatusLabel(order)}</Pill></td>
                   <td><MpiCell order={order} /></td>
                   <td className="tabular-nums">{usd(money.total)}</td>
                 </tr>
@@ -198,7 +215,6 @@ function OrdersPage() {
         </div>
       </div>
       <OrderEditor orderId={openId} onClose={() => setOpenId(null)} />
-      <NewOrder open={writing} onClose={() => setWriting(false)} />
     </Shell>
   );
 }

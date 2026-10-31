@@ -7,12 +7,39 @@ export type WeekdayIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
 export type PayType = string;
 export type PayKind = "customer" | "warranty" | "internal";
-export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "invoiced";
+/** Open work steps (`working`, `parts`, `ready`) are sub-states of Open. Booked still has the car open. Closed is an advisor close. */
+export type RoStatus = "open" | "working" | "parts" | "ready" | "booked" | "closed";
+/** A $0 close with no work on the ticket. A normal advisor close leaves this empty. */
+export type RoCloseType = "no_work";
+
+/** A line taken off a repair order, a close, or a logged change. Who is empty until someone is recorded. Entries are append-only. */
+export interface RoHistoryEntry {
+  at: string;
+  who: string;
+  whoId: string;
+  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed" | "reopened" | "amended" | "job-removed" | "diagnosis-cleared" | "fee-changed" | "mileage-override" | "note";
+  text: string;
+  /** Which field changed, when this entry is an amendment. */
+  field?: string;
+  before?: string;
+  after?: string;
+  reason?: string;
+  /** A removal or cleared diagnosis that happened after work started. Blocks a no-work close. */
+  blocksNoWork?: boolean;
+}
+
+export interface RoPayment {
+  id: string;
+  amount: number;
+  takenAt: string;
+}
 export type BayStatus = "lot" | "dispatch" | "bay" | "working" | "parts" | "qc" | "wash" | "ready";
 export type PayStyle = "flat" | "hourly";
 export type Skill = "master" | "a" | "b" | "diesel" | "express" | "quick";
 export type TechBoard = "express" | "main" | "internal" | "none";
-export type ApptStatus = "scheduled" | "arrived" | "no_show" | "in_shop";
+export type ApptStatus = "scheduled" | "arrived" | "no_show" | "in_shop" | "cancelled";
+/** Why an advisor or service manager cancelled a visit. `other` needs a note. */
+export type CancelReason = "customer-request" | "rescheduled" | "vehicle-gone" | "duplicate" | "other";
 /** Transport option id. Older appointments used express and loaner; those load as waiter and drop. */
 export type Lane = string;
 export type Department = "service" | "parts";
@@ -84,6 +111,20 @@ export interface Advisor {
   base: number;
   laborPercent: number;
   partsPercent: number;
+  /** Kept for older saves. A service manager is a separate roster record, not a role on an advisor. */
+  role?: "advisor" | "service-manager";
+}
+
+/** Pay and identity for a service manager. Same kind of record as an advisor. */
+export interface ServiceManager {
+  id: string;
+  number: string;
+  name: string;
+  base: number;
+  laborPercent: number;
+  partsPercent: number;
+  /** The last active service manager cannot be removed or deactivated. */
+  active: boolean;
 }
 
 export interface Tech {
@@ -113,14 +154,37 @@ export interface Customer {
   email: string;
   /** Appointments an advisor has marked No-show. Stays on the record for the next visit. */
   noShows: number;
+  /** Set when this customer was copied so a Closed repair order can keep the old record. */
+  formerRecord?: string;
 }
 
 export interface Vehicle {
   id: string;
   customerId: string;
   year: number;
+  /** Stored make. Ford is the default when a vehicle is created. Close checks this value. */
+  make: string;
   model: string;
   vin: string;
+  /**
+   * Append-only owner timeline. A transfer closes the open span and adds the next one.
+   * Spans are not edited after they are written.
+   */
+  ownership?: OwnershipSpan[];
+  /** Older saves. A transfer no longer copies the vehicle. New repair orders use the current owner. */
+  transferredTo?: string;
+}
+
+/** One owner of a vehicle, from startedAt until endedAt. The open span has no end. */
+export interface OwnershipSpan {
+  customerId: string;
+  /** Shop instant, ISO. */
+  startedAt: string;
+  /** Shop instant, ISO. Empty while this is the current owner. */
+  endedAt: string | null;
+  who: string;
+  whoId: string;
+  reason: string;
 }
 
 export interface PartSku {
@@ -144,6 +208,8 @@ export interface LaborLine {
   rate: number;
   payType: PayType;
   techId: string;
+  /** Which job line this labor belongs to. Close refuses labor that is not on a line. */
+  jobId?: string;
 }
 
 export interface LaborOp {
@@ -171,12 +237,16 @@ export interface PartLine {
   price: number;
   payType: PayType;
   condition?: "new" | "rebuilt" | "used";
+  /** Which job line this part belongs to. Close refuses a part that is not on a line. */
+  jobId?: string;
 }
 
 export interface RepairOrder {
   id: string;
   number: number;
   openedOn: string;
+  /** When the repair order was opened. Mileage compares this, not the calendar date. */
+  openedAt?: string;
   promiseTime: string;
   status: RoStatus;
   bay: BayStatus;
@@ -191,16 +261,76 @@ export interface RepairOrder {
   taxRate: number;
   labor: LaborLine[];
   parts: PartLine[];
+  /** Shop date of the close. Kept so month totals can find the day. */
   invoicedOn: string | null;
   stockApplied: boolean;
   inspection: MultiPoint | null;
   wa?: WaRecord;
+  /** Set when the ticket is closed. Missing on older open tickets. */
+  closeType?: RoCloseType | null;
+  /** Why the repair order was closed. Required on every close. */
+  closeNote?: string;
+  /** Who closed the repair order. Empty until an advisor closes it. Never the word Unknown. */
+  closedBy?: string;
+  closedById?: string;
+  /** ISO time of the close. Empty until an advisor closes it. */
+  closedAt?: string | null;
+  /** Default fees a no-work close removed, listed for the history row. */
+  droppedFeesNote?: string;
+  /** Removed labor or parts, and close notes. */
+  history?: RoHistoryEntry[];
+  /** Money already taken on this repair order. A nonzero amount blocks a no-work close. */
+  payments?: RoPayment[];
+  /** Set when the ticket is closed. Reopen does not unlock the signed estimate. */
+  authorizationLocked?: boolean;
+  /** Customer and vehicle at close. Print uses this, not the live record. */
+  closeSnapshot?: CloseSnapshot;
+  /** Consent recorded after a reopen. It never overwrites the original authorization. */
+  laterAuthorizations?: DatedAuthorization[];
+}
+
+/** Frozen customer and vehicle for a closed repair order. */
+export interface CloseSnapshot {
+  customerName: string;
+  phone: string;
+  address: string;
+  plate: string;
+  vin: string;
+  year: number;
+  make: string;
+  model: string;
+}
+
+/** A new consent after reopen. The original authorization fields stay as they were. */
+export interface DatedAuthorization {
+  id: string;
+  at: string;
+  who: string;
+  whoId: string;
+  reason: string;
+  address: string;
+  initials: string;
+  estimate: number;
+  plate: string;
 }
 
 export interface AppointmentLine {
   id: string;
   code: string;
   concern: string;
+}
+
+/** Who changed the visit, and when. `action` is missing on older cancel rows. */
+export interface AppointmentCancel {
+  action?: "cancel" | "reinstate";
+  /** A known cancel reason, a legacy value kept for the record, or empty on reinstate. */
+  reason: string;
+  note: string;
+  who: string;
+  whoId: string;
+  at: string;
+  /** Status before the cancel. A former no-show is not put back on reinstate. */
+  priorStatus?: ApptStatus;
 }
 
 export interface Appointment {
@@ -219,6 +349,8 @@ export interface Appointment {
   lane: Lane;
   status: ApptStatus;
   orderId: string | null;
+  /** Append-only. The latest entry is the active cancel while status is `cancelled`. */
+  cancelHistory?: AppointmentCancel[];
 }
 
 export interface BudgetLine {
@@ -249,6 +381,26 @@ export interface TimeLog {
   orderId: string;
   startedAt: string;
   endedAt: string | null;
+  /** Written on the time log when a punch on a Closed repair order is ended. The repair order itself is not changed. */
+  note?: string;
+  /** The punch was ended at the repair order's close time and needs a service manager to review it. */
+  needsReview?: boolean;
+  /** When the technician pressed clock out. The resolve form starts here, not at the review time. */
+  clockedOutAt?: string;
+  resolvedBy?: string;
+  resolvedById?: string;
+  resolvedAt?: string;
+}
+
+export interface RoleChange {
+  at: string;
+  who: string;
+  whoId: string;
+  advisorId: string;
+  before: string;
+  after: string;
+  /** Name at the time of the change, kept after the person leaves the roster. */
+  advisorName?: string;
 }
 
 export interface ClosedRecord {
@@ -270,6 +422,14 @@ export interface ClosedRecord {
   partNumbers: string;
   total: number;
   beforeTax: number;
+  closeType?: RoCloseType | null;
+  closeNote?: string;
+  /** Empty when an older history row has no name. The screen shows Unknown. */
+  closedBy?: string;
+  closedAt?: string | null;
+  droppedFeesNote?: string;
+  /** 1 on the first close. A later close or service-manager change adds the next number. */
+  version?: number;
 }
 
 export interface Campaign {
@@ -294,7 +454,7 @@ export type ContactMethod = "text" | "email" | "call";
 export interface OnlineRequest {
   id: string;
   storeId: StoreId;
-  status: "pending" | "approved" | "declined";
+  status: "pending" | "approved" | "declined" | "cancelled";
   createdAt: string;
   serviceId: string;
   serviceName: string;
@@ -364,6 +524,7 @@ export interface ShopData {
   dataset: ShopDataset;
   settings: Settings;
   advisors: Advisor[];
+  serviceManagers: ServiceManager[];
   techs: Tech[];
   customers: Customer[];
   vehicles: Vehicle[];
@@ -384,4 +545,21 @@ export interface ShopData {
   onlineRequests: OnlineRequest[];
   onlineChallenges: OnlineChallenge[];
   notices: ShopNotice[];
+  /** Who changed an advisor's role, and when. */
+  roleLog?: RoleChange[];
+  /** A confirmed VIN transfer. Closed repair orders keep their own snapshot. */
+  ownershipLog?: OwnershipChange[];
+}
+
+/** Who moved a vehicle to another customer, and when. */
+export interface OwnershipChange {
+  at: string;
+  who: string;
+  whoId: string;
+  beforeVehicleId: string;
+  afterVehicleId: string;
+  beforeCustomerId: string;
+  afterCustomerId: string;
+  vin: string;
+  reason?: string;
 }

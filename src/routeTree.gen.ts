@@ -25,6 +25,7 @@ import { Route as PayTypesRouteImport } from './routes/pay-types'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as RequestRouteImport } from './routes/request'
 import { Route as ScheduleRouteImport } from './routes/schedule'
+import { Route as ServiceManagersRouteImport } from './routes/service-managers'
 import { Route as TechBoardRouteImport } from './routes/tech-board'
 
 const IndexRoute = IndexRouteImport.update({
@@ -107,6 +108,11 @@ const ScheduleRoute = ScheduleRouteImport.update({
   path: '/schedule',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ServiceManagersRoute = ServiceManagersRouteImport.update({
+  id: '/service-managers',
+  path: '/service-managers',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const TechBoardRoute = TechBoardRouteImport.update({
   id: '/tech-board',
   path: '/tech-board',
@@ -130,6 +136,7 @@ export interface FileRoutesByFullPath {
   '/reports': typeof ReportsRoute
   '/request': typeof RequestRoute
   '/schedule': typeof ScheduleRoute
+  '/service-managers': typeof ServiceManagersRoute
   '/tech-board': typeof TechBoardRoute
 }
 export interface FileRoutesByTo {
@@ -149,6 +156,7 @@ export interface FileRoutesByTo {
   '/reports': typeof ReportsRoute
   '/request': typeof RequestRoute
   '/schedule': typeof ScheduleRoute
+  '/service-managers': typeof ServiceManagersRoute
   '/tech-board': typeof TechBoardRoute
 }
 export interface FileRoutesById {
@@ -169,6 +177,7 @@ export interface FileRoutesById {
   '/reports': typeof ReportsRoute
   '/request': typeof RequestRoute
   '/schedule': typeof ScheduleRoute
+  '/service-managers': typeof ServiceManagersRoute
   '/tech-board': typeof TechBoardRoute
 }
 export interface FileRouteTypes {
@@ -190,6 +199,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/request'
     | '/schedule'
+    | '/service-managers'
     | '/tech-board'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -209,6 +219,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/request'
     | '/schedule'
+    | '/service-managers'
     | '/tech-board'
   id:
     | '__root__'
@@ -228,6 +239,7 @@ export interface FileRouteTypes {
     | '/reports'
     | '/request'
     | '/schedule'
+    | '/service-managers'
     | '/tech-board'
   fileRoutesById: FileRoutesById
 }
@@ -248,6 +260,7 @@ export interface RootRouteChildren {
   ReportsRoute: typeof ReportsRoute
   RequestRoute: typeof RequestRoute
   ScheduleRoute: typeof ScheduleRoute
+  ServiceManagersRoute: typeof ServiceManagersRoute
   TechBoardRoute: typeof TechBoardRoute
 }
 
@@ -365,6 +378,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ScheduleRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/service-managers': {
+      id: '/service-managers'
+      path: '/service-managers'
+      fullPath: '/service-managers'
+      preLoaderRoute: typeof ServiceManagersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/tech-board': {
       id: '/tech-board'
       path: '/tech-board'
@@ -392,6 +412,7 @@ const rootRouteChildren: RootRouteChildren = {
   ReportsRoute: ReportsRoute,
   RequestRoute: RequestRoute,
   ScheduleRoute: ScheduleRoute,
+  ServiceManagersRoute: ServiceManagersRoute,
   TechBoardRoute: TechBoardRoute,
 }
 export const routeTree = rootRouteImport

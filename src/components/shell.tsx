@@ -2,9 +2,7 @@ import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeft,
   CalendarClock,
-  CalendarPlus,
   ClipboardList,
-  Inbox,
   FileText,
   ListChecks,
   NotebookPen,
@@ -13,6 +11,7 @@ import {
   Users,
   Wallet,
   UserRound,
+  BadgeCheck,
   Wrench,
   Timer,
   Activity,
@@ -20,10 +19,11 @@ import {
   Package,
   Receipt,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
+import { isLockedPath, SECTION_LOCK_HINT, SECTION_LOCK_NOTICE } from "@/lib/section-lock";
 import { shopHasOperationalData, useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
 import { SchedulingSettingsForm } from "./scheduling-settings";
@@ -37,14 +37,13 @@ const STORES: { id: StoreId; label: string }[] = [
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
   { to: "/schedule", label: "Appointments", icon: CalendarClock },
-  { to: "/request", label: "Request a visit", icon: CalendarPlus },
-  { to: "/online-requests", label: "Online requests", icon: Inbox },
   { to: "/overrides", label: "Overrides", icon: NotebookPen },
   { to: "/orders", label: "Repair orders", icon: ClipboardList },
   { to: "/estimates", label: "Repair estimates", icon: FileText },
   { to: "/dispatch", label: "Technicians", icon: Wrench },
   { to: "/tech-board", label: "Tech board", icon: Timer },
   { to: "/advisors", label: "Advisors", icon: UserRound },
+  { to: "/service-managers", label: "Service managers", icon: BadgeCheck },
   { to: "/parts", label: "Parts", icon: Package },
   { to: "/expenses", label: "Fixed costs", icon: Wallet },
   { to: "/customers", label: "Marketing", icon: Users },
@@ -56,25 +55,40 @@ const NAV = [
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const pending = useShop((state) => (state.onlineRequests ?? []).filter((row) => row.status === "pending").length);
-  const items = NAV;
   return (
     <>
-      {items.map((item) => {
-        const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
+      {NAV.map((item) => {
         const Icon = item.icon;
+        const locked = isLockedPath(item.to);
+        const active = !locked && (item.to === "/" ? pathname === "/" : pathname.startsWith(item.to));
+        if (locked) {
+          return (
+            <span key={item.to} className="nav-link cursor-not-allowed opacity-45" aria-disabled="true" title={SECTION_LOCK_HINT}>
+              <Icon className="size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide">{SECTION_LOCK_HINT}</span>
+              {"gear" in item && item.gear ? <Settings className="size-3.5 shrink-0" aria-hidden /> : null}
+            </span>
+          );
+        }
         return (
           <Link key={item.to} to={item.to} onClick={onNavigate} className={cn("nav-link", active && "is-active")}>
             <Icon className="size-4 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">
-              {item.label}
-              {item.to === "/online-requests" && pending > 0 ? ` (${pending})` : ""}
-            </span>
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {"gear" in item && item.gear ? <Settings className="size-3.5 shrink-0" aria-hidden /> : null}
           </Link>
         );
       })}
     </>
+  );
+}
+
+export function ComingLater() {
+  return (
+    <section className="card" aria-label={SECTION_LOCK_HINT}>
+      <h1 className="font-display text-4xl leading-none">{SECTION_LOCK_NOTICE}</h1>
+      <p className="mt-3 max-w-xl text-muted">We'll focus on this part of the build later. Appointments, repair orders, and repair estimates stay open.</p>
+    </section>
   );
 }
 
@@ -93,8 +107,13 @@ export function Shell({ children }: { children: ReactNode }) {
     void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
       if (live) setHydrated(true);
     });
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "jess-ford-fixed-ops-v1") void useShop.persist.rehydrate();
+    };
+    window.addEventListener("storage", onStorage);
     return () => {
       live = false;
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -107,12 +126,18 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const activeStoreId = useShop((state) => state.activeStoreId);
   const switchStore = useShop((state) => state.switchStore);
   const advisors = useShop((state) => state.advisors);
+  const serviceManagers = useShop((state) => state.serviceManagers);
   const techs = useShop((state) => state.techs);
   const workingAsId = useShop((state) => state.workingAsId);
   const setWorkingAs = useShop((state) => state.setWorkingAs);
-  const staffId = advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
+  const managers = useMemo(
+    () => (serviceManagers ?? []).filter((row) => row.active !== false),
+    [serviceManagers],
+  );
+  const managerIds = new Set(managers.map((row) => row.id));
+  const staffId = managers.some((row) => row.id === workingAsId) || advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
     ? workingAsId
-    : advisors[0]?.id ?? techs[0]?.id ?? "";
+    : managers[0]?.id ?? advisors[0]?.id ?? techs[0]?.id ?? "";
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
   const clearShop = useShop((state) => state.clearShop);
@@ -156,7 +181,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-auto w-full" />
           <p className="mt-2 px-1 text-sm text-muted">Fixed operations</p>
         </div>
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav className="flex flex-1 flex-col gap-1" data-staff-nav>
           <NavLinks />
         </nav>
         <p className="px-3 pt-4 text-xs leading-relaxed text-muted">
@@ -176,15 +201,20 @@ function OpenDesk({ children }: { children: ReactNode }) {
             <div className="flex flex-wrap items-center gap-2">
               {staffId ? (
                 <label className="flex items-center gap-2 text-xs text-muted">
-                  Working as
+                  <span className="max-w-[9.5rem] leading-snug">Working as isn't a real sign-in yet.</span>
                   <select
                     aria-label="Working as"
                     className="field h-8 max-w-48"
                     value={staffId}
                     onChange={(event) => setWorkingAs(event.target.value)}
                   >
+                    {managers.length > 0 ? (
+                      <optgroup label="Service managers">
+                        {managers.map((manager) => <option key={manager.id} value={manager.id}>#{manager.number} {manager.name}</option>)}
+                      </optgroup>
+                    ) : null}
                     <optgroup label="Advisors">
-                      {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
+                      {advisors.filter((advisor) => !managerIds.has(advisor.id)).map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
                     </optgroup>
                     <optgroup label="Technicians">
                       {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} {tech.name}</option>)}
@@ -211,13 +241,17 @@ function OpenDesk({ children }: { children: ReactNode }) {
               </Button>
             </div>
           </div>
-          <nav className="nav-scroll px-3 pb-3 md:hidden">
+          <nav className="nav-scroll px-3 pb-3 md:hidden" data-staff-nav>
             <NavLinks onNavigate={() => undefined} />
           </nav>
         </header>
-        <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
+        <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">
+          {isLockedPath(pathname) ? <ComingLater /> : children}
+        </main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          <p>
+            This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          </p>
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -226,7 +260,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           </button>
         ) : null}
       </div>
-      <Modal open={open} onClose={() => setOpen(false)} wide title="Store settings" description="Name, city, targets, and scheduling for this store. Labor rates live on Pay Type.">
+      <Modal open={open} onClose={() => setOpen(false)} wide title="Store settings" description="Name, city, targets, and scheduling for this store. Labor rates stay with the pay types already on this store.">
         <form
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={(event) => {
@@ -235,7 +269,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           }}
         >
           <Field label="Store name">
-            <input className="field" value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
+            <input className="field" maxLength={80} value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
           </Field>
           <Field label="Street address">
             <input className="field" value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />
@@ -275,21 +309,23 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
               </Button>
             ) : null}
-            <Button
-              tone={confirmClear ? "accent" : "ghost"}
-              onClick={() => {
-                if (!confirmClear) {
-                  setConfirmClear(true);
-                  setConfirmReset(false);
-                  return;
-                }
-                clearShop();
-                setConfirmClear(false);
-                setOpen(false);
-              }}
-            >
-              {confirmClear ? "Clear shop data now" : "Clear shop data"}
-            </Button>
+            {isDemoMode() ? (
+              <Button
+                tone={confirmClear ? "accent" : "ghost"}
+                onClick={() => {
+                  if (!confirmClear) {
+                    setConfirmClear(true);
+                    setConfirmReset(false);
+                    return;
+                  }
+                  clearShop();
+                  setConfirmClear(false);
+                  setOpen(false);
+                }}
+              >
+                {confirmClear ? "Clear shop data now" : "Clear shop data"}
+              </Button>
+            ) : null}
           </div>
         </form>
       </Modal>

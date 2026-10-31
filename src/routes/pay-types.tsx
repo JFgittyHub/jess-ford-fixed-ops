@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button, Field } from "@/components/ui";
 import { KIND_LABEL } from "@/lib/pay";
 import { useShop } from "@/lib/store";
 import type { PayKind } from "@/lib/types";
 
-export const Route = createFileRoute("/pay-types")({ component: PayTypesPage });
+export const Route = createFileRoute("/pay-types")({ component: guardLocked(PayTypesPage) });
 
 const KINDS: PayKind[] = ["customer", "warranty", "internal"];
 
@@ -81,23 +82,10 @@ function PayTypesPage() {
             {payTypes.map((row) => (
               <tr key={row.id}>
                 <td>
-                  <input
-                    className="field"
-                    aria-label={`${row.name} name`}
-                    value={row.name}
-                    onChange={(event) => updatePayType(row.id, { name: event.target.value })}
-                  />
+                  <BlurField label={`${row.name} name`} value={row.name} onCommit={(value) => updatePayType(row.id, { name: value })} />
                 </td>
                 <td>
-                    <input
-                      className="field w-28 tabular-nums"
-                      aria-label={`${row.name} labor rate`}
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={row.rate}
-                      onChange={(event) => updatePayType(row.id, { rate: Number(event.target.value) || 0 })}
-                    />
+                  <BlurField label={`${row.name} labor rate`} value={String(row.rate)} numeric className="field w-28 tabular-nums" onCommit={(value) => updatePayType(row.id, { rate: Number(value) || 0 })} />
                 </td>
                 <td>
                   <select
@@ -132,5 +120,37 @@ function PayTypesPage() {
         </table>
       </div>
     </Shell>
+  );
+}
+
+function BlurField({
+  label,
+  value,
+  onCommit,
+  numeric = false,
+  className = "field",
+}: {
+  label: string;
+  value: string;
+  onCommit: (value: string) => void;
+  numeric?: boolean;
+  className?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      className={className}
+      aria-label={label}
+      type={numeric ? "number" : "text"}
+      min={numeric ? 0 : undefined}
+      step={numeric ? 1 : undefined}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft === value) return;
+        onCommit(draft);
+      }}
+    />
   );
 }

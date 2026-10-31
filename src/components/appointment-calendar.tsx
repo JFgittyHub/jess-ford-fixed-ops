@@ -142,6 +142,7 @@ export type ApptSummary = {
   ops: string;
   status: string;
   canWrite: boolean;
+  writeNote?: string;
 };
 
 export function AppointmentCalendar({
@@ -154,6 +155,7 @@ export function AppointmentCalendar({
   onMove,
   onWrite,
   onEdit,
+  onCancel,
   label,
   summary,
   hoursFor,
@@ -167,6 +169,7 @@ export function AppointmentCalendar({
   onMove: (id: string, patch: { time: string; minutes: number; techId: string }) => void;
   onWrite: (id: string) => void;
   onEdit: (id: string) => void;
+  onCancel?: (id: string) => void;
   label: (appt: Appointment) => string;
   summary: (appt: Appointment) => ApptSummary;
   hoursFor: (appt: Appointment) => number;
@@ -346,7 +349,7 @@ export function AppointmentCalendar({
           );
         })}
       </div>
-      {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
+      {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onCancel={onCancel} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
     </div>
   );
 }
@@ -357,6 +360,7 @@ function HoverCard({
   summary,
   onWrite,
   onEdit,
+  onCancel,
   onEnter,
   onLeave,
 }: {
@@ -365,6 +369,7 @@ function HoverCard({
   summary: (appt: Appointment) => ApptSummary;
   onWrite: (id: string) => void;
   onEdit: (id: string) => void;
+  onCancel?: (id: string) => void;
   onEnter: () => void;
   onLeave: () => void;
 }) {
@@ -390,10 +395,12 @@ function HoverCard({
       <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-muted">{detail.status}</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button type="button" className="btn btn-ghost btn-small" onClick={() => onEdit(row.id)}>Edit details</button>
+        {onCancel && row.status !== "cancelled" ? <button type="button" className="btn btn-ghost btn-small" onClick={() => onCancel(row.id)}>Cancel appointment</button> : null}
         {detail.canWrite ? (
           <button type="button" className="btn btn-primary btn-small" onClick={() => onWrite(row.id)}>Write repair order</button>
         ) : null}
       </div>
+      {!detail.canWrite && detail.writeNote ? <p className="mt-2 text-sm text-muted">{detail.writeNote}</p> : null}
       {!detail.canWrite && row.orderId ? <p className="mt-2 text-sm text-muted">Already on a repair order.</p> : null}
     </div>
   );
