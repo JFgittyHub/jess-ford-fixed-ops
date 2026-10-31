@@ -506,6 +506,8 @@ export interface OnlineRequest {
   plate: string;
   /** Optional note from the customer. Capped at 500 characters. */
   note?: string;
+  /** Demo browser id. Not a customer identifier. */
+  deviceId?: string;
   appointmentId: string | null;
 }
 

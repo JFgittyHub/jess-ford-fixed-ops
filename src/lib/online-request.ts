@@ -3,6 +3,9 @@ import type { ContactMethod, Customer, OnlineChallenge, OnlineRequest, Schedulin
 import { normalizeVin, vinScheduleError } from "./vin";
 
 const CODE_WINDOW_MS = 10 * 60 * 1000;
+const CONTACT_CAP = 3;
+const ADVISOR_DAY_CAP = 12;
+const DEVICE_CAP = 5;
 
 export interface OnlineRequestInput {
   serviceId: string;
@@ -24,6 +27,8 @@ export interface OnlineRequestInput {
   plate?: string;
   note?: string;
   contactMethod?: ContactMethod;
+  /** Demo device id from localStorage. Caps pending requests from one browser. */
+  deviceId?: string;
 }
 
 export type OnlineLookup =
@@ -172,15 +177,19 @@ export function submitOnlineRequest(
   let verified = false;
   let customerId: string | null = null;
   let vehicleId: string | null = null;
-  let customerName = (input.customerName ?? "").trim().slice(0, 80);
-  let phone = (input.phone ?? "").trim().slice(0, 20);
-  let email = (input.email ?? "").trim().slice(0, 120);
+  let customerName = textField(input.customerName, 80);
+  let phone = textField(input.phone, 20);
+  let email = textField(input.email, 120);
   let year = Math.trunc(Number(input.year) || 0);
-  let make = (input.make ?? "").trim().slice(0, 40);
-  let model = (input.model ?? "").trim().slice(0, 40);
-  let vin = normalizeVin(typeof input.vin === "string" ? input.vin : "").slice(0, 17);
-  let plate = (input.plate ?? "").trim().toUpperCase().slice(0, 10);
-  const note = (input.note ?? "").trim().slice(0, 500);
+  let make = textField(input.make, 40);
+  let model = textField(input.model, 40);
+  if (input.vin != null && typeof input.vin !== "string") return { ok: false, reason: "vin" };
+  const rawVin = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
+  if (rawVin.length > 17) return { ok: false, reason: "vin" };
+  let vin = rawVin;
+  let plate = textField(input.plate, 10).toUpperCase();
+  const note = textField(input.note, 500);
+  const deviceId = textField(input.deviceId, 40);
 
   if (input.verified) {
     const customer = shop.customers.find((row) => row.id === input.customerId);
@@ -206,14 +215,21 @@ export function submitOnlineRequest(
     return { ok: false, reason: "vin" };
   }
   if (!vin || vinScheduleError(vin)) return { ok: false, reason: "vin" };
-  const contactKey = phone.replace(/\D/g, "") || email.toLowerCase();
-  if (contactKey) {
-    const pending = (shop.onlineRequests ?? []).filter((row) => row.status === "pending" && (
-      (phone.replace(/\D/g, "") && row.phone.replace(/\D/g, "") === phone.replace(/\D/g, ""))
-      || (email && row.email.trim().toLowerCase() === email.toLowerCase())
-    ));
-    if (pending.length >= 3) return { ok: false, reason: "limit" };
-  }
+  const phoneOk = phone.length === 0 || phoneKey(phone).length === 10;
+  const emailOk = email.length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  if (!phoneOk || !emailOk) return { ok: false, reason: "contact" };
+  const phones = phoneKey(phone);
+  const mail = email ? emailKey(email) : "";
+  if (!phones && !mail) return { ok: false, reason: "contact" };
+  const pending = (shop.onlineRequests ?? []).filter((row) => row.status === "pending");
+  const sameContact = pending.filter((row) => (
+    (phones && phoneKey(row.phone) === phones)
+    || (mail && row.email && emailKey(row.email) === mail)
+  ));
+  if (sameContact.length >= CONTACT_CAP) return { ok: false, reason: "limit" };
+  const sameAdvisorDay = pending.filter((row) => row.advisorId === advisor.id && row.date === input.date);
+  if (sameAdvisorDay.length >= ADVISOR_DAY_CAP) return { ok: false, reason: "limit" };
+  if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit" };
 
   const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };
@@ -249,6 +265,7 @@ export function submitOnlineRequest(
       vin,
       plate,
       note,
+      deviceId: deviceId || undefined,
       appointmentId: null,
     },
   };
@@ -301,6 +318,31 @@ function matchedCustomers(
     }
   }
   return [...found.values()];
+}
+
+function textField(value: unknown, max: number): string {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, max);
+}
+
+function phoneKey(value: string): string {
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+  if (digits.length >= 10) return digits.slice(-10);
+  return "";
+}
+
+function emailKey(value: string): string {
+  const lower = value.trim().toLowerCase();
+  const at = lower.lastIndexOf("@");
+  if (at < 1) return lower;
+  let local = lower.slice(0, at);
+  let domain = lower.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus >= 0) local = local.slice(0, plus);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  if (domain === "gmail.com") local = local.replace(/\./g, "");
+  return `${local}@${domain}`;
 }
 
 function vehicleFor(customerId: string, vehicles: Vehicle[], vin: string): Vehicle | undefined {

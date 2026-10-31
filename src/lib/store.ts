@@ -143,7 +143,7 @@ interface ShopActions {
   setWorkingAs: (id: string) => void;
   issueOnlineChallenge: (customerId: string) => { ok: true; code: string; mobileLast4: string } | { ok: false; reason: "unknown" | "no-mobile" };
   addOnlineRequest: (input: OnlineRequestInput) => { ok: true; id: string } | { ok: false; reason: string };
-  approveOnlineRequest: (id: string, linkCustomerId?: string) => { ok: true; appointmentId: string; noticeId: string; warning: string | null } | { ok: false; reason: string; error?: string };
+  approveOnlineRequest: (id: string, linkCustomerId?: string, confirmOverride?: boolean) => { ok: true; appointmentId: string; noticeId: string; warning: string | null } | { ok: false; reason: string; error?: string; warning?: string };
   declineOnlineRequest: (id: string) => { ok: true; noticeId: string } | { ok: false; reason: string };
   simulateDayBeforeReminders: () => { created: number };
   linkAppointment: (id: string, orderId: string) => void;
@@ -401,8 +401,51 @@ function identitySnapshot(order: RepairOrder, customer?: Customer, vehicle?: Veh
 
 /** Fill a missing store header once. A snapshot that already has a store name is left alone. */
 function stampStoreHeader(snapshot: CloseSnapshot, settings?: { storeName?: string; address?: string; city?: string; phone?: string }): CloseSnapshot {
-  if (typeof snapshot.storeName === "string") return snapshot;
+  if (typeof snapshot.storeName === "string" && snapshot.storeName.trim()) return snapshot;
   return { ...snapshot, ...storeHeader(settings) };
+}
+
+type RecordedStoreHeader = { storeName: string; storeAddress: string; storeCity: string; storePhone: string };
+
+let seedHeaders: Map<string, RecordedStoreHeader> | null = null;
+
+/** Store name, address, city, and phone from the sample close, keyed by repair-order id. Not the live settings. */
+function seedStoreHeader(orderId: string): RecordedStoreHeader | null {
+  if (!seedHeaders) {
+    seedHeaders = new Map();
+    for (const storeId of ["grand-coulee", "pullman"] as const) {
+      for (const order of createSeed(storeId).orders) {
+        const name = order.closeSnapshot?.storeName?.trim();
+        if (!name) continue;
+        seedHeaders.set(order.id, {
+          storeName: name,
+          storeAddress: order.closeSnapshot?.storeAddress ?? "",
+          storeCity: order.closeSnapshot?.storeCity ?? "",
+          storePhone: order.closeSnapshot?.storePhone ?? "",
+        });
+      }
+    }
+  }
+  return seedHeaders.get(orderId) ?? null;
+}
+
+/** A saved Closed repair order keeps its close-time header. A seed row can fill a blank one. Live settings are not copied. */
+function fillRecordedStoreHeader(order: RepairOrder): RepairOrder {
+  const snap = order.closeSnapshot;
+  if (snap && typeof snap.storeName === "string" && snap.storeName.trim()) return order;
+  const seeded = seedStoreHeader(order.id);
+  if (!seeded) return order;
+  const base: CloseSnapshot = snap ?? {
+    customerName: "",
+    phone: "",
+    address: "",
+    plate: "",
+    vin: "",
+    year: 0,
+    make: "",
+    model: "",
+  };
+  return { ...order, closeSnapshot: { ...base, ...seeded } };
 }
 
 function withSnapshot(order: RepairOrder, customer?: Customer, vehicle?: Vehicle, settings?: { storeName?: string; address?: string; city?: string; phone?: string }) {
@@ -569,7 +612,7 @@ function applyVinClaim(state: ShopData, input: {
   const warning = vinCheckWarning(nextVin);
   if (ownerVehicle && ownerVehicle.customerId !== typed.id) {
     const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
-    const openOnVehicle = state.orders.some((order) => order.vehicleId === ownerVehicle.id && order.status !== "closed" && !order.authorizationLocked);
+    const openOnVehicle = state.orders.some((order) => order.vehicleId === ownerVehicle.id && order.status !== "closed");
     if (openOnVehicle) return { ok: false, error: "This vehicle has an open repair order. Close it before transferring the VIN.", warning: null };
     const question = `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${typed.name}?`;
     if (!input.confirm) return { ok: false, error: null, warning: question, needsTransfer: true };
@@ -1046,7 +1089,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       const jobs = Array.isArray(prior.jobs) && prior.jobs.length > 0
         ? prior.jobs
         : [jobLine(`${prior.id}-a`, "A", prior.concern ?? "", prior.cause ?? "", prior.correction ?? "")];
-      if (prior.status === "closed") return freezeClosedOrder(prior);
+      if (prior.status === "closed") return fillRecordedStoreHeader(freezeClosedOrder(prior));
       const wa = normalizeWa(prior.wa);
       const stamped = wa;
       const keepFees = (prior.status as string) === "invoiced" || Boolean(prior.authorizationLocked) || historyIds.has(prior.id);
@@ -1085,9 +1128,11 @@ export function migrateSavedShop(persisted: unknown): ShopState {
       if (built.status === "closed") {
         const customer = (Array.isArray(saved.customers) ? saved.customers : []).find((row) => row.id === prior.customerId);
         const vehicle = vehicleList.find((row) => row.id === prior.vehicleId);
+        const identity = identitySnapshot(built, customer, vehicle);
+        const seeded = seedStoreHeader(prior.id);
         built.closeSnapshot = built.closeSnapshot
-          ? stampStoreHeader(built.closeSnapshot, saved.settings)
-          : identitySnapshot(built, customer, vehicle, saved.settings);
+          ? fillRecordedStoreHeader(built).closeSnapshot
+          : (seeded ? { ...identity, ...seeded } : identity);
       }
       if (built.status !== "closed" && !built.authorizationLocked && !(typeof prior.openedAt === "string" && prior.openedAt.trim())) {
         built.openedAt = new Date(openedInstant(prior)).toISOString();
@@ -1298,8 +1343,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const reason = overrideReason(result);
           if (!reason) return null;
           const saved = get();
+          const actor = namedActor(saved);
+          if (!actor) return null;
           const row = saved.appointments.find((item) => item.id === appointmentId);
-          const actor = actingStaff(saved);
           const overrideId = uid("ov");
           const record: OverrideRecord = {
             id: overrideId,
@@ -1360,8 +1406,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             }
           }
           if (typeof patch.phone === "string") {
-            note("Shop phone", settings.phone, patch.phone);
-            settings.phone = patch.phone;
+            const phone = patch.phone.trim().slice(0, 20);
+            note("Shop phone", settings.phone, phone);
+            settings.phone = phone;
           }
           if (typeof patch.address === "string") {
             const address = asText(patch.address, TEXT_MAX);
@@ -3013,13 +3060,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const current = state.appointments.find((row) => row.id === id);
           if (!current || current.status === status) return state;
           if (current.status === "cancelled" || status === "cancelled") return state;
+          const who = namedActor(state);
+          if (status === "no_show" && (!who || !rosterEditor(state))) return state;
           return {
             appointments: state.appointments.map((row) => (row.id === id ? { ...row, status } : row)),
             customers: adjustNoShows(state.customers, noShowChanges(current.status, status, current.customerId, current.customerId)),
+            settingsLog: status === "no_show" && who
+              ? [...(state.settingsLog ?? []), settingsChange(who, "No-show", `${current.date} ${current.time} ${current.status}`, "no_show")]
+              : state.settingsLog,
           };
         }),
       moveAppointment: (id, patch) => {
         const state = get();
+        const who = namedActor(state);
+        if (!who || !rosterEditor(state)) return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
         const current = state.appointments.find((row) => row.id === id);
         if (!current) return { ok: false, error: "That appointment is not on this store." };
         if (current.status === "cancelled") return { ok: false, error: CANCELLED_LOCKED };
@@ -3029,14 +3083,17 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === current.advisorId),
         );
         if (staffError) return { ok: false, error: staffError };
+        const minutes = appointmentMinutes(patch.minutes, current.minutes);
+        const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : current.time);
+        const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
+        const before = `${current.date} ${current.time} ${current.techId}`;
+        const after = `${date} ${time} ${techId}`;
         set((next) => ({
           appointments: next.appointments.map((row) => {
             if (row.id !== id || row.status === "cancelled") return row;
-            const minutes = appointmentMinutes(patch.minutes, row.minutes);
-            const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : row.time);
-            const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : row.date;
             return { ...row, minutes, time, date, techId };
           }),
+          settingsLog: before === after ? next.settingsLog : [...(next.settingsLog ?? []), settingsChange(who, "Move appointment", before, after)],
         }));
         return { ok: true, error: null };
       },
@@ -3050,6 +3107,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
         );
         if (staffError) return { ok: false, error: staffError };
+        if (patch.status === "no_show" && (!namedActor(state) || !rosterEditor(state))) {
+          return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
+        }
         if (patch.vin != null && typeof patch.vin !== "string") return { ok: false, error: "Enter a 17-character VIN." };
         const nextVin = patch.vin === undefined ? current.vin : patch.vin;
         const vinError = typeof nextVin === "string" && nextVin.trim() ? vinScheduleError(nextVin) : null;
@@ -3085,12 +3145,17 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           customers: current
             ? adjustNoShows(state.customers, noShowChanges(current.status, nextStatus, current.customerId, nextCustomer))
             : state.customers,
+          settingsLog: current && nextStatus === "no_show" && current.status !== "no_show" && namedActor(state)
+            ? [...(state.settingsLog ?? []), settingsChange(namedActor(state) as { id: string; name: string }, "No-show", `${current.date} ${current.time} ${current.status}`, "no_show")]
+            : state.settingsLog,
           };
         });
         return { ok: true, error: null };
       },
       addAppointment: (input, id) => {
         const appointmentId = id ?? uid("ap");
+        const who = namedActor(get());
+        if (!who || !rosterEditor(get())) return "";
         if (input.vin != null && typeof input.vin !== "string") return "";
         const vin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
         if (vin && vinScheduleError(vin)) return "";
@@ -3134,12 +3199,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return {
             vehicles,
             appointments: [...state.appointments, row].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Appointment", "", `${row.date} ${row.time} ${row.customerId}`)],
           };
         });
         return appointmentId;
       },
       saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText) => {
         const state = get();
+        if (!namedActor(state) || !rosterEditor(state)) {
+          return { ok: false, appointmentId: "", overrideId: null, error: rosterEditorError(state) ?? "Choose who is working." };
+        }
         if (existingId && !state.appointments.some((row) => row.id === existingId)) {
           return { ok: false, appointmentId: existingId, overrideId: null, error: "That appointment is not on this store." };
         }
@@ -3307,6 +3376,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       setWorkingAs: (id) =>
         set((state) => {
+          if (!id) return { workingAsId: "" };
           const known = (state.serviceManagers ?? []).some((row) => row.id === id) || state.advisors.some((advisor) => advisor.id === id) || state.techs.some((tech) => tech.id === id);
           if (!known) return state;
           return { workingAsId: id };
@@ -3338,13 +3408,15 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }));
         return { ok: true, id };
       },
-      approveOnlineRequest: (id, linkCustomerId) => {
+      approveOnlineRequest: (id, linkCustomerId, confirmOverride = false) => {
         const state = get();
         const who = namedActor(state);
         if (!who || !rosterEditor(state)) return { ok: false, reason: "role" };
         const request = state.onlineRequests.find((row) => row.id === id && row.status === "pending");
         if (!request) return { ok: false, reason: "missing" };
-        if (!request.vin || vinScheduleError(request.vin)) return { ok: false, reason: "vin" };
+        const vin = typeof request.vin === "string" ? normalizeVin(request.vin) : "";
+        if (!vin || vin.length !== 17 || vinScheduleError(vin)) return { ok: false, reason: "vin" };
+        const ready = { ...request, vin };
         const capacity = assessAppointment({
           scheduling: state.settings.scheduling,
           advisors: state.advisors,
@@ -3362,8 +3434,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         });
         if (capacity.blocked) return { ok: false, reason: "full", error: capacity.blocked };
         const warning = advisorBookingNote(capacity);
+        if (warning && !confirmOverride) return { ok: false, reason: "warning", warning };
         const plan = planApproval({
-          request,
+          request: ready,
           customers: state.customers,
           vehicles: state.vehicles,
           linkCustomerId,
@@ -3522,7 +3595,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return {
             ...createSeed(state.activeStoreId),
             settings: state.settings,
+            workingAsId: state.workingAsId,
             settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Load sample month", state.dataset, "sample")],
+            requestLog: state.requestLog ?? [],
             focusOrderId: null,
           };
         }),
@@ -3531,12 +3606,31 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (!demoMode) return state;
           const who = namedActor(state);
           if (!who || deskActor(state) !== "service-manager") return state;
+          const closed = state.orders.filter((order) => order.status === "closed");
+          const closedIds = new Set(closed.map((order) => order.id));
+          const customerIds = new Set(closed.map((order) => order.customerId));
+          const vehicleIds = new Set(closed.map((order) => order.vehicleId));
+          const sample = createSeed(state.activeStoreId);
           return {
-            ...createEmptyShop(),
-            settings: state.settings,
+            ...state,
+            dataset: state.dataset === "sample" ? "sample" : state.dataset,
+            orders: closed,
+            closedHistory: (state.closedHistory ?? []).filter((row) => closedIds.has(row.orderId)),
+            appointments: [],
+            onlineRequests: [],
+            onlineChallenges: [],
+            notices: [],
+            overrides: [],
+            timeLogs: state.timeLogs.filter((row) => closedIds.has(row.orderId)),
+            customers: state.customers.filter((row) => customerIds.has(row.id)),
+            vehicles: state.vehicles.filter((row) => vehicleIds.has(row.id)),
+            settings: { ...state.settings, scheduling: sample.settings.scheduling },
+            advisors: state.advisors,
+            techs: state.techs,
             serviceManagers: state.serviceManagers,
             workingAsId: state.workingAsId,
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Clear shop data", String(state.orders.length), "0")],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Clear shop data", String(state.orders.length), String(closed.length))],
+            requestLog: state.requestLog ?? [],
             focusOrderId: null,
           };
         }),
