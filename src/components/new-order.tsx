@@ -63,7 +63,7 @@ function NewOrderForm({
   const shop = useShop();
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [customerId, setCustomerId] = useState(preset?.customerId ?? shop.customers[0]?.id ?? "");
-  const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId);
+  const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId && !vehicle.transferredTo);
   const [vehicleId, setVehicleId] = useState(preset?.vehicleId ?? vehicles[0]?.id ?? "");
   const [advisorId, setAdvisorId] = useState(preset?.advisorId ?? shop.advisors[0]?.id ?? "");
   const [lines, setLines] = useState<DraftLine[]>([draftLine(preset?.concern ?? "")]);
@@ -78,6 +78,7 @@ function NewOrderForm({
   const [make, setMake] = useState("");
   const [vin, setVin] = useState("");
   const [vinWarning, setVinWarning] = useState("");
+  const [transferReason, setTransferReason] = useState("");
   const transferRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const [mileageReason, setMileageReason] = useState("");
@@ -108,8 +109,8 @@ function NewOrderForm({
         className="grid gap-3"
         onSubmit={(event) => {
           event.preventDefault();
-          let nextCustomer = customerId;
-          let nextVehicle = resolvedVehicle;
+          const nextCustomer = customerId;
+          const nextVehicle = resolvedVehicle;
           if (mode === "new") {
             const parsedYear = Number(year);
             const problems: string[] = [];
@@ -117,19 +118,28 @@ function NewOrderForm({
             if (!make.trim()) problems.push("Add the make.");
             if (!name.trim() || !model.trim()) problems.push("Add the customer name and model.");
             if (phone.trim() && phoneDigitError(phone)) problems.push(phoneDigitError(phone) ?? "");
+            if (written.length === 0) problems.push("Add a concern.");
+            const miles = Number(mileage);
+            if (!mileage.trim() || !Number.isFinite(miles) || miles <= 0) problems.push("Mileage in has to be greater than zero.");
+            else if (miles > 999999) problems.push("Mileage in can't be over 999,999.");
             if (problems.length > 0) {
               setFormError(problems.join(" "));
               return;
             }
-            const cleanedVin = vin.trim().toUpperCase();
-            const created = shop.createCustomer({
+            const created = shop.openWalkIn({
               name,
               phone,
               year: parsedYear,
               make: make.trim(),
               model,
-              vin: cleanedVin,
+              vin: vin.trim(),
               confirmTransfer: transferRef.current,
+              transferReason,
+              advisorId,
+              lines: written.map((concern) => ({ concern })),
+              mileage: miles,
+              mileageOut: mileageOut.trim() === "" ? null : Number(mileageOut),
+              promiseTime,
             });
             transferRef.current = false;
             if (created.needsTransfer) {
@@ -137,12 +147,14 @@ function NewOrderForm({
               setFormError("");
               return;
             }
-            if (created.error || !created.customerId) {
-              setFormError(created.error || "That customer was not added.");
+            if (!created.ok || !created.orderId) {
+              setFormError(created.error || "That repair order was not opened.");
               return;
             }
-            nextCustomer = created.customerId;
-            nextVehicle = created.vehicleId;
+            setFormError("");
+            if (preset?.appointmentId) shop.linkAppointment(preset.appointmentId, created.orderId);
+            onClose();
+            return;
           }
           const problems: string[] = [];
           if (!nextCustomer || !nextVehicle) problems.push("Add the customer and vehicle.");
@@ -210,7 +222,7 @@ function NewOrderForm({
                   setVehicleId(first?.id ?? "");
                 }}
               >
-                {shop.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows)}</option>)}
+                {shop.customers.filter((customer) => !customer.formerRecord).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows)}</option>)}
               </select>
             </Field>
             <Field label="Vehicle">
@@ -232,9 +244,12 @@ function NewOrderForm({
             {vinWarning ? (
               <div className="grid gap-2">
                 <p role="alert" className="text-sm text-[#8a3b2a]">{vinWarning}</p>
+                <Field label="Reason for the transfer">
+                  <input className="field" aria-label="Reason for the transfer" value={transferReason} onChange={(event) => setTransferReason(event.target.value)} />
+                </Field>
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" small onClick={() => { transferRef.current = true; formRef.current?.requestSubmit(); }}>Transfer the vehicle</Button>
-                  <Button type="button" small onClick={() => { setVin(""); setVinWarning(""); transferRef.current = false; }}>Fix the VIN</Button>
+                  <Button type="button" small onClick={() => { setVin(""); setVinWarning(""); setTransferReason(""); transferRef.current = false; }}>Fix the VIN</Button>
                 </div>
               </div>
             ) : null}

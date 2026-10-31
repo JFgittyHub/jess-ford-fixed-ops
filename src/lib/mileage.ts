@@ -11,7 +11,7 @@ export interface MileageVisit {
 }
 
 export interface MileageShop {
-  orders: Array<Pick<RepairOrder, "id" | "number" | "vehicleId" | "mileage" | "mileageOut" | "openedOn"> & { openedAt?: string | null }>;
+  orders: Array<Pick<RepairOrder, "id" | "number" | "vehicleId" | "mileage" | "mileageOut" | "openedOn"> & { openedAt?: string | null; storeId?: string }>;
   vehicles: Pick<Vehicle, "id" | "vin">[];
 }
 
@@ -78,29 +78,21 @@ function orderNumber(order: { number?: number }): number {
   return typeof order.number === "number" && Number.isFinite(order.number) ? order.number : 0;
 }
 
-function hasClock(openedAt?: string | null): boolean {
-  return typeof openedAt === "string" && openedAt.trim().length > 0;
+/** Opened instant, then store, then repair-order number. Untimed is the start of that Pacific date. */
+function visitRank(order: { openedAt?: string | null; openedOn?: string; number?: number; storeId?: string }) {
+  return { instant: openedInstant(order), storeId: order.storeId ?? "", number: orderNumber(order) };
 }
 
-function sameShopDay(left?: string, right?: string): boolean {
-  const a = (left ?? "").slice(0, 10);
-  const b = (right ?? "").slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(a) && a === b;
-}
-
-/** A same-day repair order with no time is ordered by number, not treated as midnight. */
-function earlierVisit(
-  candidate: { openedAt?: string | null; openedOn?: string; number?: number },
-  cutoff: { openedAt?: string | null; openedOn?: string; number?: number },
-  mixedOk: boolean,
-): boolean {
-  const mixed = mixedOk && sameShopDay(candidate.openedOn, cutoff.openedOn) && hasClock(candidate.openedAt) !== hasClock(cutoff.openedAt);
-  if (mixed) return orderNumber(candidate) < orderNumber(cutoff);
-  const stamp = openedInstant(candidate);
-  const cutoffMs = openedInstant(cutoff);
-  if (!Number.isFinite(stamp) || stamp <= 0) return false;
-  if (stamp !== cutoffMs) return stamp < cutoffMs;
-  return orderNumber(candidate) < orderNumber(cutoff);
+function rankBefore(
+  candidate: { openedAt?: string | null; openedOn?: string; number?: number; storeId?: string },
+  cutoff: { openedAt?: string | null; openedOn?: string; number?: number; storeId?: string },
+) {
+  const left = visitRank(candidate);
+  const right = visitRank(cutoff);
+  if (!Number.isFinite(left.instant) || left.instant <= 0) return false;
+  if (left.instant !== right.instant) return left.instant < right.instant;
+  if (left.storeId !== right.storeId) return left.storeId < right.storeId;
+  return left.number < right.number;
 }
 
 export function utcOpenedAt(order: { openedOn?: string; openedAt?: string | null; number?: number }): string {
@@ -134,24 +126,23 @@ export function formatVisitDate(iso: string) {
 export function lastVisitMileage(
   shops: MileageShop[],
   vehicle: Pick<Vehicle, "id" | "vin"> | undefined,
-  options: { excludeOrderId?: string; openedAt?: string; openedOn?: string; number?: number } = {},
+  options: { excludeOrderId?: string; openedAt?: string; openedOn?: string; number?: number; storeId?: string } = {},
 ): MileageVisit | null {
   if (!vehicle) return null;
-  const cutoff = { openedAt: options.openedAt, openedOn: options.openedOn, number: options.number };
-  const mixedOk = options.number !== undefined;
+  const cutoff = { openedAt: options.openedAt, openedOn: options.openedOn, number: options.number, storeId: options.storeId };
   let bestOrder: MileageShop["orders"][number] | null = null;
   let best: MileageVisit | null = null;
   for (const shop of shops) {
     const vinById = new Map(shop.vehicles.map((row) => [row.id, row.vin ?? ""]));
     for (const order of shop.orders) {
       if (options.excludeOrderId && order.id === options.excludeOrderId) continue;
-      if (!earlierVisit(order, cutoff, mixedOk)) continue;
+      if (!rankBefore(order, cutoff)) continue;
       const reading = visitReading(order);
       if (reading <= 0) continue;
       const sameId = order.vehicleId === vehicle.id;
       const otherVin = vinById.get(order.vehicleId) ?? "";
       if (!sameId && !sameVin(vehicle.vin ?? "", otherVin)) continue;
-      if (!bestOrder || earlierVisit(bestOrder, order, true)) {
+      if (!bestOrder || rankBefore(bestOrder, order)) {
         bestOrder = order;
         best = { mileage: reading, readingFrom: visitReadingFrom(order), date: order.openedOn || new Date(openedInstant(order)).toISOString().slice(0, 10), orderId: order.id };
       }

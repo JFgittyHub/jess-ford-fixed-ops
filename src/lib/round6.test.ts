@@ -284,10 +284,13 @@ describe("round 6", () => {
 
   it("does not let an advisor update change the service manager role, and a cap-only fee reaches open repair orders", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const derek = shop.getState().advisors.find((row) => row.role === "service-manager");
+    const derek = shop.getState().serviceManagers.find((row) => row.id === "derek");
     assert.ok(derek);
-    shop.getState().updateAdvisor(derek.id, { name: derek.name, role: "advisor" });
-    assert.equal(shop.getState().advisors.find((row) => row.id === derek.id)?.role, "service-manager");
+    shop.getState().setWorkingAs("derek");
+    assert.equal(shop.getState().updateServiceManager(derek.id, { active: false }).ok, false);
+    assert.equal(shop.getState().removeServiceManager(derek.id).ok, false);
+    assert.equal(shop.getState().serviceManagers.find((row) => row.id === derek.id)?.active, true);
+    shop.getState().setWorkingAs("megan");
     const id = openOrder(shop);
     const shopFee = shop.getState().settings.fees.find((row) => row.basis === "percent");
     assert.ok(shopFee);

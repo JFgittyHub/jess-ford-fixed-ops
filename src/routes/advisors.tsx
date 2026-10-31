@@ -14,18 +14,12 @@ function AdvisorsPage() {
   const addAdvisor = useShop((state) => state.addAdvisor);
   const updateAdvisor = useShop((state) => state.updateAdvisor);
   const removeAdvisor = useShop((state) => state.removeAdvisor);
-  const appointFirstServiceManager = useShop((state) => state.appointFirstServiceManager);
   const [number, setNumber] = useState("");
   const [name, setName] = useState("");
   const [base, setBase] = useState("4200");
   const [laborPercent, setLaborPercent] = useState("5");
   const [partsPercent, setPartsPercent] = useState("2");
-  const [role, setRole] = useState<"advisor" | "service-manager">("advisor");
   const [error, setError] = useState("");
-  const [setupId, setSetupId] = useState("");
-  const [pendingSm, setPendingSm] = useState<{ id: string; names: string[] } | null>(null);
-  const managers = shop.advisors.filter((advisor) => advisor.role === "service-manager");
-  const managerCount = managers.length;
   const pace = dayOfMonth() / daysInMonth();
   const sold = shop.orders.filter(isSold);
 
@@ -48,7 +42,7 @@ function AdvisorsPage() {
             setError("Need a number, a name, and a pay plan.");
             return;
           }
-          const ok = addAdvisor({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts, role });
+          const ok = addAdvisor({ number: number.trim(), name: name.trim(), base: basePay, laborPercent: labor, partsPercent: parts });
           if (!ok) {
             setError("That advisor number is already on the drive.");
             return;
@@ -76,49 +70,11 @@ function AdvisorsPage() {
         <Field label="Parts %">
           <input className="field tabular-nums" type="number" min={0} step={0.1} value={partsPercent} onChange={(event) => setPartsPercent(event.target.value)} />
         </Field>
-        <Field label="Role">
-          <select className="field" aria-label="New advisor role" value={role} onChange={(event) => setRole(event.target.value === "service-manager" ? "service-manager" : "advisor")}>
-            <option value="advisor">Advisor</option>
-            <option value="service-manager">Service manager</option>
-          </select>
-        </Field>
         <div className="flex items-end">
           <Button tone="primary" type="submit">Add advisor</Button>
         </div>
         {error ? <p className="text-sm text-primary md:col-span-6">{error}</p> : null}
       </form>
-
-      {managerCount === 0 ? (
-        <section className="card mt-4 grid gap-2">
-          <h2 className="font-display text-2xl leading-none">Store setup</h2>
-          <p className="text-sm text-muted">Choose the service manager for {shop.settings.storeName}. An advisor does this once. Working as isn't a real sign-in yet.</p>
-          <label className="label">
-            Advisor
-            <select className="field max-w-sm" aria-label="First service manager" value={setupId || shop.advisors[0]?.id || ""} onChange={(event) => setSetupId(event.target.value)}>
-              {shop.advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>{advisor.name}</option>)}
-            </select>
-          </label>
-          <div>
-            <Button type="button" tone="primary" onClick={() => {
-              const result = appointFirstServiceManager(setupId || shop.advisors[0]?.id || "");
-              setError(result.ok ? "" : result.error ?? "That service manager was not saved.");
-            }}>Set the service manager</Button>
-          </div>
-        </section>
-      ) : null}
-      {pendingSm ? (
-        <section className="card mt-4 grid gap-2">
-          <p>{shop.settings.storeName} will have {pendingSm.names.length} service managers ({pendingSm.names.join(", ")}). Continue?</p>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" tone="primary" onClick={() => {
-              const ok = updateAdvisor(pendingSm.id, { role: "service-manager" });
-              setPendingSm(null);
-              setError(ok ? "" : "That role was not saved.");
-            }}>Continue</Button>
-            <Button type="button" onClick={() => setPendingSm(null)}>Cancel</Button>
-          </div>
-        </section>
-      ) : null}
 
       <div className="mt-4 overflow-x-auto card p-0">
         <table className="data-table min-w-[48rem]">
@@ -129,7 +85,6 @@ function AdvisorsPage() {
               <th>Monthly base</th>
               <th>Labor %</th>
               <th>Parts %</th>
-              <th>Role</th>
               <th></th>
             </tr>
           </thead>
@@ -152,36 +107,9 @@ function AdvisorsPage() {
                   <input className="field w-24 tabular-nums" aria-label={`${advisor.name} parts percent`} type="number" min={0} step={0.1} value={advisor.partsPercent} onChange={(event) => updateAdvisor(advisor.id, { partsPercent: Number(event.target.value) || 0 })} />
                 </td>
                 <td>
-                  <select
-                    className="field"
-                    aria-label={`${advisor.name} role`}
-                    value={advisor.role === "service-manager" ? "service-manager" : "advisor"}
-                    onChange={(event) => {
-                      const next = event.target.value === "service-manager" ? "service-manager" : "advisor";
-                      if (next === "service-manager" && advisor.role !== "service-manager" && managerCount >= 1) {
-                        setPendingSm({ id: advisor.id, names: [...managers.map((row) => row.name), advisor.name] });
-                        return;
-                      }
-                      const ok = updateAdvisor(advisor.id, { role: next });
-                      if (ok) {
-                        setError("");
-                        return;
-                      }
-                      if (advisor.role === "service-manager" && next === "advisor" && managerCount === 1) {
-                        setError(`${shop.settings.storeName} needs at least one service manager.`);
-                        return;
-                      }
-                      setError(managerCount === 0 ? "That role was not saved." : "Only a service manager can change a role.");
-                    }}
-                  >
-                    <option value="advisor">Advisor</option>
-                    <option value="service-manager">Service manager</option>
-                  </select>
-                </td>
-                <td>
                   <Button small onClick={() => {
                     const result = removeAdvisor(advisor.id);
-                    setError(result === "ok" ? "" : result === "last" ? "The last service manager stays on the drive." : result === "role" ? "Only a service manager can remove an advisor." : `${advisor.name} is still on a repair order or appointment.`);
+                    setError(result === "ok" ? "" : result === "role" ? "Only a service manager can remove an advisor." : `${advisor.name} is still on a repair order or appointment.`);
                   }}>Remove</Button>
                 </td>
               </tr>
@@ -194,7 +122,7 @@ function AdvisorsPage() {
         {(shop.roleLog ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">No role changes on this store.</p> : (
           <ul className="mt-2 grid gap-1 text-sm">
             {(shop.roleLog ?? []).map((row) => {
-              const named = shop.advisors.find((advisor) => advisor.id === row.advisorId)?.name;
+              const named = row.advisorName || shop.advisors.find((advisor) => advisor.id === row.advisorId)?.name;
               const when = displayRecordedWhen(row.at);
               const subject = named ?? row.advisorId;
               const line = row.after === "removed"

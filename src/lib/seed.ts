@@ -19,6 +19,7 @@ import type {
   Tech,
   Advisor,
   LaborOp,
+  ServiceManager,
 } from "./types";
 
 function mulberry32(seed: number) {
@@ -270,6 +271,7 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
   return {
     ...shop,
     advisors: shop.advisors.map((row) => ({ ...row, id: p(row.id) })),
+    serviceManagers: (shop.serviceManagers ?? []).map((row) => ({ ...row, id: p(row.id) })),
     techs: shop.techs.map((row) => ({ ...row, id: p(row.id) })),
     customers: shop.customers.map((row) => ({ ...row, id: p(row.id) })),
     vehicles: shop.vehicles.map((row) => ({ ...row, id: p(row.id), customerId: p(row.customerId) })),
@@ -416,6 +418,7 @@ export function createEmptyShop(): ShopData {
     dataset: "shop",
     settings,
     advisors: [],
+    serviceManagers: [],
     techs: [],
     customers: [],
     vehicles: [],
@@ -448,15 +451,21 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     ? [
         { id: "jordan", number: "12", name: "Riley Chen", base: 4600, laborPercent: 5.5, partsPercent: 2.5 },
         { id: "megan", number: "19", name: "Noah Briggs", base: 4400, laborPercent: 5, partsPercent: 2 },
-        { id: "derek", number: "27", name: "Tara Singh", base: 4300, laborPercent: 5, partsPercent: 2, role: "service-manager" as const },
+        { id: "derek", number: "27", name: "Tara Singh", base: 4300, laborPercent: 5, partsPercent: 2 },
         { id: "alicia", number: "33", name: "Evan Cho", base: 4100, laborPercent: 4.5, partsPercent: 2 },
       ]
     : [
         { id: "jordan", number: "21", name: "Jordan Hale", base: 4800, laborPercent: 6, partsPercent: 3 },
         { id: "megan", number: "14", name: "Megan Cho", base: 4500, laborPercent: 5, partsPercent: 2 },
-        { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2, role: "service-manager" as const },
+        { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2 },
         { id: "alicia", number: "30", name: "Alicia Nguyen", base: 4000, laborPercent: 4.5, partsPercent: 2 },
       ];
+
+  const serviceManagers: ServiceManager[] = [
+    pullman
+      ? { id: "derek", number: "27", name: "Tara Singh", base: 4300, laborPercent: 5, partsPercent: 2, active: true }
+      : { id: "derek", number: "8", name: "Derek Lang", base: 4200, laborPercent: 5, partsPercent: 2, active: true },
+  ];
 
   const techs: Tech[] = pullman
     ? [
@@ -931,6 +940,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     dataset: "sample",
     settings,
     advisors,
+    serviceManagers,
     techs,
     customers: customers.map((customer) => ({
       ...customer,

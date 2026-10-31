@@ -112,17 +112,48 @@ describe("round 11", () => {
     assert.match(refused.warning ?? "", /Transfer the vehicle to Pat Newowner/);
     assert.equal(refused.customerId, "");
     assert.equal(shop.getState().customers.length, beforeCustomers);
-    const moved = shop.getState().createCustomer({ name: "Pat Newowner", phone: "5095550177", year: 2020, model: "Escape", make: "Ford", vin: ` ${vinA.toLowerCase()} `, confirmTransfer: true });
-    assert.equal(moved.needsTransfer, undefined);
-    const pat = shop.getState().customers.find((row) => row.id === moved.customerId);
+    const held = shop.getState().openWalkIn({
+      name: "Pat Newowner",
+      phone: "5095550177",
+      year: 2020,
+      model: "Escape",
+      make: "Ford",
+      vin: ` ${vinA.toLowerCase()} `,
+      confirmTransfer: true,
+      transferReason: "Sold the truck to the new owner",
+      advisorId: megan.id,
+      lines: [{ concern: "" }],
+      mileage: 5000,
+      promiseTime: "",
+    });
+    assert.equal(held.ok, false);
+    assert.equal(shop.getState().customers.some((row) => row.name === "Pat Newowner"), false);
+    const moved = shop.getState().openWalkIn({
+      name: "Pat Newowner",
+      phone: "5095550177",
+      year: 2020,
+      model: "Escape",
+      make: "Ford",
+      vin: ` ${vinA.toLowerCase()} `,
+      confirmTransfer: true,
+      transferReason: "Sold the truck to the new owner",
+      advisorId: megan.id,
+      lines: [{ concern: "Brakes" }],
+      mileage: 5000,
+      promiseTime: "",
+    });
+    assert.equal(moved.ok, true, moved.error ?? "");
+    const pat = shop.getState().customers.find((row) => row.name === "Pat Newowner");
     assert.equal(pat?.name, "Pat Newowner");
     assert.equal(pat?.phone, "5095550177");
-    assert.equal(shop.getState().vehicles.find((row) => row.id === moved.vehicleId)?.customerId, moved.customerId);
+    assert.equal(shop.getState().vehicles.find((row) => row.id === shop.getState().orders.find((order) => order.id === moved.orderId)?.vehicleId)?.customerId, pat?.id);
+    assert.match(shop.getState().orders.find((order) => order.id === moved.orderId)?.history?.[0]?.text ?? "", /Transferred VIN/);
     const log = shop.getState().ownershipLog?.[0];
     assert.equal(log?.beforeCustomerId, helen.customerId);
-    assert.equal(log?.afterCustomerId, moved.customerId);
+    assert.equal(log?.afterCustomerId, pat?.id);
     assert.equal(log?.beforeVehicleId, helen.vehicleId);
-    assert.ok(log?.afterVehicleId);
+    assert.equal(log?.afterVehicleId, helen.vehicleId);
+    assert.equal(shop.getState().vehicles.filter((row) => row.vin === vinA).length, 1);
     assert.equal(log?.who, "Megan Cho");
     const sandra = shop.getState().createCustomer({ name: "Sandra Delgado", phone: "5095550166", year: 2018, model: "Escape", make: "Ford" });
     const openId = shop.getState().createOrder({
@@ -139,13 +170,14 @@ describe("round 11", () => {
     assert.equal(blank.needsTransfer, true);
     assert.equal(shop.getState().orders.find((row) => row.id === openId)?.vehicleId, sandraVehicle);
     assert.equal(shop.getState().orders.find((row) => row.id === openId)?.customerId, shop.getState().orders.find((row) => row.id === openId)?.customerId);
-    const confirmed = shop.getState().updateOpenVin(openId, vinA, true);
+    const confirmed = shop.getState().updateOpenVin(openId, vinA, true, "Sold the truck to the new owner");
     assert.equal(confirmed.ok, true, confirmed.error ?? "");
     const after = shop.getState().orders.find((row) => row.id === openId);
     assert.equal(after?.customerId, shop.getState().customers.find((row) => row.name === "Sandra Delgado")?.id);
     assert.match(after?.history?.at(-1)?.text ?? "", /Transferred VIN/);
-    assert.equal((after?.history?.at(-1)?.before ?? "").includes(helen.vehicleId), true);
+    assert.equal((after?.history?.at(-1)?.text ?? "").includes("Pat Newowner"), true);
     assert.equal((after?.history?.at(-1)?.after ?? "").includes(after?.customerId ?? "missing"), true);
+    assert.equal(shop.getState().ownershipLog?.some((row) => row.afterCustomerId === after?.customerId && row.beforeVehicleId === row.afterVehicleId), true);
   });
 
   it("lets an advisor appoint the first service manager even when repair orders are closed", () => {
@@ -165,17 +197,21 @@ describe("round 11", () => {
     assert.equal(shop.getState().appointFirstServiceManager(pat.id).ok, true);
     assert.equal(shop.getState().roleLog?.some((row) => row.who === "Pat Reyes" && row.after === "service-manager"), true);
     assert.match(shop.getState().appointFirstServiceManager(pat.id).error ?? "", /already has/);
-    shop.getState().addAdvisor({ number: "2", name: "Alex Rivera", base: 4000, laborPercent: 5, partsPercent: 2 });
-    const alex = shop.getState().advisors.find((row) => row.name === "Alex Rivera");
-    shop.setState({ advisors: shop.getState().advisors.map((row) => (row.id === pat.id ? { ...row, name: " " } : row)) });
-    assert.equal(shop.getState().updateAdvisor(alex?.id ?? "", { role: "service-manager" }), false);
-    shop.setState({ advisors: shop.getState().advisors.map((row) => (row.id === pat.id ? { ...row, name: "Pat Reyes" } : row)) });
-    assert.equal(shop.getState().removeAdvisor(pat.id), "last");
-    assert.equal(shop.getState().advisors.some((row) => row.id === pat.id), true);
-    assert.equal(shop.getState().updateAdvisor(alex?.id ?? "", { role: "service-manager" }), true);
+    assert.equal(shop.getState().updateAdvisor(pat.id, { role: "service-manager" }), false);
+    shop.setState({ serviceManagers: shop.getState().serviceManagers.map((row) => (row.id === pat.id ? { ...row, name: " " } : row)) });
+    const blocked = shop.getState().addServiceManager({ number: "2", name: "Alex Rivera", base: 4000, laborPercent: 5, partsPercent: 2 });
+    assert.equal(blocked.ok, false);
+    shop.setState({ serviceManagers: shop.getState().serviceManagers.map((row) => (row.id === pat.id ? { ...row, name: "Pat Reyes" } : row)) });
+    const added = shop.getState().addServiceManager({ number: "2", name: "Alex Rivera", base: 4000, laborPercent: 5, partsPercent: 2 });
+    assert.equal(added.ok, true, added.error ?? "");
+    const alex = shop.getState().serviceManagers.find((row) => row.name === "Alex Rivera");
     assert.equal(shop.getState().roleLog?.some((row) => row.advisorId === alex?.id && row.after === "service-manager"), true);
-    assert.equal(shop.getState().removeAdvisor(alex?.id ?? ""), "ok");
-    assert.equal(shop.getState().roleLog?.some((row) => row.advisorId === alex?.id && row.after === "removed"), true);
+    assert.equal(shop.getState().removeServiceManager(pat.id).ok, true);
+    shop.getState().setWorkingAs(alex?.id ?? "");
+    assert.match(shop.getState().updateServiceManager(alex?.id ?? "", { active: false }).error ?? "", /at least one/);
+    assert.match(shop.getState().removeServiceManager(alex?.id ?? "").error ?? "", /at least one/);
+    assert.equal(shop.getState().serviceManagers.some((row) => row.id === alex?.id), true);
+    assert.equal(shop.getState().roleLog?.some((row) => row.advisorId === pat.id && row.after === "removed"), true);
   });
 
   it("refuses to move work onto a flagged line", () => {
@@ -271,12 +307,12 @@ describe("round 11", () => {
     const cap = reviewCap(punch ?? { startedAt: "", endedAt: null }, null);
     assert.equal(punchHours(punch?.startedAt ?? "", null, Date.now() + 86_400_000, cap), 0);
     shop.getState().setWorkingAs("marcus");
-    assert.match(shop.getState().resolveFlaggedPunch(punch?.id ?? "").error ?? "", /service manager/);
+    assert.match(shop.getState().resolveFlaggedPunch(punch?.id ?? "", new Date().toISOString()).error ?? "", /service manager/);
     shop.getState().setWorkingAs("derek");
-    assert.equal(shop.getState().resolveFlaggedPunch(punch?.id ?? "").ok, true);
+    assert.equal(shop.getState().resolveFlaggedPunch(punch?.id ?? "", new Date().toISOString()).ok, true);
     const ended = shop.getState().timeLogs.find((row) => row.id === punch?.id);
     assert.equal(typeof ended?.endedAt, "string");
-    assert.match(ended?.note ?? "", /Derek Lang resolved the punch/);
+    assert.match(shop.getState().orders.find((row) => row.id === first)?.history?.at(-1)?.text ?? "", /resolved the punch/);
     assert.equal(shop.getState().clockIn("marcus", second).ok, true);
   });
 
@@ -285,8 +321,8 @@ describe("round 11", () => {
     const timed = { id: "timed", number: 100, openedOn: "2026-10-30", openedAt: "2026-10-30T22:00:00.000Z", vehicleId: "v", mileage: 10, mileageOut: 5000 };
     const untimed = { id: "untimed", number: 200, openedOn: "2026-10-30", vehicleId: "v", mileage: 10, mileageOut: 9000 };
     const shops = [{ orders: [timed, untimed], vehicles: [vehicle] }];
-    assert.equal(lastVisitMileage(shops, vehicle, { excludeOrderId: "timed", openedAt: timed.openedAt, openedOn: "2026-10-30", number: 100 }), null);
-    assert.equal(lastVisitMileage(shops, vehicle, { excludeOrderId: "untimed", openedOn: "2026-10-30", number: 200 })?.orderId, "timed");
+    assert.equal(lastVisitMileage(shops, vehicle, { excludeOrderId: "timed", openedAt: timed.openedAt, openedOn: "2026-10-30", number: 100 })?.orderId, "untimed");
+    assert.equal(lastVisitMileage(shops, vehicle, { excludeOrderId: "untimed", openedOn: "2026-10-30", number: 200 }) ?? null, null);
   });
 
   it("counts a part-only line, keeps its job id, and names the full VIN on a no-work close", () => {
@@ -364,7 +400,7 @@ describe("round 11", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("derek");
     const megan = shop.getState().advisors.find((row) => row.name === "Megan Cho");
-    shop.getState().updateAdvisor(megan?.id ?? "", { role: "service-manager" });
+    shop.getState().updateAdvisor(megan?.id ?? "", { laborPercent: (megan?.laborPercent ?? 5) + 1 });
     const grand = shop.getState().roleLog?.length ?? 0;
     assert.ok(grand > 0);
     shop.getState().switchStore("pullman");
@@ -375,7 +411,7 @@ describe("round 11", () => {
       customer: { id: "c", name: "Helen Cho", phone: "5095550199", mobile: "", email: "", noShows: 0 },
       vehicle: { id: "v", customerId: "c", year: 2019, make: "Ford", model: "F-150", vin: "" },
     });
-    assert.ok(blocks.includes("Add the full 17-character VIN."));
+    assert.ok(blocks.includes("Add the full 17-character VIN"));
   });
 });
 

@@ -4,6 +4,8 @@ import { NewOrder } from "@/components/new-order";
 import { NoShowMark } from "@/components/no-show-mark";
 import { Shell } from "@/components/shell";
 import { Button, Field, Pill } from "@/components/ui";
+import { displayRecordedWhen } from "@/lib/cancel";
+import { vehicleHistoryEntries } from "@/lib/ownership";
 import { daySpan, today } from "@/lib/format";
 import { isSold, lookups } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
@@ -166,7 +168,7 @@ function CustomersPage() {
               <tr key={row.customer.id}>
                 <td>
                   <span className="flex flex-wrap items-baseline gap-2 font-semibold">
-                    {row.customer.name}
+                    {row.customer.name}{row.customer.formerRecord ? " · former record" : ""}
                     <NoShowMark count={row.customer.noShows} />
                   </span>
                   <span className="text-sm text-muted">{row.customer.phone}</span>
@@ -180,6 +182,27 @@ function CustomersPage() {
                     <span key={vehicle.id} className="block">
                       {vehicle.year} Ford {vehicle.model}
                       <span className="block font-mono text-xs text-muted">{vehicle.vin}</span>
+                      {(vehicle.ownership ?? []).map((span) => {
+                        const person = shop.customers.find((customer) => customer.id === span.customerId);
+                        return (
+                          <span key={`${vehicle.id}-${span.startedAt}`} className="block text-xs text-muted">
+                            {span.endedAt ? "Previous owner" : "Owner"}: {person?.name ?? span.customerId}
+                            {person?.phone ? ` · ${person.phone}` : ""}
+                            {" · "}{displayRecordedWhen(span.startedAt)}
+                            {span.endedAt ? ` to ${displayRecordedWhen(span.endedAt)}` : ""}
+                            {span.who ? ` · recorded by ${span.who}` : ""}
+                            {span.reason ? ` · ${span.reason}` : ""}
+                          </span>
+                        );
+                      })}
+                      <p className="mt-1 text-xs font-semibold">Service history</p>
+                      <ul className="grid gap-1 text-xs">
+                        {vehicleHistoryEntries(shop.orders, vehicle, shop.customers, shop.vehicles).map((entry) => (
+                          entry.kind === "divider"
+                            ? <li key={entry.text} className="font-semibold text-ink">{entry.text}</li>
+                            : <li key={entry.order.id}>RO {entry.order.number} · {entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
+                        ))}
+                      </ul>
                     </span>
                   ))}
                 </td>
@@ -205,6 +228,19 @@ function CustomersPage() {
         </table>
       </div>
       <p className="mt-2 text-sm text-muted">Showing {Math.min(40, rows.length)} of {rows.length}.</p>
+      <section className="mt-4">
+        <h2 className="font-display text-2xl leading-none">Ownership changes</h2>
+        {(shop.ownershipLog ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">No vehicle transfers on this store.</p> : (
+          <ul className="mt-2 grid gap-1 text-sm">
+            {(shop.ownershipLog ?? []).map((row) => {
+              const from = shop.customers.find((customer) => customer.id === row.beforeCustomerId)?.name ?? row.beforeCustomerId;
+              const to = shop.customers.find((customer) => customer.id === row.afterCustomerId)?.name ?? row.afterCustomerId;
+              const sameVehicle = row.beforeVehicleId === row.afterVehicleId;
+              return <li key={`${row.at}-${row.beforeVehicleId}-${row.afterVehicleId}`}>{row.who || "Unnamed"} transferred {row.vin} from {from} to {to}.{row.reason ? ` ${row.reason}.` : ""} {sameVehicle ? "" : `Vehicle ${row.beforeVehicleId} to ${row.afterVehicleId}. `}{displayRecordedWhen(row.at)}</li>;
+            })}
+          </ul>
+        )}
+      </section>
       <NewOrder
         open={writing !== null}
         onClose={() => setWriting(null)}

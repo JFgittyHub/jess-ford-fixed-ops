@@ -16,11 +16,12 @@ import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normali
 import { fullVin, isFullVin, normalizeVin, vinCheckWarning, vinEntryError } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
-import { lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, openedInstant, preparedReason } from "./mileage";
+import { formatVisitDate, lastVisitMileage, mileageFloorMessage, mileageInOverrideText, mileageOutGapMessage, mileageOutOverrideText, openedInstant, preparedReason } from "./mileage";
+import { earliestVisitStart, firstOwnership, transferOwnership, transferReason } from "./ownership";
 import { inRange, MONEY_MAX, HOURS_MAX, QTY_MAX, asText, phoneDigits, NAME_MAX, TEXT_MAX, REASON_MAX } from "./range";
 import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, linkLaborAndParts, mileageOverrideAllows, noWorkCloseError, unbookRepairOrder } from "./ro";
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
-import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
+import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ServiceManager, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -47,6 +48,8 @@ export interface NewCustomerInput {
   email?: string;
   /** Required when the VIN is already on file for another customer. */
   confirmTransfer?: boolean;
+  /** Why the vehicle is moving to this customer. Required with confirmTransfer. */
+  transferReason?: string;
 }
 
 interface ShopActions {
@@ -72,8 +75,11 @@ interface ShopActions {
   addAdvisor: (input: Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent"> & { role?: Advisor["role"] }) => boolean;
   updateAdvisor: (id: string, patch: Partial<Pick<Advisor, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "role">>) => boolean;
   removeAdvisor: (id: string) => "ok" | "used" | "role" | "last";
-  /** One-time store setup while this store has no service manager. An advisor runs it. Working as is not a sign-in. */
+  /** Copies an advisor onto the service-manager roster. Does not change the advisor role. Working as is not a sign-in. */
   appointFirstServiceManager: (advisorId: string) => { ok: boolean; error: string | null };
+  addServiceManager: (input: Pick<ServiceManager, "number" | "name" | "base" | "laborPercent" | "partsPercent">) => { ok: boolean; error: string | null };
+  updateServiceManager: (id: string, patch: Partial<Pick<ServiceManager, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "active">>) => { ok: boolean; error: string | null };
+  removeServiceManager: (id: string) => { ok: boolean; error: string | null };
   updateOrder: (orderId: string, patch: Partial<Pick<RepairOrder, "concern" | "mileage" | "mileageOut" | "promiseTime" | "advisorId" | "status" | "bay">>) => void;
   updateJob: (orderId: string, jobId: string, patch: Partial<Pick<JobLine, "concern" | "cause" | "correction">>) => void;
   addJob: (orderId: string) => void;
@@ -95,7 +101,7 @@ interface ShopActions {
   /** Phone and address on an open repair order. Locked once the repair order is closed. */
   updateOpenContact: (orderId: string, patch: { phone?: string; address?: string }) => void;
   /** VIN on the open repair order's vehicle. Locked once the repair order is closed. */
-  updateOpenVin: (orderId: string, vin: string, confirmTransfer?: boolean) => { ok: boolean; error: string | null; warning: string | null; needsTransfer?: boolean };
+  updateOpenVin: (orderId: string, vin: string, confirmTransfer?: boolean, transferReason?: string) => { ok: boolean; error: string | null; warning: string | null; needsTransfer?: boolean };
   /** Move labor or a part off a flagged line onto a real job line. Logged. */
   moveWorkToJob: (orderId: string, kind: "labor" | "part", lineId: string, jobId: string) => void;
   addLabor: (orderId: string, line: Omit<LaborLine, "id">) => void;
@@ -104,7 +110,7 @@ interface ShopActions {
   clockIn: (techId: string, orderId: string) => { ok: boolean; error: string | null };
   clockOut: (techId: string) => { ok: boolean; error: string | null };
   /** Service manager only. Ends a flagged punch on a Closed repair order and logs who did it. */
-  resolveFlaggedPunch: (logId: string) => { ok: boolean; error: string | null };
+  resolveFlaggedPunch: (logId: string, endedAt: string) => { ok: boolean; error: string | null };
   addPartLine: (orderId: string, line: Omit<PartLine, "id">) => void;
   updatePartLine: (orderId: string, lineId: string, patch: Partial<PartLine>) => void;
   removePartLine: (orderId: string, lineId: string) => void;
@@ -122,12 +128,14 @@ interface ShopActions {
   setInspectionPoint: (orderId: string, pointId: string, patch: Partial<Pick<MpiPoint, "status" | "reading" | "note">>) => void;
   createOrder: (input: NewOrderInput) => string;
   createCustomer: (input: NewCustomerInput) => { customerId: string; vehicleId: string; warning?: string | null; error?: string | null; needsTransfer?: boolean };
+  /** New customer and repair order in one step. A VIN transfer is written only when the repair order is created. */
+  openWalkIn: (input: NewCustomerInput & Omit<NewOrderInput, "customerId" | "vehicleId">) => { ok: boolean; orderId: string; error: string | null; warning: string | null; needsTransfer?: boolean };
   setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => void;
   moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>) => { ok: boolean; error: string | null };
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>) => { ok: boolean; error: string | null };
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
-  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null };
+  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean };
   cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }, confirmArrived?: boolean) => { ok: boolean; error: string | null; arrivedConfirm: string | null };
   reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
   setWorkingAs: (id: string) => void;
@@ -152,6 +160,7 @@ export type ShopState = ShopData & ShopActions;
 
 const OPERATIONAL_KEYS = [
   "advisors",
+  "serviceManagers",
   "techs",
   "customers",
   "vehicles",
@@ -333,6 +342,8 @@ function migrateHistoryRow(row: ClosedRecord): ClosedRecord {
 }
 
 function closingAdvisor(state: ShopData): { id: string; name: string } | null {
+  const manager = activeServiceManagers(state).find((row) => row.id === state.workingAsId);
+  if (manager) return { id: manager.id, name: manager.name };
   const advisor = state.advisors.find((row) => row.id === state.workingAsId);
   const tech = state.techs.find((row) => row.id === state.workingAsId);
   if (tech && !advisor) {
@@ -340,12 +351,13 @@ function closingAdvisor(state: ShopData): { id: string; name: string } | null {
     return { id: tech.id, name: tech.name };
   }
   if (!advisor) return null;
-  const actor = advisor.role === "service-manager" ? "service-manager" : "advisor";
-  if (!mayCloseRepairOrder(actor)) return null;
+  if (!mayCloseRepairOrder("advisor")) return null;
   return { id: advisor.id, name: advisor.name };
 }
 
 function matchedStaff(state: ShopData): { id: string; name: string } | null {
+  const manager = state.serviceManagers?.find((row) => row.id === state.workingAsId);
+  if (manager) return { id: manager.id, name: manager.name };
   const advisor = state.advisors.find((row) => row.id === state.workingAsId);
   if (advisor) return { id: advisor.id, name: advisor.name };
   const tech = state.techs.find((row) => row.id === state.workingAsId);
@@ -419,16 +431,16 @@ function shopsFrom(state: { orders: RepairOrder[]; vehicles: Vehicle[]; activeSt
   const activeId = state.activeStoreId === "pullman" ? "pullman" : "grand-coulee";
   const stores = { ...(state.stores ?? {}) };
   stores[activeId] = { ...(stores[activeId] ?? {}), orders: state.orders, vehicles: state.vehicles };
-  const shops = Object.values(stores).flatMap((shop) => {
+  const shops = Object.entries(stores).flatMap(([id, shop]) => {
     if (!shop || !Array.isArray(shop.orders) || !Array.isArray(shop.vehicles)) return [];
-    return [{ orders: shop.orders, vehicles: shop.vehicles }];
+    return [{ orders: shop.orders.map((order) => ({ ...order, storeId: id })), vehicles: shop.vehicles }];
   });
   return shops.length > 0 ? shops : [{ orders: state.orders, vehicles: state.vehicles }];
 }
 
-function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: Pick<RepairOrder, "id" | "number" | "vehicleId" | "openedOn" | "openedAt">) {
+function lastVisitFor(state: { orders: RepairOrder[]; vehicles: Vehicle[]; activeStoreId?: string; stores?: Record<string, { orders?: RepairOrder[]; vehicles?: Vehicle[] }> }, order: Pick<RepairOrder, "id" | "number" | "vehicleId" | "openedOn" | "openedAt">) {
   const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
-  return lastVisitMileage(shopsFrom(state), vehicle, { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number });
+  return lastVisitMileage(shopsFrom(state), vehicle, { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number, storeId: state.activeStoreId });
 }
 
 function jobForLine(order: RepairOrder, requested?: string): string | null {
@@ -463,21 +475,22 @@ function rosterEditor(state: ShopData) {
 
 function ownershipRow(
   who: { id: string; name: string } | null,
-  beforeVehicleId: string,
-  afterVehicleId: string,
+  vehicleId: string,
   beforeCustomerId: string,
   afterCustomerId: string,
   vin: string,
+  reason: string,
 ): OwnershipChange {
   return {
     at: now().toISOString(),
     who: who?.name ?? "",
     whoId: who?.id ?? "",
-    beforeVehicleId,
-    afterVehicleId,
+    beforeVehicleId: vehicleId,
+    afterVehicleId: vehicleId,
     beforeCustomerId,
     afterCustomerId,
     vin,
+    reason,
   };
 }
 
@@ -495,29 +508,220 @@ function appointmentMinutes(value: number | undefined, fallback: number) {
   return snapped;
 }
 
+function currentVehicle(vehicle: Vehicle) {
+  return !vehicle.transferredTo;
+}
+
+function vehicleInUse(state: ShopData, vehicleId: string, exceptOrderId = "") {
+  return state.orders.some((order) => order.vehicleId === vehicleId && order.id !== exceptOrderId)
+    || state.appointments.some((row) => row.vehicleId === vehicleId);
+}
+
+type VinClaimResult =
+  | { ok: false; error: string; warning: string | null; needsTransfer?: boolean; state?: undefined; vehicleId?: undefined; customerId?: undefined }
+  | { ok: false; error: null; warning: string; needsTransfer: true; state?: undefined; vehicleId?: undefined; customerId?: undefined }
+  | { ok: true; error: null; warning: string | null; needsTransfer?: false; state: ShopData; vehicleId: string; customerId: string };
+
+/** One VIN rule for the editor, a new customer, and an appointment. Writes nothing when the caller does not confirm a transfer. */
+function applyVinClaim(state: ShopData, input: {
+  vin: string;
+  customerId: string;
+  confirm?: boolean;
+  reason?: string;
+  orderId?: string;
+  year?: number;
+  make?: string;
+  model?: string;
+}): VinClaimResult {
+  const who = namedActor(state);
+  if (!who) return { ok: false, error: "Choose who is working.", warning: null };
+  if (!rosterEditor(state)) return { ok: false, error: "Only an advisor or service manager can change the VIN.", warning: null };
+  const vinError = vinEntryError(input.vin);
+  const nextVin = normalizeVin(input.vin);
+  if (vinError || !isFullVin(nextVin)) return { ok: false, error: vinError ?? "VIN has to be 17 characters.", warning: null };
+  const typed = state.customers.find((row) => row.id === input.customerId);
+  if (!typed) return { ok: false, error: "That customer is not on this store.", warning: null };
+  const ownerVehicle = state.vehicles.find((row) => currentVehicle(row) && sameVin(row.vin, nextVin));
+  const warning = vinCheckWarning(nextVin);
+  if (ownerVehicle && ownerVehicle.customerId !== typed.id) {
+    const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
+    const question = `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${typed.name}?`;
+    if (!input.confirm) return { ok: false, error: null, warning: question, needsTransfer: true };
+    const reason = transferReason(input.reason);
+    if ("error" in reason) return { ok: false, error: reason.error, warning: question, needsTransfer: true };
+    const at = now().toISOString();
+    const vehicleId = ownerVehicle.id;
+    const previousCustomerId = ownerVehicle.customerId;
+    const moved = transferOwnership(ownerVehicle, typed.id, at, who, reason.text, earliestVisitStart(state.orders, vehicleId, at));
+    let vehicles = state.vehicles.map((row) => (row.id === vehicleId ? moved : row));
+    const source = state.orders.find((row) => row.id === input.orderId);
+    const fromVehicle = state.vehicles.find((row) => row.id === source?.vehicleId);
+    if (fromVehicle && fromVehicle.id !== vehicleId && !normalizeVin(fromVehicle.vin) && !vehicleInUse(state, fromVehicle.id, input.orderId ?? "")) {
+      vehicles = vehicles.filter((row) => row.id !== fromVehicle.id);
+    }
+    let orders = state.orders.map((order) => {
+      if (order.id === input.orderId) return order;
+      if (order.vehicleId !== vehicleId || order.customerId !== previousCustomerId) return order;
+      if (order.status === "closed" || order.authorizationLocked) return order;
+      return appendHistory(order, entry(who, {
+        kind: "note",
+        field: "vin",
+        before: previousCustomerId,
+        after: typed.id,
+        text: `This vehicle was transferred to ${typed.name} on ${formatVisitDate(today())}.`,
+      }));
+    });
+    if (input.orderId) {
+      orders = mapOrder(orders, input.orderId, (live) => {
+        if (lockedOrder(live)) return live;
+        return appendHistory({ ...live, vehicleId, customerId: typed.id }, entry(who, {
+          kind: "note",
+          field: "vin",
+          before: `${vehicleId} ${previousCustomerId}`,
+          after: `${vehicleId} ${typed.id}`,
+          text: `Transferred VIN ${nextVin} from ${owner?.name || "the previous owner"} to ${typed.name} by ${who.name}. Vehicle ${vehicleId} to ${vehicleId}. Customer ${previousCustomerId} to ${typed.id}.`,
+        }));
+      });
+    }
+    return {
+      ok: true,
+      error: null,
+      warning,
+      state: {
+        ...state,
+        vehicles,
+        orders,
+        ownershipLog: [...(state.ownershipLog ?? []), ownershipRow(who, vehicleId, previousCustomerId, typed.id, nextVin, reason.text)],
+      },
+      vehicleId,
+      customerId: typed.id,
+    };
+  }
+  let vehicles = state.vehicles;
+  let vehicleId = ownerVehicle?.id ?? "";
+  let orders = state.orders;
+  if (!ownerVehicle) {
+    const source = state.orders.find((row) => row.id === input.orderId);
+    const held = source ? state.vehicles.find((row) => row.id === source.vehicleId) : undefined;
+    if (held && closedRecordUses(state.orders, "vehicleId", held.id)) {
+      vehicleId = uid("v");
+      vehicles = [{ ...held, id: vehicleId, customerId: typed.id, vin: nextVin, transferredTo: undefined, ownership: [firstOwnership(typed.id, now().toISOString(), who)] }, ...vehicles];
+    } else if (held && currentVehicle(held)) {
+      vehicleId = held.id;
+      vehicles = vehicles.map((row) => (row.id === held.id ? { ...row, vin: nextVin } : row));
+    } else {
+      vehicleId = uid("v");
+      vehicles = [{ id: vehicleId, customerId: typed.id, year: input.year || 0, make: input.make || "Ford", model: input.model || "", vin: nextVin, ownership: [firstOwnership(typed.id, now().toISOString(), who)] }, ...vehicles];
+    }
+  }
+  if (input.orderId) {
+    const source = orders.find((row) => row.id === input.orderId);
+    const previousId = source?.vehicleId ?? "";
+    orders = mapOrder(orders, input.orderId, (live) => {
+      if (lockedOrder(live)) return live;
+      if (live.vehicleId === vehicleId && sameVin(state.vehicles.find((row) => row.id === vehicleId)?.vin ?? nextVin, nextVin)) return live;
+      const beforeVin = state.vehicles.find((row) => row.id === live.vehicleId)?.vin ?? "";
+      return appendHistory({ ...live, vehicleId }, entry(who, {
+        kind: "note",
+        field: "vin",
+        before: beforeVin,
+        after: nextVin,
+        text: `VIN changed from ${beforeVin || "blank"} to ${nextVin} by ${who.name}`,
+      }));
+    });
+    if (previousId && previousId !== vehicleId && !normalizeVin(state.vehicles.find((row) => row.id === previousId)?.vin ?? "") && !vehicleInUse({ ...state, orders }, previousId, input.orderId)) {
+      vehicles = vehicles.filter((row) => row.id !== previousId);
+    }
+  }
+  return { ok: true, error: null, warning, state: { ...state, vehicles, orders }, vehicleId, customerId: typed.id };
+}
+
 function namedActor(state: ShopData): { id: string; name: string } | null {
   const who = matchedStaff(state);
   if (!who?.id || !who.name.trim()) return null;
   return who;
 }
 
+function advisorRows(saved: Partial<ShopData>): Advisor[] {
+  if (!Array.isArray(saved.advisors)) return [];
+  return saved.advisors.filter((advisor) => advisor && typeof advisor === "object").map((advisor, index) => {
+    const row = dropStaffPassword(advisor);
+    return {
+      ...row,
+      number: row.number || ADVISOR_NUMBERS[row.id] || String(index + 1),
+      role: row.role === "service-manager" ? "service-manager" as const : "advisor" as const,
+      base: typeof row.base === "number" ? row.base : 4200,
+      laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 5,
+      partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 2,
+    };
+  });
+}
+
+function liftServiceManagers(advisors: Advisor[], existing: ServiceManager[] | undefined): { advisors: Advisor[]; serviceManagers: ServiceManager[] } {
+  const managers = Array.isArray(existing) ? existing.filter((row) => row && row.id).map((row) => ({
+    id: row.id,
+    number: row.number || "",
+    name: row.name || "",
+    base: typeof row.base === "number" ? row.base : 0,
+    laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 0,
+    partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 0,
+    active: row.active !== false,
+  })) : [];
+  const nextAdvisors = advisors.map((advisor) => {
+    if (advisor.role === "service-manager" && !managers.some((row) => row.id === advisor.id)) {
+      managers.push({
+        id: advisor.id,
+        number: advisor.number,
+        name: advisor.name,
+        base: advisor.base,
+        laborPercent: advisor.laborPercent,
+        partsPercent: advisor.partsPercent,
+        active: true,
+      });
+    }
+    return { ...advisor, role: "advisor" as const };
+  });
+  return { advisors: nextAdvisors, serviceManagers: managers };
+}
+
+function managerSummary(row: Pick<ServiceManager, "number" | "name" | "base" | "laborPercent" | "partsPercent" | "active">) {
+  return `${row.number} ${row.name} base ${row.base} labor ${row.laborPercent} parts ${row.partsPercent} ${row.active === false ? "inactive" : "active"}`;
+}
+
+function activeServiceManagers(state: ShopData) {
+  return (state.serviceManagers ?? []).filter((row) => row.active !== false);
+}
+
 function roleChangeAllowed(state: ShopData, from: string, to: string): boolean {
   if (from === to) return true;
+  if (to === "service-manager") return false;
   if (!namedActor(state)) return false;
-  const hasManager = state.advisors.some((advisor) => advisor.role === "service-manager");
-  if (!hasManager) return false;
+  if (activeServiceManagers(state).length === 0) return false;
   return deskActor(state) === "service-manager";
 }
 
-function roleChangeRow(who: { id: string; name: string } | null, advisorId: string, before: string, after: string): RoleChange {
-  return { at: now().toISOString(), who: who?.name ?? "", whoId: who?.id ?? "", advisorId, before, after };
+function roleChangeRow(who: { id: string; name: string } | null, advisorId: string, before: string, after: string, advisorName = ""): RoleChange {
+  return { at: now().toISOString(), who: who?.name ?? "", whoId: who?.id ?? "", advisorId, before, after, ...(advisorName ? { advisorName } : {}) };
 }
 
 function serviceManager(state: ShopData): { id: string; name: string } | null {
   if (deskActor(state) !== "service-manager") return null;
-  const advisor = state.advisors.find((row) => row.id === state.workingAsId && row.role === "service-manager");
-  if (!advisor) return null;
-  return { id: advisor.id, name: advisor.name };
+  const manager = activeServiceManagers(state).find((row) => row.id === state.workingAsId);
+  if (!manager) return null;
+  return { id: manager.id, name: manager.name };
+}
+
+function serviceManagerEditError(state: ShopData, creating: boolean): string | null {
+  if (!namedActor(state)) return "Choose who is working.";
+  const actor = deskActor(state);
+  if (actor === "technician" || actor === "customer") return "Only an advisor can add the first service manager.";
+  if (activeServiceManagers(state).length === 0) {
+    if (!creating) return "Add a service manager on this screen first.";
+    if (actor !== "advisor") return "Only an advisor can add the first service manager.";
+    return null;
+  }
+  if (actor !== "service-manager") return "Only a service manager can change service manager settings.";
+  return null;
 }
 
 function normalizePayments(value: unknown): RoPayment[] {
@@ -729,6 +933,7 @@ const dataKeys: (keyof ShopData)[] = [
   "dataset",
   "settings",
   "advisors",
+  "serviceManagers",
   "techs",
   "customers",
   "vehicles",
@@ -757,8 +962,12 @@ export function migrateSavedShop(persisted: unknown): ShopState {
   if (!persisted || typeof persisted !== "object") return persisted as ShopState;
   const saved = withoutSavedPasswords(persisted as Partial<ShopData>);
   if (!Array.isArray(saved.orders)) {
+    const lifted = Array.isArray(saved.advisors)
+      ? liftServiceManagers(advisorRows(saved), Array.isArray(saved.serviceManagers) ? saved.serviceManagers : undefined)
+      : {};
     return {
       ...saved,
+      ...lifted,
       dataset: saved.dataset === "sample" ? "sample" : "shop",
       customers: withCustomerFields(saved.customers) ?? saved.customers,
       settings: withScheduling(saved.settings) ?? saved.settings,
@@ -882,19 +1091,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
     closedHistory: Array.isArray(saved.closedHistory) ? saved.closedHistory.map((row) => migrateHistoryRow(row)) : [],
     roleLog: Array.isArray(saved.roleLog) ? saved.roleLog : [],
     ownershipLog: Array.isArray(saved.ownershipLog) ? saved.ownershipLog : [],
-    advisors: Array.isArray(saved.advisors)
-      ? saved.advisors.filter((advisor) => advisor && typeof advisor === "object").map((advisor, index) => {
-          const row = dropStaffPassword(advisor);
-          return {
-            ...row,
-            number: row.number || ADVISOR_NUMBERS[row.id] || String(index + 1),
-            role: row.role === "service-manager" ? "service-manager" as const : "advisor" as const,
-            base: typeof row.base === "number" ? row.base : 4200,
-            laborPercent: typeof row.laborPercent === "number" ? row.laborPercent : 5,
-            partsPercent: typeof row.partsPercent === "number" ? row.partsPercent : 2,
-          };
-        })
-      : saved.advisors,
+    ...liftServiceManagers(advisorRows(saved), Array.isArray(saved.serviceManagers) ? saved.serviceManagers : undefined),
     techs: Array.isArray(saved.techs)
       ? saved.techs.filter((tech) => tech && typeof tech === "object").map((tech, index) => {
           const row = dropStaffPassword(tech);
@@ -952,11 +1149,47 @@ export interface ShopStoreOptions {
   storage?: ShopStorage;
 }
 
-/** Bumped so a load leaves a Closed repair order as saved, including a valid job link, and does not rewrite its fees. */
-export const SHOP_PERSIST_VERSION = 37;
+/** Bumped so advisor service-manager roles become service manager records. Role log rows stay. */
+export const SHOP_PERSIST_VERSION = 38;
+
+function sliceHasActiveManager(row: Partial<ShopData> | undefined): boolean {
+  if (!row) return false;
+  if ((row.serviceManagers ?? []).some((manager) => manager && manager.id && manager.active !== false)) return true;
+  return (row.advisors ?? []).some((advisor) => advisor.role === "service-manager");
+}
+
+function adoptPersistedManagers(
+  backing: ShopStorage,
+  get: () => ShopState,
+  set: (partial: Partial<ShopState>) => void,
+): boolean {
+  const saved = persistedManagers(backing.getItem(SHOP_STORAGE_KEY), get().activeStoreId);
+  if (!saved || !sliceHasActiveManager(saved)) return false;
+  const lifted = liftServiceManagers(saved.advisors ?? get().advisors, saved.serviceManagers);
+  const roleLog = [...(saved.roleLog ?? [])];
+  for (const row of get().roleLog ?? []) {
+    if (!roleLog.some((item) => item.at === row.at && item.advisorId === row.advisorId && item.before === row.before && item.after === row.after)) roleLog.push(row);
+  }
+  set({ serviceManagers: lifted.serviceManagers, roleLog });
+  return true;
+}
+
+function persistedManagers(raw: string | null, storeId: StoreId) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { state?: ShopData & { activeStoreId?: StoreId; stores?: Partial<Record<StoreId, ShopData>> } };
+    const saved = parsed.state;
+    if (!saved) return null;
+    const slices = [saved.stores?.[storeId], saved.stores?.["grand-coulee"], saved.stores?.pullman, saved].filter((row): row is ShopData => Boolean(row && (row.advisors || row.serviceManagers)));
+    return slices.find((row) => sliceHasActiveManager(row)) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export function createShopStore(options: ShopStoreOptions = {}) {
   const demoMode = options.demoMode ?? isDemoMode();
+  const backing = options.storage ?? browserLocalStorage();
   const desk = createDesk(demoMode);
   const active = desk.stores[desk.activeStoreId];
   return create<ShopState>()(
@@ -1179,12 +1412,17 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const number = patch.number === undefined ? current.number : patch.number.trim();
           const name = patch.name === undefined ? current.name : patch.name.trim();
           if (!number || !name) return state;
-          if (name !== current.name && !rosterEditor(state)) return state;
+          if (!rosterEditor(state) || !namedActor(state)) return state;
           if (state.techs.some((tech) => tech.id !== id && tech.number === number)) return state;
           updated = true;
           const who = namedActor(state);
+          const nextFlag = patch.flagRate === undefined || !inRange(patch.flagRate, 0, MONEY_MAX) ? current.flagRate : money2(patch.flagRate);
+          const nextHourly = patch.hourlyRate === undefined || !inRange(patch.hourlyRate, 0, MONEY_MAX) ? current.hourlyRate : money2(patch.hourlyRate);
+          const changed = number !== current.number || name !== current.name || nextFlag !== current.flagRate || nextHourly !== current.hourlyRate || (patch.payStyle !== undefined && patch.payStyle !== current.payStyle) || (patch.skill !== undefined && patch.skill !== current.skill) || (patch.board !== undefined && patch.board !== current.board);
+          const before = name !== current.name && nextFlag === current.flagRate && nextHourly === current.hourlyRate && number === current.number ? current.name : `${current.number} ${current.name} flag ${current.flagRate} hourly ${current.hourlyRate}`;
+          const after = name !== current.name && nextFlag === current.flagRate && nextHourly === current.hourlyRate && number === current.number ? name : `${number} ${name} flag ${nextFlag} hourly ${nextHourly}`;
           return {
-            roleLog: name === current.name ? state.roleLog : [...(state.roleLog ?? []), roleChangeRow(who, id, current.name, name)],
+            roleLog: changed ? [...(state.roleLog ?? []), roleChangeRow(who, id, before, after, current.name)] : state.roleLog,
             techs: state.techs.map((tech) =>
               tech.id === id
                 ? {
@@ -1223,10 +1461,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const number = input.number.trim();
         if (!name || !number || !inRange(input.base, 0, MONEY_MAX) || !inRange(input.laborPercent, 0, 100) || !inRange(input.partsPercent, 0, 100)) return false;
         let added = false;
+        if (input.role === "service-manager") return false;
         set((state) => {
           if (state.advisors.some((advisor) => advisor.number === number)) return state;
-          const role = input.role === "service-manager" ? "service-manager" : "advisor";
-          if (!roleChangeAllowed(state, "advisor", role)) return state;
+          if (!roleChangeAllowed(state, "advisor", "advisor")) return state;
           added = true;
           const advisor: Advisor = {
             id: uid("adv"),
@@ -1235,13 +1473,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             base: money2(input.base),
             laborPercent: input.laborPercent,
             partsPercent: input.partsPercent,
-            role,
+            role: "advisor",
           };
-          const roleLog = role === "service-manager"
-            ? [...(state.roleLog ?? []), roleChangeRow(matchedStaff(state), advisor.id, "advisor", "service-manager")]
-            : state.roleLog;
           return {
-            roleLog,
             advisors: [...state.advisors, advisor].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })),
           };
         });
@@ -1258,12 +1492,22 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (state.advisors.some((advisor) => advisor.id !== id && advisor.number === number)) return state;
           const nextRole = patch.role === "service-manager" || patch.role === "advisor" ? patch.role : (current.role ?? "advisor");
           const managers = state.advisors.filter((advisor) => advisor.role === "service-manager");
+          if (!rosterEditor(state) || !namedActor(state)) return state;
           if (current.role === "service-manager" && nextRole !== "service-manager" && managers.length <= 1) return state;
           if (!roleChangeAllowed(state, current.role ?? "advisor", nextRole)) return state;
           updated = true;
-          const roleLog = nextRole === (current.role ?? "advisor")
-            ? state.roleLog
-            : [...(state.roleLog ?? []), roleChangeRow(matchedStaff(state), id, current.role ?? "advisor", nextRole)];
+          const who = namedActor(state);
+          const before = `${current.number} ${current.name} base ${current.base} labor ${current.laborPercent} parts ${current.partsPercent} ${current.role ?? "advisor"}`;
+          const nextBase = patch.base === undefined || !inRange(patch.base, 0, MONEY_MAX) ? current.base : money2(patch.base);
+          const nextLabor = patch.laborPercent === undefined || !inRange(patch.laborPercent, 0, 100) ? current.laborPercent : patch.laborPercent;
+          const nextParts = patch.partsPercent === undefined || !inRange(patch.partsPercent, 0, 100) ? current.partsPercent : patch.partsPercent;
+          const after = `${number} ${name} base ${nextBase} labor ${nextLabor} parts ${nextParts} ${nextRole}`;
+          const roleRows = [...(state.roleLog ?? [])];
+          if ((current.role ?? "advisor") !== nextRole) roleRows.push(roleChangeRow(who, id, current.role ?? "advisor", nextRole, current.name));
+          if (number !== current.number || name !== current.name || nextBase !== current.base || nextLabor !== current.laborPercent || nextParts !== current.partsPercent) {
+            roleRows.push(roleChangeRow(who, id, before, after, current.name));
+          }
+          const roleLog = roleRows;
           return {
             roleLog,
             advisors: state.advisors.map((advisor) =>
@@ -1284,6 +1528,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return updated;
       },
       appointFirstServiceManager: (advisorId) => {
+        const adopted = adoptPersistedManagers(backing, get, set);
+        if (adopted) return { ok: false, error: "This store already has a service manager." };
         let error: string | null = null;
         set((shop) => {
           const who = namedActor(shop);
@@ -1291,7 +1537,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             error = "Choose who is working before setting a service manager.";
             return shop;
           }
-          if (shop.advisors.some((advisor) => advisor.role === "service-manager")) {
+          if (activeServiceManagers(shop).length > 0 || shop.advisors.some((advisor) => advisor.role === "service-manager")) {
             error = "This store already has a service manager.";
             return shop;
           }
@@ -1305,9 +1551,136 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             return shop;
           }
           error = null;
+          const manager: ServiceManager = {
+            id: advisor.id,
+            number: advisor.number,
+            name: advisor.name,
+            base: advisor.base,
+            laborPercent: advisor.laborPercent,
+            partsPercent: advisor.partsPercent,
+            active: true,
+          };
           return {
-            advisors: shop.advisors.map((row) => (row.id === advisorId ? { ...row, role: "service-manager" as const } : row)),
-            roleLog: [...(shop.roleLog ?? []), roleChangeRow(who, advisorId, advisor.role ?? "advisor", "service-manager")],
+            serviceManagers: [...(shop.serviceManagers ?? []).filter((row) => row.id !== advisor.id), manager],
+            roleLog: [...(shop.roleLog ?? []), roleChangeRow(who, advisorId, advisor.role ?? "advisor", "service-manager", advisor.name)],
+          };
+        });
+        return error ? { ok: false, error } : { ok: true, error: null };
+      },
+      addServiceManager: (input) => {
+        const name = input.name.trim();
+        const number = input.number.trim();
+        if (!name || !number || !inRange(input.base, 0, MONEY_MAX) || !inRange(input.laborPercent, 0, 100) || !inRange(input.partsPercent, 0, 100)) {
+          return { ok: false, error: "Need a number, a name, and a pay plan." };
+        }
+        if (activeServiceManagers(get()).length === 0 && adoptPersistedManagers(backing, get, set)) {
+          return { ok: false, error: "This store already has a service manager." };
+        }
+        let error: string | null = null;
+        set((shop) => {
+          const gate = serviceManagerEditError(shop, true);
+          if (gate) {
+            error = gate;
+            return shop;
+          }
+          if ((shop.serviceManagers ?? []).some((row) => row.number === number)) {
+            error = "That service manager number is already on the drive.";
+            return shop;
+          }
+          const who = namedActor(shop);
+          error = null;
+          const manager: ServiceManager = {
+            id: uid("sm"),
+            number,
+            name,
+            base: money2(input.base),
+            laborPercent: input.laborPercent,
+            partsPercent: input.partsPercent,
+            active: true,
+          };
+          return {
+            serviceManagers: [...(shop.serviceManagers ?? []), manager].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true })),
+            roleLog: [
+              ...(shop.roleLog ?? []),
+              roleChangeRow(who, manager.id, "none", "service-manager", manager.name),
+              roleChangeRow(who, manager.id, "none", managerSummary(manager), manager.name),
+            ],
+          };
+        });
+        return error ? { ok: false, error } : { ok: true, error: null };
+      },
+      updateServiceManager: (id, patch) => {
+        let error: string | null = null;
+        set((shop) => {
+          const current = (shop.serviceManagers ?? []).find((row) => row.id === id);
+          if (!current) {
+            error = "That service manager is not on this store.";
+            return shop;
+          }
+          const gate = serviceManagerEditError(shop, false);
+          if (gate) {
+            error = gate;
+            return shop;
+          }
+          const number = patch.number === undefined ? current.number : patch.number.trim();
+          const name = patch.name === undefined ? current.name : patch.name.trim();
+          if (!number || !name) {
+            error = "A service manager needs a number and a name.";
+            return shop;
+          }
+          if ((shop.serviceManagers ?? []).some((row) => row.id !== id && row.number === number)) {
+            error = "That service manager number is already on the drive.";
+            return shop;
+          }
+          const nextActive = patch.active === undefined ? current.active !== false : patch.active !== false;
+          const activeCount = activeServiceManagers(shop).length;
+          if (current.active !== false && !nextActive && activeCount <= 1) {
+            error = `${shop.settings.storeName} needs at least one service manager.`;
+            return shop;
+          }
+          const next: ServiceManager = {
+            ...current,
+            number,
+            name,
+            base: patch.base === undefined || !inRange(patch.base, 0, MONEY_MAX) ? current.base : money2(patch.base),
+            laborPercent: patch.laborPercent === undefined || !inRange(patch.laborPercent, 0, 100) ? current.laborPercent : patch.laborPercent,
+            partsPercent: patch.partsPercent === undefined || !inRange(patch.partsPercent, 0, 100) ? current.partsPercent : patch.partsPercent,
+            active: nextActive,
+          };
+          const before = managerSummary(current);
+          const after = managerSummary(next);
+          error = null;
+          if (before === after) return { serviceManagers: shop.serviceManagers };
+          const who = namedActor(shop);
+          return {
+            serviceManagers: (shop.serviceManagers ?? []).map((row) => (row.id === id ? next : row)),
+            roleLog: [...(shop.roleLog ?? []), roleChangeRow(who, id, before, after, current.name)],
+          };
+        });
+        return error ? { ok: false, error } : { ok: true, error: null };
+      },
+      removeServiceManager: (id) => {
+        let error: string | null = null;
+        set((shop) => {
+          const current = (shop.serviceManagers ?? []).find((row) => row.id === id);
+          if (!current) {
+            error = "That service manager is not on this store.";
+            return shop;
+          }
+          const gate = serviceManagerEditError(shop, false);
+          if (gate) {
+            error = gate;
+            return shop;
+          }
+          if (current.active !== false && activeServiceManagers(shop).length <= 1) {
+            error = `${shop.settings.storeName} needs at least one service manager.`;
+            return shop;
+          }
+          const who = namedActor(shop);
+          error = null;
+          return {
+            serviceManagers: (shop.serviceManagers ?? []).filter((row) => row.id !== id),
+            roleLog: [...(shop.roleLog ?? []), roleChangeRow(who, id, `service-manager ${managerSummary(current)}`, "removed", current.name)],
           };
         });
         return error ? { ok: false, error } : { ok: true, error: null };
@@ -1333,7 +1706,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }
           return {
             advisors: state.advisors.filter((advisor) => advisor.id !== id),
-            roleLog: [...(state.roleLog ?? []), roleChangeRow(who, id, target?.role ?? "advisor", "removed")],
+            roleLog: [...(state.roleLog ?? []), roleChangeRow(who, id, target?.role ?? "advisor", "removed", target?.name ?? "")],
           };
         });
         return result;
@@ -1344,9 +1717,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             if (lockedOrder(order)) return order;
             const status = patch.status && OPEN_STATUS_PATCH.has(patch.status) && order.status !== "booked" ? patch.status : order.status;
             let mileage = order.mileage;
+            const outOverride = (order.history ?? []).some((row) => row.kind === "mileage-override" && row.field === "mileageOut");
             if (patch.mileage !== undefined && Number.isFinite(patch.mileage) && patch.mileage > 0 && patch.mileage <= 999999) {
+              const aboveOut = order.mileageOut != null && patch.mileage > order.mileageOut;
               const blocked = mileageFloorMessage(patch.mileage, lastVisitFor(state, order));
-              if (!blocked || mileageOverrideAllows(order, patch.mileage)) mileage = patch.mileage;
+              if (!aboveOut && !outOverride && (!blocked || mileageOverrideAllows(order, patch.mileage))) mileage = patch.mileage;
             }
             let mileageOut = order.mileageOut;
             if (patch.mileageOut !== undefined) {
@@ -1651,7 +2026,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           const order = state.orders.find((row) => row.id === orderId);
           if (!order || lockedOrder(order)) return state;
-          const who = matchedStaff(state);
+          if (!rosterEditor(state) || !namedActor(state)) return state;
+          const who = namedActor(state);
           let customers = state.customers;
           let vehicles = state.vehicles;
           let next = order;
@@ -1663,12 +2039,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               if (customer && before !== after) {
                 if (closedRecordUses(state.orders, "customerId", customer.id)) {
                   const customerId = uid("c");
+                  customers = customers.map((row) => (row.id === customer.id ? { ...row, formerRecord: "former record" } : row));
                   customers = [{ ...customer, id: customerId, phone: after }, ...customers];
                   let vehicleId = order.vehicleId;
                   const vehicle = vehicles.find((row) => row.id === order.vehicleId);
                   if (vehicle && closedRecordUses(state.orders, "vehicleId", vehicle.id)) {
                     vehicleId = uid("v");
-                    vehicles = [{ ...vehicle, id: vehicleId, customerId, vin: normalizeVin(vehicle.vin) }, ...vehicles];
+                    vehicles = [{ ...vehicle, id: vehicleId, customerId, vin: normalizeVin(vehicle.vin), ownership: vehicle.ownership?.map((span) => ({ ...span })) }, ...vehicles];
                   } else if (vehicle) {
                     vehicles = vehicles.map((row) => (row.id === vehicle.id ? { ...row, customerId } : row));
                   }
@@ -1812,14 +2189,15 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             if (order && lockedOrder(order)) {
               const closeAt = typeof order.closedAt === "string" && order.closedAt.trim() ? order.closedAt : "";
               if (!closeAt) {
-                return { ...row, needsReview: true, note: "No close time is on this repair order, so the punch stays open for service manager review." };
+                return { ...row, needsReview: true, clockedOutAt: stamp, note: "No close time is on this repair order, so the punch stays open for service manager review." };
               }
               if (Date.parse(closeAt) < Date.parse(row.startedAt)) {
-                return { ...row, needsReview: true, note: "The close time is before this punch started, so it stays open for service manager review." };
+                return { ...row, needsReview: true, clockedOutAt: stamp, note: "The close time is before this punch started, so it stays open for service manager review." };
               }
               return {
                 ...row,
                 endedAt: closeAt,
+                clockedOutAt: closeAt,
                 needsReview: true,
                 note: `${actor?.name ?? "A technician"} closed the punch at the repair order's close time for service manager review.`,
               };
@@ -1829,21 +2207,37 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }));
         return { ok: true, error: null };
       },
-      resolveFlaggedPunch: (logId) => {
+      resolveFlaggedPunch: (logId, endedAtInput) => {
         const state = get();
         const who = serviceManager(state);
         if (!who) return { ok: false, error: "Only a service manager can resolve a punch." };
         const punch = state.timeLogs.find((row) => row.id === logId);
-        if (!punch || punch.endedAt || !punch.needsReview) return { ok: false, error: "That punch is not waiting for review." };
+        if (!punch || !punch.needsReview) return { ok: false, error: "That punch is not waiting for review." };
+        const endMs = Date.parse(endedAtInput);
+        if (!Number.isFinite(endMs)) return { ok: false, error: "Enter the end time." };
+        const startMs = Date.parse(punch.startedAt);
         const order = state.orders.find((row) => row.id === punch.orderId);
         const closeAt = typeof order?.closedAt === "string" && order.closedAt.trim() ? order.closedAt : "";
-        const endedAt = closeAt && Date.parse(closeAt) >= Date.parse(punch.startedAt) ? closeAt : now().toISOString();
+        const closeMs = Date.parse(closeAt);
+        const latest = Number.isFinite(closeMs) && closeMs >= startMs ? closeMs : Date.now();
+        if (!Number.isFinite(startMs) || endMs < startMs || endMs > latest) {
+          return { ok: false, error: "The end time has to be between when the punch started and when the repair order closed." };
+        }
+        const endedAt = new Date(endMs).toISOString();
+        const kept = punch.note?.trim() ? `${punch.note.trim()} ` : "";
         set((shop) => ({
           timeLogs: shop.timeLogs.map((row) => (
-            row.id === logId && !row.endedAt
-              ? { ...row, endedAt, needsReview: true, note: `${who.name} resolved the punch.` }
+            row.id === logId && row.needsReview
+              ? { ...row, endedAt, needsReview: false, note: kept, resolvedBy: who.name, resolvedById: who.id, resolvedAt: now().toISOString() }
               : row
           )),
+          orders: order ? mapOrder(shop.orders, order.id, (live) => appendHistory(live, entry(who, {
+            kind: "note",
+            field: "punch",
+            before: punch.startedAt,
+            after: endedAt,
+            text: `${who.name} resolved the punch. Ended ${endedAt}.`,
+          }))) : shop.orders,
         }));
         return { ok: true, error: null };
       },
@@ -1989,17 +2383,23 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       addFee: (input) => {
         const name = asText(input.name, NAME_MAX);
-        if (!name || !inRange(input.amount, 0, MONEY_MAX) || !rosterEditor(get())) return false;
+        if (!name || !inRange(input.amount, 0, MONEY_MAX) || !rosterEditor(get()) || !namedActor(get())) return false;
         set((state) => {
-          const fees = [...state.settings.fees, { id: uid("fee"), name, amount: money2(input.amount), basis: "flat" as const, cap: 0 }];
-          const who = matchedStaff(state);
-          return { settings: { ...state.settings, fees }, orders: state.orders.map((order) => applyFeeChange(order, fees, who, "Added a shop fee")) };
+          const fee = { id: uid("fee"), name, amount: money2(input.amount), basis: "flat" as const, cap: 0 };
+          const fees = [...state.settings.fees, fee];
+          const who = namedActor(state);
+          return {
+            roleLog: [...(state.roleLog ?? []), roleChangeRow(who, fee.id, "none", `${fee.name} ${fee.amount}`, fee.name)],
+            settings: { ...state.settings, fees },
+            orders: state.orders.map((order) => applyFeeChange(order, fees, who, "Added a shop fee")),
+          };
         });
         return true;
       },
       updateFee: (id, patch) =>
         set((state) => {
-          if (!rosterEditor(state)) return state;
+          if (!rosterEditor(state) || !namedActor(state)) return state;
+          const current = state.settings.fees.find((line) => line.id === id);
           const fees = state.settings.fees.map((line) => {
             if (line.id !== id) return line;
             return {
@@ -2009,15 +2409,24 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               cap: patch.cap === undefined || !inRange(patch.cap, 0, MONEY_MAX) ? line.cap : money2(patch.cap),
             };
           });
-          const who = matchedStaff(state);
-          return { settings: { ...state.settings, fees }, orders: state.orders.map((order) => applyFeeChange(order, fees, who, "Updated a shop fee")) };
+          const next = fees.find((line) => line.id === id);
+          const who = namedActor(state);
+          const roleLog = current && next && (current.name !== next.name || current.amount !== next.amount || current.cap !== next.cap)
+            ? [...(state.roleLog ?? []), roleChangeRow(who, id, `${current.name} ${current.amount}`, `${next.name} ${next.amount}`, current.name)]
+            : state.roleLog;
+          return { roleLog, settings: { ...state.settings, fees }, orders: state.orders.map((order) => applyFeeChange(order, fees, who, "Updated a shop fee")) };
         }),
       removeFee: (id) =>
         set((state) => {
-          if (!rosterEditor(state)) return state;
+          if (!rosterEditor(state) || !namedActor(state)) return state;
+          const current = state.settings.fees.find((line) => line.id === id);
           const fees = state.settings.fees.filter((line) => line.id !== id);
-          const who = matchedStaff(state);
-          return { settings: { ...state.settings, fees }, orders: state.orders.map((order) => applyFeeChange(order, fees, who, "Removed a shop fee")) };
+          const who = namedActor(state);
+          return {
+            roleLog: current ? [...(state.roleLog ?? []), roleChangeRow(who, id, `${current.name} ${current.amount}`, "removed", current.name)] : state.roleLog,
+            settings: { ...state.settings, fees },
+            orders: state.orders.map((order) => applyFeeChange(order, fees, who, "Removed a shop fee")),
+          };
         }),
       attachInspection: (orderId) =>
         set((state) => ({
@@ -2062,8 +2471,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       createOrder: (input) => {
         const state = get();
         const vehicle = state.vehicles.find((row) => row.id === input.vehicleId);
+        if (!vehicle || vehicle.customerId !== input.customerId || vehicle.transferredTo) return "";
         const openedAt = now().toISOString();
-        const lastVisit = lastVisitMileage(shopsFrom(state), vehicle, { openedAt });
+        const lastVisit = lastVisitMileage(shopsFrom(state), vehicle, { openedAt, storeId: state.activeStoreId });
         if (!inRange(input.mileage, 1, 999999)) return "";
         const below = mileageFloorMessage(input.mileage, lastVisit);
         const manager = serviceManager(state);
@@ -2141,24 +2551,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const vinError = vinEntryError(vinText);
         if (vinError) return { customerId: "", vehicleId: "", error: vinError, warning: null };
         const state = get();
-        const existing = vinText ? state.vehicles.find((row) => sameVin(row.vin, vinText)) : undefined;
+        const existing = vinText ? state.vehicles.find((row) => currentVehicle(row) && sameVin(row.vin, vinText)) : undefined;
         if (existing) {
           const owner = state.customers.find((row) => row.id === existing.customerId);
-          const question = `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?`;
-          if (!input.confirmTransfer) return { customerId: "", vehicleId: "", error: null, warning: question, needsTransfer: true };
-          const who = matchedStaff(state);
-          const customerId = uid("c");
-          const held = closedRecordUses(state.orders, "vehicleId", existing.id);
-          const vehicleId = held ? uid("v") : existing.id;
-          const customer = { id: customerId, name, phone, mobile: input.mobile?.trim() ?? "", email: input.email?.trim() ?? "", noShows: 0 };
-          set((shop) => ({
-            customers: [customer, ...shop.customers],
-            vehicles: held
-              ? [{ ...existing, id: vehicleId, customerId, vin: normalizeVin(existing.vin) }, ...shop.vehicles]
-              : shop.vehicles.map((row) => (row.id === existing.id ? { ...row, customerId, vin: normalizeVin(row.vin) } : row)),
-            ownershipLog: [...(shop.ownershipLog ?? []), ownershipRow(who, existing.id, vehicleId, existing.customerId, customerId, normalizeVin(existing.vin))],
-          }));
-          return { customerId, vehicleId, error: null, warning: vinCheckWarning(vinText) };
+          return {
+            customerId: "",
+            vehicleId: "",
+            error: null,
+            warning: `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?`,
+            needsTransfer: true,
+          };
         }
         const vin = demoMode ? (vinText || demoVin()) : vinText;
         const customerId = uid("c");
@@ -2173,90 +2575,127 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               make: input.make === undefined ? "Ford" : input.make.trim(),
               model,
               vin,
+              ownership: [firstOwnership(customerId, now().toISOString(), namedActor(shop))],
             },
             ...shop.vehicles,
           ],
         }));
         return { customerId, vehicleId, error: null, warning: vinText ? vinCheckWarning(vinText) : null };
       },
-      updateOpenVin: (orderId, vin, confirmTransfer) => {
+      openWalkIn: (input) => {
+        const name = asText(input.name, NAME_MAX);
+        const model = asText(input.model, NAME_MAX);
+        if (!name || !model || typeof input.phone !== "string") return { ok: false, orderId: "", error: "Add the customer name and model.", warning: null };
+        const phone = input.phone.trim();
+        if (phone && phoneDigits(phone).length !== 10) return { ok: false, orderId: "", error: "Enter a 10-digit phone number.", warning: null };
+        const concerns = input.lines.map((line) => line.concern.trim()).filter(Boolean);
+        if (concerns.length === 0) return { ok: false, orderId: "", error: "Add a concern.", warning: null };
+        if (!inRange(input.mileage, 1, 999999)) return { ok: false, orderId: "", error: input.mileage > 999999 ? "Mileage in can't be over 999,999." : "Mileage in has to be greater than zero.", warning: null };
+        const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
+        if (vinText) {
+          const vinError = vinEntryError(vinText);
+          if (vinError) return { ok: false, orderId: "", error: vinError, warning: null };
+        }
+        const state = get();
+        const ownerVehicle = vinText ? state.vehicles.find((row) => currentVehicle(row) && sameVin(row.vin, vinText)) : undefined;
+        const same = ownerVehicle ? state.customers.find((row) => row.id === ownerVehicle.customerId && row.name === name && row.phone === phone) : undefined;
+        if (ownerVehicle && !same) {
+          if (!namedActor(state)) return { ok: false, orderId: "", error: "Choose who is working.", warning: null };
+          if (!rosterEditor(state)) return { ok: false, orderId: "", error: "Only an advisor or service manager can change the VIN.", warning: null };
+          const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
+          if (!input.confirmTransfer) {
+            return { ok: false, orderId: "", error: null, warning: `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?`, needsTransfer: true };
+          }
+        }
+        const customerId = same?.id ?? uid("c");
+        let draft: ShopData = same ? state : {
+          ...state,
+          customers: [{ id: customerId, name, phone, mobile: input.mobile?.trim() ?? "", email: input.email?.trim() ?? "", noShows: 0 }, ...state.customers],
+        };
+        let vehicleId = same && ownerVehicle ? ownerVehicle.id : "";
+        let transferNote: RoHistoryEntry | null = null;
+        if (ownerVehicle && !same) {
+          const claim = applyVinClaim(draft, { vin: vinText, customerId, confirm: true, reason: input.transferReason, year: input.year, make: input.make, model });
+          if (!claim.ok || !claim.state) return { ok: false, orderId: "", error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
+          draft = claim.state;
+          vehicleId = claim.vehicleId;
+          const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
+          const who = namedActor(state);
+          transferNote = entry(who, {
+            kind: "note",
+            field: "vin",
+            before: `${ownerVehicle.id} ${ownerVehicle.customerId}`,
+            after: `${vehicleId} ${customerId}`,
+            text: `Transferred VIN ${vinText} from ${owner?.name || "the previous owner"} to ${name} by ${who?.name ?? ""}. Vehicle ${ownerVehicle.id} to ${vehicleId}. Customer ${ownerVehicle.customerId} to ${customerId}.`,
+          });
+        } else if (!vehicleId) {
+          vehicleId = uid("v");
+          const vin = demoMode ? (vinText || demoVin()) : vinText;
+          draft = { ...draft, vehicles: [{ id: vehicleId, customerId, year: input.year, make: input.make === undefined ? "Ford" : input.make.trim(), model, vin, ownership: [firstOwnership(customerId, now().toISOString(), namedActor(draft))] }, ...draft.vehicles] };
+        }
+        const vehicle = draft.vehicles.find((row) => row.id === vehicleId);
+        const openedAt = now().toISOString();
+        const lastVisit = lastVisitMileage(shopsFrom(draft), vehicle, { openedAt, storeId: state.activeStoreId });
+        const below = mileageFloorMessage(input.mileage, lastVisit);
+        const manager = serviceManager(draft);
+        const prepared = preparedReason(input.mileageReason ?? "");
+        if (below && (!manager || "error" in prepared)) return { ok: false, orderId: "", error: below, warning: null };
+        if (input.mileageOut != null && (!inRange(input.mileageOut, 0, 999999) || input.mileageOut < input.mileage || mileageOutGapMessage(input.mileage, input.mileageOut))) {
+          return { ok: false, orderId: "", error: "Mileage out can't be lower than mileage in.", warning: null };
+        }
+        const id = uid("ro");
+        const reasonText = "text" in prepared ? prepared.text : "";
+        const override = below && manager && lastVisit
+          ? entry(manager, { kind: "mileage-override", field: "mileage", before: "", after: String(input.mileage), reason: reasonText, text: mileageInOverrideText(input.mileage, lastVisit, reasonText) })
+          : null;
+        const jobs = concerns.map((concern, index) => jobLine(uid("jb"), lineLetter(index), concern));
+        const order: RepairOrder = {
+          id,
+          number: nextOrderNumber(draft),
+          openedOn: today(),
+          openedAt,
+          promiseTime: input.promiseTime,
+          status: "open",
+          bay: "dispatch",
+          advisorId: input.advisorId,
+          customerId,
+          vehicleId,
+          concern: concernFromJobs(jobs),
+          jobs,
+          wa: blankWa(),
+          mileage: input.mileage,
+          mileageOut: input.mileageOut ?? null,
+          fees: draft.settings.fees.map((line) => ({ ...line })),
+          taxRate: draft.settings.taxRate,
+          labor: [],
+          parts: [],
+          invoicedOn: null,
+          stockApplied: false,
+          inspection: blankSheet(draft.techs[0]?.id ?? ""),
+          closeType: null,
+          closeNote: "",
+          closedBy: "",
+          closedById: "",
+          closedAt: null,
+          droppedFeesNote: "",
+          history: [transferNote, override].filter((row): row is RoHistoryEntry => Boolean(row)),
+          payments: [],
+        };
+        set({ ...draft, orders: [order, ...draft.orders], focusOrderId: id });
+        return { ok: true, orderId: id, error: null, warning: vinText ? vinCheckWarning(vinText) : null };
+      },
+      updateOpenVin: (orderId, vin, confirmTransfer, transferReasonText) => {
         const state = get();
         const order = state.orders.find((row) => row.id === orderId);
         if (!order) return { ok: false, error: "That repair order is not on this store.", warning: null };
         if (lockedOrder(order)) return { ok: false, error: "This repair order is closed and can't be changed.", warning: null };
-        const actor = deskActor(state);
-        if (actor !== "advisor" && actor !== "service-manager") return { ok: false, error: "Only an advisor or service manager can change the VIN.", warning: null };
-        const vinError = typeof vin === "string" ? vinEntryError(vin) : "VIN has to be 17 characters.";
-        const nextVin = typeof vin === "string" ? normalizeVin(vin) : "";
-        if (vinError || !isFullVin(nextVin)) return { ok: false, error: vinError ?? "VIN has to be 17 characters.", warning: null };
-        const who = matchedStaff(state);
-        const typed = state.customers.find((row) => row.id === order.customerId);
-        const visit = { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number };
-        const existing = state.vehicles.find((row) => row.id !== order.vehicleId && sameVin(row.vin, nextVin));
-        if (existing && existing.customerId !== order.customerId) {
-          const owner = state.customers.find((row) => row.id === existing.customerId);
-          const question = `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${typed?.name || "this customer"}?`;
-          if (!confirmTransfer) return { ok: false, error: null, warning: question, needsTransfer: true };
-          const held = closedRecordUses(state.orders, "vehicleId", existing.id);
-          const vehicleId = held ? uid("v") : existing.id;
-          const change = ownershipRow(who, existing.id, vehicleId, existing.customerId, order.customerId, nextVin);
-          set((shop) => ({
-            vehicles: held
-              ? [{ ...existing, id: vehicleId, customerId: order.customerId, vin: nextVin }, ...shop.vehicles]
-              : shop.vehicles.map((row) => (row.id === existing.id ? { ...row, customerId: order.customerId, vin: nextVin } : row)),
-            ownershipLog: [...(shop.ownershipLog ?? []), change],
-            orders: mapOrder(shop.orders, orderId, (live) => {
-              if (lockedOrder(live)) return live;
-              return appendHistory({ ...live, vehicleId }, entry(who, {
-                kind: "note",
-                field: "vin",
-                before: `${existing.id} ${existing.customerId}`,
-                after: `${vehicleId} ${order.customerId}`,
-                text: `Transferred VIN ${nextVin} from ${owner?.name || "the previous owner"} to ${typed?.name || "this customer"} by ${who?.name || "the desk"}. Vehicle ${existing.id} to ${vehicleId}. Customer ${existing.customerId} to ${order.customerId}.`,
-              }));
-            }),
-          }));
-          const linked = get().vehicles.find((row) => row.id === vehicleId);
-          const floor = mileageFloorMessage(order.mileage, lastVisitMileage(shopsFrom(get()), linked, visit));
-          return { ok: true, error: null, warning: [vinCheckWarning(nextVin), floor].filter(Boolean).join(" ") || null };
-        }
-        if (existing) {
-          set((shop) => ({
-            orders: mapOrder(shop.orders, orderId, (live) => {
-              if (lockedOrder(live) || live.vehicleId === existing.id) return live;
-              return appendHistory({ ...live, vehicleId: existing.id }, entry(who, {
-                kind: "note",
-                field: "vin",
-                before: live.vehicleId,
-                after: existing.id,
-                text: `VIN changed from ${state.vehicles.find((row) => row.id === live.vehicleId)?.vin || "blank"} to ${nextVin} by ${who?.name || "the desk"}`,
-              }));
-            }),
-          }));
-          return { ok: true, error: null, warning: vinCheckWarning(nextVin) };
-        }
-        const vehicle = state.vehicles.find((row) => row.id === order.vehicleId);
-        if (!vehicle || sameVin(vehicle.vin, nextVin)) return { ok: true, error: null, warning: vinCheckWarning(nextVin) };
-        const held = closedRecordUses(state.orders, "vehicleId", vehicle.id);
-        const vehicleId = held ? uid("v") : vehicle.id;
-        set((shop) => ({
-          vehicles: held
-            ? [{ ...vehicle, id: vehicleId, customerId: order.customerId, vin: nextVin }, ...shop.vehicles]
-            : shop.vehicles.map((row) => (row.id === vehicle.id ? { ...row, vin: nextVin } : row)),
-          orders: mapOrder(shop.orders, orderId, (live) => {
-            if (lockedOrder(live)) return live;
-            return appendHistory(held ? { ...live, vehicleId } : live, entry(who, {
-              kind: "note",
-              field: "vin",
-              before: vehicle.vin,
-              after: nextVin,
-              text: `VIN changed from ${vehicle.vin || "blank"} to ${nextVin} by ${who?.name || "the desk"}`,
-            }));
-          }),
-        }));
-        const linked = get().vehicles.find((row) => row.id === vehicleId);
-        const floor = mileageFloorMessage(order.mileage, lastVisitMileage(shopsFrom(get()), linked, visit));
-        return { ok: true, error: null, warning: [vinCheckWarning(nextVin), floor].filter(Boolean).join(" ") || null };
+        const claim = applyVinClaim(state, { vin, customerId: order.customerId, confirm: confirmTransfer, reason: transferReasonText, orderId });
+        if (!claim.ok) return { ok: false, error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
+        set(claim.state);
+        const visit = { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number, storeId: state.activeStoreId };
+        const linked = claim.state.vehicles.find((row) => row.id === claim.vehicleId);
+        const floor = mileageFloorMessage(order.mileage, lastVisitMileage(shopsFrom(claim.state), linked, visit));
+        return { ok: true, error: null, warning: [claim.warning, floor].filter(Boolean).join(" ") || null };
       },
       moveWorkToJob: (orderId, kind, lineId, jobId) =>
         set((state) => {
@@ -2387,9 +2826,25 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             .filter((line) => line.concern)
             .map((line, index) => ({ ...line, code: lineLetter(index) }));
           const kept = lines.length > 0 ? lines : [{ id: uid("al"), code: "A", concern: input.concern.trim() }];
-          const vin = (input.vin || "").trim().toUpperCase();
+          const vin = normalizeVin(input.vin || "");
+          let vehicleId = input.vehicleId;
+          let vehicles = state.vehicles;
+          const selected = state.vehicles.find((row) => row.id === input.vehicleId);
+          if (selected && isFullVin(vin) && !sameVin(selected.vin, vin) && !state.vehicles.some((row) => sameVin(row.vin, vin))) {
+            vehicleId = uid("v");
+            vehicles = [{
+              id: vehicleId,
+              customerId: selected.customerId,
+              year: selected.year,
+              make: selected.make,
+              model: selected.model,
+              vin,
+              ownership: [firstOwnership(selected.customerId, now().toISOString(), namedActor(state))],
+            }, ...state.vehicles];
+          }
           const row: Appointment = {
             ...input,
+            vehicleId,
             date: input.date || today(),
             time: snapHalfHour(input.time || "07:00"),
             minutes: appointmentMinutes(input.minutes, 60),
@@ -2402,25 +2857,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             status: "scheduled",
             orderId: null,
           };
-          const currentVehicle = state.vehicles.find((vehicle) => vehicle.id === row.vehicleId);
-          let vehicles = state.vehicles;
-          let vehicleId = row.vehicleId;
-          if (currentVehicle && vin) {
-            const existing = currentVehicle.vin.trim().toUpperCase();
-            if (!existing) vehicles = vehicles.map((vehicle) => (vehicle.id === currentVehicle.id ? { ...vehicle, vin } : vehicle));
-            else if (existing !== vin) {
-              vehicleId = uid("v");
-              vehicles = [{ ...currentVehicle, id: vehicleId, vin }, ...vehicles];
-            }
-          }
           return {
             vehicles,
-            appointments: [...state.appointments, { ...row, vehicleId }].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
+            appointments: [...state.appointments, row].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
           };
         });
         return appointmentId;
       },
-      saveAdvisorAppointment: (input, existingId) => {
+      saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText) => {
         const state = get();
         if (existingId && !state.appointments.some((row) => row.id === existingId)) {
           return { ok: false, appointmentId: existingId, overrideId: null, error: "That appointment is not on this store." };
@@ -2456,18 +2900,31 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (result.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
-        if (existingId) get().updateAppointment(existingId, input);
+        const vinText = normalizeVin(input.vin || "");
+        let vehicleId = input.vehicleId;
+        if (vinText) {
+          const vinError = vinEntryError(vinText);
+          if (vinError) return { ok: false, appointmentId: "", overrideId: null, error: vinError };
+          const selected = state.vehicles.find((row) => row.id === input.vehicleId);
+          if (!selected || !sameVin(selected.vin, vinText) || !currentVehicle(selected)) {
+            const claim = applyVinClaim(state, { vin: vinText, customerId: input.customerId, confirm: confirmTransfer, reason: transferReasonText, year: selected?.year, make: selected?.make, model: selected?.model });
+            if (!claim.ok) return { ok: false, appointmentId: "", overrideId: null, error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
+            set(claim.state);
+            vehicleId = claim.vehicleId;
+          }
+        }
+        if (existingId) get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId });
         else {
           get().addAppointment({
             date: input.date,
             time: input.time,
             minutes: input.minutes,
             customerId: input.customerId,
-            vehicleId: input.vehicleId,
+            vehicleId,
             advisorId: input.advisorId,
             concern: input.concern,
             lines: input.lines,
-            vin: input.vin,
+            vin: vinText || input.vin,
             laborOpIds: input.laborOpIds,
             techId: input.techId,
             lane: input.lane,
@@ -2576,7 +3033,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       setWorkingAs: (id) =>
         set((state) => {
-          const known = state.advisors.some((advisor) => advisor.id === id) || state.techs.some((tech) => tech.id === id);
+          const known = (state.serviceManagers ?? []).some((row) => row.id === id) || state.advisors.some((advisor) => advisor.id === id) || state.techs.some((tech) => tech.id === id);
           if (!known) return state;
           return { workingAsId: id };
         }),
@@ -2737,7 +3194,6 @@ export function createShopStore(options: ShopStoreOptions = {}) {
     {
       name: SHOP_STORAGE_KEY,
         storage: createJSONStorage(() => {
-          const backing = options.storage ?? browserLocalStorage();
           return demoMode ? shopPersistStorage(true, backing) : passwordStrippingStorage(backing);
         }),
         version: SHOP_PERSIST_VERSION,

@@ -310,8 +310,8 @@ function ScheduleDesk() {
       <Modal open={booking} onClose={() => setBooking(false)} title="Book an appointment" description={`${dayLabel(date)} at ${clockTime(time)}.`}>
         <AppointmentFields
           key={`${shop.activeStoreId}-${date}-${time}-${techId}`}
-          customers={shop.customers}
-          vehicles={shop.vehicles}
+          customers={shop.customers.filter((customer) => !customer.formerRecord)}
+          vehicles={shop.vehicles.filter((vehicle) => !vehicle.transferredTo)}
           advisors={shop.advisors}
           techs={board}
           laborOps={shop.laborOps}
@@ -319,8 +319,9 @@ function ScheduleDesk() {
           submitLabel="Book it"
           capacityFor={(draft) => capacityFor(draft)}
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
-          onSubmit={(value) => {
-            const result = shop.saveAdvisorAppointment(value);
+          onSubmit={(value, confirmTransfer, transferReason) => {
+            const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason);
+            if (result.needsTransfer) return { error: null, needsTransfer: true, warning: result.warning ?? null };
             if (!result.ok) return result.error;
             setBooking(false);
             return null;
@@ -342,8 +343,8 @@ function ScheduleDesk() {
             ) : (
               <AppointmentFields
                 key={`${editing.id}-${editing.status}`}
-                customers={shop.customers}
-                vehicles={shop.vehicles}
+                customers={shop.customers.filter((customer) => !customer.formerRecord)}
+                vehicles={shop.vehicles.filter((vehicle) => !vehicle.transferredTo)}
                 advisors={shop.advisors}
                 techs={board}
                 laborOps={shop.laborOps}
@@ -352,8 +353,9 @@ function ScheduleDesk() {
                 showStatus
                 capacityFor={(draft) => capacityFor(draft, editing.id)}
                 initial={editing}
-                onSubmit={(value) => {
-                  const result = shop.saveAdvisorAppointment(value, editing.id);
+                onSubmit={(value, confirmTransfer, transferReason) => {
+                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason);
+                  if (result.needsTransfer) return { error: null, needsTransfer: true, warning: result.warning ?? null };
                   if (!result.ok) return result.error;
                   setEditingId(null);
                   return null;
@@ -494,7 +496,7 @@ function AppointmentFields({
   submitLabel: string;
   showStatus?: boolean;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
-  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">) => string | null;
+  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
 }) {
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(snapHalfHour(initial.time));
@@ -509,6 +511,10 @@ function AppointmentFields({
   const [lane, setLane] = useState(() => normalizeLane(initial.lane, transports));
   const [status, setStatus] = useState(initial.status);
   const [formError, setFormError] = useState<string | null>(null);
+  const [transferWarning, setTransferWarning] = useState("");
+  const [transferReason, setTransferReason] = useState("");
+  const transferRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
@@ -517,6 +523,7 @@ function AppointmentFields({
 
   return (
     <form
+      ref={formRef}
       className="grid gap-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -530,8 +537,15 @@ function AppointmentFields({
           return;
         }
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
-        const error = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status });
-        setFormError(error);
+        const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason);
+        transferRef.current = false;
+        if (result && typeof result === "object" && result.needsTransfer) {
+          setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
+          setFormError(null);
+          return;
+        }
+        setTransferWarning("");
+        setFormError(typeof result === "string" ? result : result?.error ?? null);
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
@@ -573,8 +587,20 @@ function AppointmentFields({
         </select>
       </Field>
       <Field label="VIN">
-        <input className="field font-mono uppercase" value={vin} maxLength={17} spellCheck={false} onChange={(event) => setVin(event.target.value.toUpperCase())} />
+        <input className="field font-mono uppercase" value={vin} maxLength={17} spellCheck={false} onChange={(event) => { setVin(event.target.value.toUpperCase()); setTransferWarning(""); }} />
       </Field>
+      {transferWarning ? (
+        <div className="grid gap-2">
+          <p role="alert" className="text-sm text-[#8a3b2a]">{transferWarning}</p>
+          <Field label="Reason for the transfer">
+            <input className="field" aria-label="Reason for the transfer" value={transferReason} onChange={(event) => setTransferReason(event.target.value)} />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" small onClick={() => { transferRef.current = true; formRef.current?.requestSubmit(); }}>Transfer the vehicle</Button>
+            <Button type="button" small onClick={() => { setTransferWarning(""); setTransferReason(""); setVin(""); }}>Fix the VIN</Button>
+          </div>
+        </div>
+      ) : null}
       <Field label="Labor op">
         <select
           className="field"

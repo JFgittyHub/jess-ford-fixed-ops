@@ -214,11 +214,13 @@ describe("round 9", () => {
     const manager = shop.getState().advisors.find((row) => row.name === "Pat Reyes");
     shop.getState().setWorkingAs(manager?.id ?? "");
     assert.equal(shop.getState().appointFirstServiceManager(manager?.id ?? "").ok, true);
-    assert.equal(shop.getState().advisors.find((row) => row.id === manager?.id)?.role, "service-manager");
+    assert.equal(shop.getState().serviceManagers.some((row) => row.id === manager?.id && row.active !== false), true);
+    assert.notEqual(shop.getState().advisors.find((row) => row.id === manager?.id)?.role, "service-manager");
     assert.equal(shop.getState().roleLog?.some((row) => row.after === "service-manager" && row.who === "Pat Reyes"), true);
     assert.equal(shop.getState().addAdvisor({ number: "2", name: "Alex Rivera", base: 4000, laborPercent: 5, partsPercent: 2 }), true);
-    assert.equal(shop.getState().updateAdvisor(manager?.id ?? "", { role: "advisor" }), false);
-    assert.equal(shop.getState().advisors.find((row) => row.id === manager?.id)?.role, "service-manager");
+    assert.equal(shop.getState().updateAdvisor(manager?.id ?? "", { role: "service-manager" }), false);
+    assert.equal(shop.getState().removeServiceManager(manager?.id ?? "").ok, false);
+    assert.equal(shop.getState().serviceManagers.some((row) => row.id === manager?.id), true);
   });
 });
 

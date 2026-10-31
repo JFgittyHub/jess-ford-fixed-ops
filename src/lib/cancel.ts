@@ -12,14 +12,14 @@ export type DeskActor = "advisor" | "service-manager" | "technician" | "customer
 
 /**
  * The schedule desk is where an advisor or the service manager cancels.
- * Technicians and online customers cannot. The roster stores advisors and
- * technicians. Working as an advisor is how the service manager acts today.
+ * Technicians and online customers cannot. Service managers are their own roster.
+ * Working as is not a sign-in.
  */
 export function mayCancelAppointment(actor: DeskActor): boolean {
   return actor === "advisor" || actor === "service-manager";
 }
 
-/** Same desk roles that cancel. Working as an advisor is how the service manager acts today. */
+/** Same desk roles that cancel. Working as a service manager uses that roster. */
 export function mayCloseRepairOrder(actor: DeskActor): boolean {
   return actor === "advisor" || actor === "service-manager";
 }
@@ -28,7 +28,10 @@ export function deskActor(state: {
   workingAsId: string;
   advisors: { id: string; role?: string }[];
   techs: { id: string }[];
+  serviceManagers?: { id: string; active?: boolean }[];
 }): DeskActor {
+  const manager = state.serviceManagers?.find((row) => row.id === state.workingAsId && row.active !== false);
+  if (manager) return "service-manager";
   const advisor = state.advisors.find((row) => row.id === state.workingAsId);
   if (advisor?.role === "service-manager") return "service-manager";
   if (advisor) return "advisor";

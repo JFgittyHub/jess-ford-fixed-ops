@@ -16,6 +16,13 @@ import { WaAuth } from "./wa-auth";
 import { MultiPointSheet } from "./multi-point";
 import { Button, Field, Modal, Pill } from "./ui";
 
+function localDateTime(value: string) {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return value.slice(0, 16);
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+}
+
 const STATUSES: RoStatus[] = ["open", "working", "parts", "ready"];
 const BAYS = Object.keys(BAY_LABEL) as BayStatus[];
 
@@ -41,7 +48,7 @@ function TechTime({ order }: { order: RepairOrder }) {
           const open = shop.timeLogs.find((row) => row.techId === techId && row.endedAt === null);
           const onThis = open?.orderId === order.id;
           const hours = punches.reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now, reviewCap(row, order.closedAt)), 0);
-          const waiting = punches.filter((row) => row.needsReview && !row.endedAt);
+          const waiting = punches.filter((row) => row.needsReview);
           const actor = deskActor(shop);
           return (
             <article key={techId} className="card flex flex-wrap items-center justify-between gap-3">
@@ -52,7 +59,19 @@ function TechTime({ order }: { order: RepairOrder }) {
                   <div key={row.id} className="mt-1">
                     <p className="text-sm text-[#8a3b2a]">Needs service manager review. {row.note}</p>
                     {actor === "service-manager" ? (
-                      <Button small type="button" onClick={() => { const result = shop.resolveFlaggedPunch(row.id); setClockError(result.error ?? ""); }}>Resolve punch</Button>
+                      <form className="mt-2 flex flex-wrap items-end gap-2" onSubmit={(event) => {
+                        event.preventDefault();
+                        const field = new FormData(event.currentTarget).get("ended");
+                        const raw = typeof field === "string" ? field : "";
+                        const ended = raw ? new Date(raw).toISOString() : "";
+                        const result = shop.resolveFlaggedPunch(row.id, ended);
+                        setClockError(result.error ?? "");
+                      }}>
+                        <label className="text-sm">End time
+                          <input className="field" type="datetime-local" name="ended" required defaultValue={localDateTime(row.clockedOutAt || row.endedAt || order.closedAt || row.startedAt)} />
+                        </label>
+                        <Button small type="submit">Resolve punch</Button>
+                      </form>
                     ) : <p className="text-sm text-muted">Sent for review</p>}
                   </div>
                 ))}
@@ -140,6 +159,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   const [vinWarning, setVinWarning] = useState("");
   const [vinReplace, setVinReplace] = useState(false);
   const [vinTransfer, setVinTransfer] = useState(false);
+  const [vinReason, setVinReason] = useState("");
 
   useEffect(() => {
     setTab("ticket");
@@ -341,19 +361,29 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             </div>
           ) : null}
           {vinTransfer ? (
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="mt-2 grid gap-2">
+              <Field label="Reason for the transfer">
+                <input className="field" aria-label="Reason for the transfer" value={vinReason} onChange={(event) => setVinReason(event.target.value)} />
+              </Field>
+              <div className="flex flex-wrap gap-2">
               <Button
                 small
                 type="button"
                 onClick={() => {
-                  const result = shop.updateOpenVin(order.id, normalizeVin(vinDraft), true);
+                  const result = shop.updateOpenVin(order.id, normalizeVin(vinDraft), true, vinReason);
+                  if (result.needsTransfer) {
+                    setVinTransfer(true);
+                    setVinWarning(result.error || result.warning || "");
+                    return;
+                  }
                   setVinTransfer(false);
                   setVinWarning(result.error || result.warning || "");
                 }}
               >
                 Transfer the vehicle
               </Button>
-              <Button small type="button" onClick={() => { setVinDraft(vehicleVin); setVinTransfer(false); setVinWarning(""); }}>Fix the VIN</Button>
+              <Button small type="button" onClick={() => { setVinDraft(vehicleVin); setVinTransfer(false); setVinReason(""); setVinWarning(""); }}>Fix the VIN</Button>
+              </div>
             </div>
           ) : null}
         </Field>
@@ -393,6 +423,15 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
               const floor = mileageFloorMessage(next, lastVisit);
               if (floor) {
                 setMileageError(floor);
+                return;
+              }
+              if (order.mileageOut != null && next > order.mileageOut) {
+                setMileageError("Mileage in can't be higher than mileage out.");
+                return;
+              }
+              const outOverride = (order.history ?? []).some((row) => row.kind === "mileage-override" && row.field === "mileageOut");
+              if (outOverride && next !== order.mileage) {
+                setMileageError("Mileage in changed after the mileage-out exception. Add a new reason.");
                 return;
               }
               setMileageError("");
@@ -450,7 +489,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
             }}
           />
           {outError ? <p role="alert" className="mt-1 text-sm text-[#8a3b2a]">{outError}</p> : null}
-          {!sealed && outError.startsWith("Mileage out can't be more than 10,000") && actor === "service-manager" ? (
+          {!sealed && (outError.startsWith("Mileage out can't be more than 10,000") || outError.startsWith("Add a reason")) && actor === "service-manager" ? (
             <div className="mt-2 grid gap-2">
               <textarea className="field min-h-16" maxLength={500} aria-label="Mileage out reason" placeholder="Reason, at least 10 characters" value={outReason} onChange={(event) => setOutReason(event.target.value)} />
               <Button
@@ -854,6 +893,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           })}
         </ul>
       ) : null}
+      <WaAuth orderId={order.id} />
       {(order.history ?? []).length > 0 ? (
         <ul className="mt-3 grid gap-1 text-sm text-muted">
           {(order.history ?? []).map((entry) => (
@@ -861,7 +901,6 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
           ))}
         </ul>
       ) : null}
-      <WaAuth orderId={order.id} />
     </Modal>
   );
 }

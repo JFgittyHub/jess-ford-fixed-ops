@@ -1,5 +1,6 @@
 import { clockTime, feeCharge, roStatusLabel, usd } from "@/lib/format";
 import { orderMoney, vehicleTitle } from "@/lib/metrics";
+import { customerCopyIdentity } from "@/lib/ownership";
 import { payLabel } from "@/lib/pay";
 import { useShop } from "@/lib/store";
 import { normalizeWa, vinTail, waLimit } from "@/lib/wa";
@@ -24,6 +25,7 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
 
   if (!order) return null;
   const snap = order.closeSnapshot;
+  const copy = customerCopyIdentity(order, customer);
   const version = closedRows.reduce((max, row) => Math.max(max, row.version ?? 1), order.status === "closed" ? 1 : 0);
   const money = orderMoney(order);
   const wa = normalizeWa(order.wa);
@@ -50,8 +52,8 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
       <section className="ro-split">
         <div>
           <h2>Customer</h2>
-          <p>{snap?.customerName || customer?.name || "—"}</p>
-          <p>{snap?.phone || customer?.phone}</p>
+          <p>{copy.name}</p>
+          <p>{copy.phone}</p>
           <p>{(snap?.address ?? wa.address) || "No address on the ticket"}</p>
         </div>
         <div>

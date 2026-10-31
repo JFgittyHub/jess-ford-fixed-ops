@@ -13,6 +13,7 @@ import {
   Users,
   Wallet,
   UserRound,
+  BadgeCheck,
   Wrench,
   Timer,
   Activity,
@@ -45,6 +46,7 @@ const NAV = [
   { to: "/dispatch", label: "Technicians", icon: Wrench },
   { to: "/tech-board", label: "Tech board", icon: Timer },
   { to: "/advisors", label: "Advisors", icon: UserRound },
+  { to: "/service-managers", label: "Service managers", icon: BadgeCheck },
   { to: "/parts", label: "Parts", icon: Package },
   { to: "/expenses", label: "Fixed costs", icon: Wallet },
   { to: "/customers", label: "Marketing", icon: Users },
@@ -93,8 +95,13 @@ export function Shell({ children }: { children: ReactNode }) {
     void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
       if (live) setHydrated(true);
     });
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "jess-ford-fixed-ops-v1") void useShop.persist.rehydrate();
+    };
+    window.addEventListener("storage", onStorage);
     return () => {
       live = false;
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -107,12 +114,14 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const activeStoreId = useShop((state) => state.activeStoreId);
   const switchStore = useShop((state) => state.switchStore);
   const advisors = useShop((state) => state.advisors);
+  const managers = useShop((state) => (state.serviceManagers ?? []).filter((row) => row.active !== false));
   const techs = useShop((state) => state.techs);
   const workingAsId = useShop((state) => state.workingAsId);
   const setWorkingAs = useShop((state) => state.setWorkingAs);
-  const staffId = advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
+  const managerIds = new Set(managers.map((row) => row.id));
+  const staffId = managers.some((row) => row.id === workingAsId) || advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
     ? workingAsId
-    : advisors[0]?.id ?? techs[0]?.id ?? "";
+    : managers[0]?.id ?? advisors[0]?.id ?? techs[0]?.id ?? "";
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
   const clearShop = useShop((state) => state.clearShop);
@@ -176,15 +185,20 @@ function OpenDesk({ children }: { children: ReactNode }) {
             <div className="flex flex-wrap items-center gap-2">
               {staffId ? (
                 <label className="flex items-center gap-2 text-xs text-muted">
-                  Working as
+                  <span className="max-w-[9.5rem] leading-snug">Working as isn't a real sign-in yet.</span>
                   <select
                     aria-label="Working as"
                     className="field h-8 max-w-48"
                     value={staffId}
                     onChange={(event) => setWorkingAs(event.target.value)}
                   >
+                    {managers.length > 0 ? (
+                      <optgroup label="Service managers">
+                        {managers.map((manager) => <option key={manager.id} value={manager.id}>#{manager.number} {manager.name}</option>)}
+                      </optgroup>
+                    ) : null}
                     <optgroup label="Advisors">
-                      {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}{advisor.role === "service-manager" ? " · Service manager" : ""}</option>)}
+                      {advisors.filter((advisor) => !managerIds.has(advisor.id)).map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
                     </optgroup>
                     <optgroup label="Technicians">
                       {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} {tech.name}</option>)}

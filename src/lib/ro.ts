@@ -266,7 +266,7 @@ export function noWorkBlockers(
   if (!identity?.customer?.name.trim()) blocks.push("Add the customer name");
   if (!recordedAddress(order)) blocks.push("Add the address");
   if (!identity?.customer?.phone.trim()) blocks.push("Add the customer phone");
-  if (!isFullVin(identity?.vehicle?.vin ?? "")) blocks.push("Add the full 17-character VIN.");
+  if (!isFullVin(identity?.vehicle?.vin ?? "")) blocks.push("Add the full 17-character VIN");
   const vehicle = identity?.vehicle;
   if (!vehicle || !vehicle.year || !vehicle.model.trim() || !vehicle.make?.trim()) blocks.push("Add the year, make, and model");
   if (!Number.isFinite(order.mileage) || order.mileage <= 0) blocks.push("Add the mileage in");

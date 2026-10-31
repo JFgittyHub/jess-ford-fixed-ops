@@ -111,8 +111,20 @@ export interface Advisor {
   base: number;
   laborPercent: number;
   partsPercent: number;
-  /** Absent means advisor. A service manager may log a mileage exception on an open repair order. */
+  /** Kept for older saves. A service manager is a separate roster record, not a role on an advisor. */
   role?: "advisor" | "service-manager";
+}
+
+/** Pay and identity for a service manager. Same kind of record as an advisor. */
+export interface ServiceManager {
+  id: string;
+  number: string;
+  name: string;
+  base: number;
+  laborPercent: number;
+  partsPercent: number;
+  /** The last active service manager cannot be removed or deactivated. */
+  active: boolean;
 }
 
 export interface Tech {
@@ -142,6 +154,8 @@ export interface Customer {
   email: string;
   /** Appointments an advisor has marked No-show. Stays on the record for the next visit. */
   noShows: number;
+  /** Set when this customer was copied so a Closed repair order can keep the old record. */
+  formerRecord?: string;
 }
 
 export interface Vehicle {
@@ -152,6 +166,25 @@ export interface Vehicle {
   make: string;
   model: string;
   vin: string;
+  /**
+   * Append-only owner timeline. A transfer closes the open span and adds the next one.
+   * Spans are not edited after they are written.
+   */
+  ownership?: OwnershipSpan[];
+  /** Older saves. A transfer no longer copies the vehicle. New repair orders use the current owner. */
+  transferredTo?: string;
+}
+
+/** One owner of a vehicle, from startedAt until endedAt. The open span has no end. */
+export interface OwnershipSpan {
+  customerId: string;
+  /** Shop instant, ISO. */
+  startedAt: string;
+  /** Shop instant, ISO. Empty while this is the current owner. */
+  endedAt: string | null;
+  who: string;
+  whoId: string;
+  reason: string;
 }
 
 export interface PartSku {
@@ -352,6 +385,11 @@ export interface TimeLog {
   note?: string;
   /** The punch was ended at the repair order's close time and needs a service manager to review it. */
   needsReview?: boolean;
+  /** When the technician pressed clock out. The resolve form starts here, not at the review time. */
+  clockedOutAt?: string;
+  resolvedBy?: string;
+  resolvedById?: string;
+  resolvedAt?: string;
 }
 
 export interface RoleChange {
@@ -361,6 +399,8 @@ export interface RoleChange {
   advisorId: string;
   before: string;
   after: string;
+  /** Name at the time of the change, kept after the person leaves the roster. */
+  advisorName?: string;
 }
 
 export interface ClosedRecord {
@@ -484,6 +524,7 @@ export interface ShopData {
   dataset: ShopDataset;
   settings: Settings;
   advisors: Advisor[];
+  serviceManagers: ServiceManager[];
   techs: Tech[];
   customers: Customer[];
   vehicles: Vehicle[];
@@ -520,4 +561,5 @@ export interface OwnershipChange {
   beforeCustomerId: string;
   afterCustomerId: string;
   vin: string;
+  reason?: string;
 }
