@@ -173,17 +173,14 @@ describe("round 11", () => {
     });
     const sandraVehicle = shop.getState().orders.find((row) => row.id === openId)?.vehicleId ?? "";
     const blank = shop.getState().updateOpenVin(openId, vinA);
-    assert.equal(blank.needsTransfer, true);
+    assert.match(blank.error ?? "", /open repair order/);
+    assert.equal(blank.needsTransfer, undefined);
     assert.equal(shop.getState().orders.find((row) => row.id === openId)?.vehicleId, sandraVehicle);
-    assert.equal(shop.getState().orders.find((row) => row.id === openId)?.customerId, shop.getState().orders.find((row) => row.id === openId)?.customerId);
     const confirmed = shop.getState().updateOpenVin(openId, vinA, true, "Sold the truck to the new owner");
-    assert.equal(confirmed.ok, true, confirmed.error ?? "");
-    const after = shop.getState().orders.find((row) => row.id === openId);
-    assert.equal(after?.customerId, shop.getState().customers.find((row) => row.name === "Sandra Delgado")?.id);
-    assert.match(after?.history?.at(-1)?.text ?? "", /Transferred VIN/);
-    assert.equal((after?.history?.at(-1)?.text ?? "").includes("Pat Newowner"), true);
-    assert.equal((after?.history?.at(-1)?.after ?? "").includes(after?.customerId ?? "missing"), true);
-    assert.equal(shop.getState().ownershipLog?.some((row) => row.afterCustomerId === after?.customerId && row.beforeVehicleId === row.afterVehicleId), true);
+    assert.equal(confirmed.ok, false);
+    assert.match(confirmed.error ?? "", /open repair order/);
+    assert.equal(shop.getState().orders.find((row) => row.id === openId)?.customerId, sandra.customerId);
+    assert.equal(shop.getState().vehicles.find((row) => row.vin === vinA)?.customerId, pat?.id);
   });
 
   it("lets an advisor appoint the first service manager even when repair orders are closed", () => {

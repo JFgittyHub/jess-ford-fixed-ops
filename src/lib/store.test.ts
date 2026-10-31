@@ -147,6 +147,8 @@ describe("shop store", () => {
       },
       customers: [{ id: "c", name: "Helen", phone: "5095550100", mobile: "", email: "helen@example.com", noShows: 0 }],
       orders: [bookedOrder()],
+      serviceManagers: [{ id: "sm", number: "1", name: "Dana Cole", base: 1, laborPercent: 1, partsPercent: 1, active: true }],
+      workingAsId: "sm",
     });
     shop.getState().clearShop();
     const cleared = shop.getState();
@@ -157,7 +159,7 @@ describe("shop store", () => {
     assert.equal(cleared.settings.cpRate, 210);
     assert.equal(cleared.settings.targetElr, 190);
 
-    shop.getState().resetDemo();
+    shop.getState().resetDemo(true);
     const seeded = shop.getState();
     assert.ok(seeded.customers.length > 0);
     assert.equal("adminPassword" in seeded.settings, false);
@@ -173,11 +175,12 @@ describe("shop store", () => {
     shop.setState({
       ...sample,
       settings: { ...sample.settings, storeName: "Coulee" },
+      workingAsId: "derek",
     });
     shop.getState().clearShop();
     assert.equal(shop.getState().dataset, "shop");
     assert.equal(shop.getState().settings.storeName, "Coulee");
-    shop.getState().resetDemo();
+    shop.getState().resetDemo(true);
     assert.equal(shop.getState().dataset, "sample");
     assert.equal(shop.getState().settings.storeName, "Coulee");
   });
@@ -230,6 +233,8 @@ describe("shop store", () => {
     demo.setState({
       ...withCustomer,
       settings: { ...empty.settings, storeName: "Coulee" },
+      serviceManagers: [{ id: "sm", number: "1", name: "Dana Cole", base: 1, laborPercent: 1, partsPercent: 1, active: true }],
+      workingAsId: "sm",
     });
     demo.getState().resetDemo();
     assert.equal(demo.getState().customers.length, 1);

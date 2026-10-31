@@ -921,6 +921,10 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
             year: vehicle.year,
             make: vehicle.make,
             model: vehicle.model,
+            storeName: settings.storeName,
+            storeAddress: settings.address,
+            storeCity: settings.city,
+            storePhone: settings.phone,
           }
         : undefined,
       fees: settings.fees.map((line) => ({ ...line })),

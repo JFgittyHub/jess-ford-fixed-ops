@@ -253,7 +253,7 @@ describe("shipped flags", () => {
         lane: "drop",
         status: "scheduled",
       }, undefined, true, "Sold the truck to the new owner");
-      assert.equal(saved.ok, true, saved.error ?? "");
+      assert.match(saved.error ?? "", /open repair order/);
       assert.equal(JSON.stringify(shop.getState().orders.find((row) => row.id === order.id)), before);
     } finally {
       flags.__RO_WRITES_ENABLED__ = previous;
@@ -338,6 +338,71 @@ describe("shipped flags", () => {
     assert.equal(updated.ok, false);
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.vin, row.vin);
   });
+
+  const guarded: Array<[string, (shop: ReturnType<typeof createShopStore>) => void]> = [
+    ["updateOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOrder(order!.id, { concern: "Changed", mileage: (order?.mileage ?? 1) + 4 }); }],
+    ["updateJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed" && row.jobs[0]); shop.getState().updateJob(order!.id, order!.jobs[0].id, { cause: "Nope" }); }],
+    ["addJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addJob(order!.id); }],
+    ["removeJob", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed" && row.jobs[0]); shop.getState().removeJob(order!.id, order!.jobs[0].id); }],
+    ["updateWa", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateWa(order!.id, { address: "9 Oak", plate: "NEW" }); }],
+    ["addExtraAuth", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addExtraAuth(order!.id, { date: "2026-10-30", time: "09:00", employee: "Megan Cho", person: "Helen Cho", phone: "5095550100", work: "Brakes", amount: 20 }); }],
+    ["bookOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().bookOrder(order!.id); }],
+    ["unbookOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().unbookOrder(order!.id); }],
+    ["closeOrder", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().closeOrder(order!.id); }],
+    ["closeOrderWithNoWork", (shop) => { const order = shop.getState().orders.find((row) => row.id === "open-sandra") ?? shop.getState().orders.find((row) => row.status === "open"); shop.getState().closeOrderWithNoWork(order!.id, "Customer left before any work was done"); }],
+    ["recordMileageOverride", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().recordMileageOverride(order!.id, 1, "the odometer was misread on arrival"); }],
+    ["recordMileageOutOverride", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().recordMileageOutOverride(order!.id, (order?.mileage ?? 1) + 20000, "the replacement odometer read higher"); }],
+    ["updateOpenContact", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOpenContact(order!.id, { phone: "5095550101", address: "9 Oak Street" }); }],
+    ["addLabor", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addLabor(order!.id, { opcode: "LOF", description: "Oil", hours: 1, rate: 10, payType: "cp", techId: "marcus", jobId: order?.jobs[0]?.id }); }],
+    ["updateLabor", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0]); shop.getState().updateLabor(order!.id, order!.labor[0].id, { hours: 9 }); }],
+    ["removeLabor", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0]); shop.getState().removeLabor(order!.id, order!.labor[0].id); }],
+    ["clockIn", (shop) => { const order = shop.getState().orders.find((row) => row.labor.some((line) => line.techId === "marcus")); shop.getState().clockIn("marcus", order!.id); }],
+    ["clockOut", (shop) => { shop.getState().clockOut("luis"); }],
+    ["resolveFlaggedPunch", (shop) => { shop.getState().resolveFlaggedPunch(shop.getState().timeLogs[0]?.id ?? "missing", "2026-10-30T18:00:00.000Z"); }],
+    ["addPartLine", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().addPartLine(order!.id, { partId: null, number: "BL", description: "Bolt", qty: 1, cost: 1, price: 4, payType: "cp", jobId: order?.jobs[0]?.id }); }],
+    ["updatePartLine", (shop) => { const order = shop.getState().orders.find((row) => row.parts[0]); shop.getState().updatePartLine(order!.id, order!.parts[0].id, { qty: 4, price: 80 }); }],
+    ["removePartLine", (shop) => { const order = shop.getState().orders.find((row) => row.parts[0]); shop.getState().removePartLine(order!.id, order!.parts[0].id); }],
+    ["attachInspection", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().attachInspection(order!.id); }],
+    ["setInspectionTech", (shop) => { const order = shop.getState().orders.find((row) => row.inspection); shop.getState().setInspectionTech(order!.id, "marcus"); }],
+    ["setInspectionPoint", (shop) => { const order = shop.getState().orders.find((row) => row.inspection?.items[0]); shop.getState().setInspectionPoint(order!.id, order!.inspection!.items[0].id, { status: "red", reading: "1", note: "worn" }); }],
+    ["moveWorkToJob", (shop) => { const order = shop.getState().orders.find((row) => row.labor[0] && row.jobs[0]); shop.getState().moveWorkToJob(order!.id, "labor", order!.labor[0].id, order!.jobs[0].id); }],
+    ["updateOpenVin", (shop) => { const order = shop.getState().orders.find((row) => row.status !== "closed"); shop.getState().updateOpenVin(order!.id, fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 77 })); }],
+    ["createOrder", (shop) => { const vehicle = shop.getState().vehicles[0]; shop.getState().createOrder({ customerId: vehicle.customerId, vehicleId: vehicle.id, advisorId: "megan", lines: [{ concern: "Oil" }], mileage: 1000, promiseTime: "" }); }],
+    ["openWalkIn", (shop) => { shop.getState().openWalkIn({ name: "New Person", phone: "5095550188", year: 2020, model: "Escape", make: "Ford", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 78 }), advisorId: "megan", lines: [{ concern: "Brakes" }], mileage: 2000, promiseTime: "" }); }],
+    ["addFee", (shop) => { shop.getState().addFee({ name: "Tow", amount: 9 }); }],
+    ["updateFee", (shop) => { shop.getState().updateFee(shop.getState().settings.fees[0]?.id ?? "", { amount: 77 }); }],
+    ["removeFee", (shop) => { shop.getState().removeFee(shop.getState().settings.fees[0]?.id ?? ""); }],
+  ];
+
+  for (const [name, run] of guarded) {
+    it(`leaves orders byte-identical when ${name} runs with the shipped flags`, () => {
+      const previous = {
+        create: flags.__RO_CREATION_ENABLED__,
+        write: flags.__RO_WRITES_ENABLED__,
+        lock: flags.__SECTION_LOCK_ENABLED__,
+      };
+      delete flags.__RO_CREATION_ENABLED__;
+      delete flags.__RO_WRITES_ENABLED__;
+      flags.__SECTION_LOCK_ENABLED__ = true;
+      try {
+        assert.equal(roWritesEnabled(), false);
+        assert.equal(roCreationEnabled(), false);
+        const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+        shop.getState().setWorkingAs("megan");
+        const before = JSON.stringify(shop.getState().orders);
+        const punches = JSON.stringify(shop.getState().timeLogs);
+        run(shop);
+        assert.equal(JSON.stringify(shop.getState().orders), before, name);
+        if (name === "clockOut" || name === "clockIn" || name === "resolveFlaggedPunch") {
+          assert.equal(JSON.stringify(shop.getState().timeLogs), punches, name);
+        }
+      } finally {
+        flags.__RO_CREATION_ENABLED__ = previous.create;
+        flags.__RO_WRITES_ENABLED__ = previous.write;
+        flags.__SECTION_LOCK_ENABLED__ = previous.lock;
+      }
+    });
+  }
 
   it("ignores global flag overrides when the process is production", () => {
     const previous = process.env.NODE_ENV;

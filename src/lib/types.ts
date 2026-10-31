@@ -299,6 +299,11 @@ export interface CloseSnapshot {
   year: number;
   make: string;
   model: string;
+  /** Store header at close. Missing on older snapshots until the first load fills it. */
+  storeName?: string;
+  storeAddress?: string;
+  storeCity?: string;
+  storePhone?: string;
 }
 
 /** A new consent after reopen. The original authorization fields stay as they were. */
@@ -499,6 +504,8 @@ export interface OnlineRequest {
   model: string;
   vin: string;
   plate: string;
+  /** Optional note from the customer. Capped at 500 characters. */
+  note?: string;
   appointmentId: string | null;
 }
 

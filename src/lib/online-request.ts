@@ -22,6 +22,7 @@ export interface OnlineRequestInput {
   model?: string;
   vin?: string;
   plate?: string;
+  note?: string;
   contactMethod?: ContactMethod;
 }
 
@@ -160,7 +161,7 @@ export function submitOnlineRequest(
   input: OnlineRequestInput,
   id: string,
   at: string,
-): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" } {
+): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" | "limit" } {
   const service = shop.settings.scheduling.onlineMenu.find((row) => row.id === input.serviceId);
   if (!service) return { ok: false, reason: "service" };
   const advisor = shop.advisors.find((row) => row.id === input.advisorId);
@@ -171,14 +172,15 @@ export function submitOnlineRequest(
   let verified = false;
   let customerId: string | null = null;
   let vehicleId: string | null = null;
-  let customerName = (input.customerName ?? "").trim();
-  let phone = (input.phone ?? "").trim();
-  let email = (input.email ?? "").trim();
+  let customerName = (input.customerName ?? "").trim().slice(0, 80);
+  let phone = (input.phone ?? "").trim().slice(0, 20);
+  let email = (input.email ?? "").trim().slice(0, 120);
   let year = Math.trunc(Number(input.year) || 0);
-  let make = (input.make ?? "").trim();
-  let model = (input.model ?? "").trim();
-  let vin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
-  let plate = (input.plate ?? "").trim().toUpperCase();
+  let make = (input.make ?? "").trim().slice(0, 40);
+  let model = (input.model ?? "").trim().slice(0, 40);
+  let vin = normalizeVin(typeof input.vin === "string" ? input.vin : "").slice(0, 17);
+  let plate = (input.plate ?? "").trim().toUpperCase().slice(0, 10);
+  const note = (input.note ?? "").trim().slice(0, 500);
 
   if (input.verified) {
     const customer = shop.customers.find((row) => row.id === input.customerId);
@@ -200,10 +202,18 @@ export function submitOnlineRequest(
     plate = plate || "";
   } else if (!customerName || !make || !model || year < 1980 || year > 2035 || !plate) {
     return { ok: false, reason: "contact" };
-  } else if (vinScheduleError(vin)) {
+  } else if (!vin || vinScheduleError(vin)) {
     return { ok: false, reason: "vin" };
   }
-  if (vin && vinScheduleError(vin)) return { ok: false, reason: "vin" };
+  if (!vin || vinScheduleError(vin)) return { ok: false, reason: "vin" };
+  const contactKey = phone.replace(/\D/g, "") || email.toLowerCase();
+  if (contactKey) {
+    const pending = (shop.onlineRequests ?? []).filter((row) => row.status === "pending" && (
+      (phone.replace(/\D/g, "") && row.phone.replace(/\D/g, "") === phone.replace(/\D/g, ""))
+      || (email && row.email.trim().toLowerCase() === email.toLowerCase())
+    ));
+    if (pending.length >= 3) return { ok: false, reason: "limit" };
+  }
 
   const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };
@@ -238,6 +248,7 @@ export function submitOnlineRequest(
       model,
       vin,
       plate,
+      note,
       appointmentId: null,
     },
   };

@@ -41,6 +41,13 @@ describe("round 12", () => {
       confirmTransfer: true, transferReason, advisorId: megan.id, lines: [{ concern: "Brakes" }], mileage: 5000, promiseTime: "",
     }).error ?? "", /who is working/);
     shop.getState().setWorkingAs(megan.id);
+    assert.match(shop.getState().openWalkIn({
+      name: "Pat Newowner", phone: "5095550177", year: 2020, model: "Escape", make: "Ford", vin: vinA,
+      confirmTransfer: true, transferReason, advisorId: megan.id, lines: [{ concern: "Brakes" }], mileage: 5000, promiseTime: "",
+    }).error ?? "", /open repair order/);
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.id === helenOrder ? { ...row, status: "closed" as const, authorizationLocked: true } : row),
+    });
     const helenLive = shop.getState().orders.find((row) => row.id === helenOrder);
     assert.ok(helenLive);
     const closed = { ...helenLive, id: "closed-helen", number: helenLive.number - 1, status: "closed" as const, authorizationLocked: true, closeSnapshot: { customerName: "Helen Cho", phone: "5095550199", address: "1 Main", plate: "", vin: vinA, year: 2019, make: "Ford", model: "F-150" } };
@@ -83,7 +90,7 @@ describe("round 12", () => {
       customerId: helen.customerId, vehicleId: helen.vehicleId, advisorId: megan.id,
       lines: [{ concern: "Nope" }], mileage: 6000, promiseTime: "",
     }), "");
-    assert.match(shop.getState().orders.find((row) => row.id === helenOrder)?.history?.at(-1)?.text ?? "", /transferred to Pat Newowner/i);
+    assert.equal((shop.getState().orders.find((row) => row.id === helenOrder)?.history ?? []).some((row) => /transferred/i.test(row.text)), false);
     assert.equal(shop.getState().orders.find((row) => row.id === helenOrder)?.customerId, helen.customerId);
     assert.equal(JSON.stringify(shop.getState().orders.find((row) => row.id === "closed-helen")), closedBefore);
     const log = shop.getState().ownershipLog ?? [];
@@ -114,6 +121,17 @@ describe("round 12", () => {
     const otherVehicle = shop.getState().vehicles.find((row) => row.customerId === other?.id && !row.transferredTo);
     assert.ok(helen && other && helenVehicle && otherVehicle);
     const before = helenVehicle.vin;
+    const blocked = shop.getState().saveAdvisorAppointment({
+      date: "2026-10-30", time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
+      advisorId: "megan", techId: "marcus", concern: "Oil", lines: [{ id: "a", code: "A", concern: "Oil" }],
+      vin: before, laborOpIds: [], lane: "drop", status: "scheduled",
+    }, undefined, true, "Sold the truck to the new owner");
+    assert.match(blocked.error ?? "", /open repair order/);
+    shop.setState({
+      orders: shop.getState().orders.map((row) => row.vehicleId === helenVehicle.id && row.status !== "closed"
+        ? { ...row, status: "closed" as const, authorizationLocked: true }
+        : row),
+    });
     const draft = {
       date: "2026-10-30", time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
       advisorId: "megan", techId: "marcus", concern: "Oil", lines: [{ id: "a", code: "A", concern: "Oil" }],
