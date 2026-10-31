@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 export function Button({
@@ -47,6 +47,15 @@ export function Modal({
   wide?: boolean;
   children: ReactNode;
 }) {
+  const opener = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    opener.current = active instanceof HTMLElement ? active : null;
+    return () => {
+      opener.current?.focus();
+    };
+  }, [open]);
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>

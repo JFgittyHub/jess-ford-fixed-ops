@@ -274,7 +274,7 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
         <Button small onClick={printRepairOrder}>Print repair order</Button>
       </div>
       <RepairOrderPrint orderId={order.id} />
-      <VehicleHistory vehicleId={order.vehicleId} vin={sealedView?.vin || vehicle?.vin || ""} />
+      <VehicleHistory vehicleId={order.vehicleId} vin={sealedView?.vin || vehicle?.vin || ""} excludeOrderId={order.id} />
 
       {tab === "sheet" ? <MultiPointSheet orderId={order.id} /> : (
       <>
@@ -913,25 +913,28 @@ export function OrderEditor({ orderId, onClose }: { orderId: string | null; onCl
   );
 }
 
-export function VehicleHistory({ vehicleId, vin }: { vehicleId: string; vin: string }) {
+export function VehicleHistory({ vehicleId, vin, excludeOrderId }: { vehicleId: string; vin: string; excludeOrderId?: string }) {
   const orders = useShop((state) => state.orders);
   const vehicles = useShop((state) => state.vehicles);
   const customers = useShop((state) => state.customers);
   const vehicle = vehicles.find((row) => row.id === vehicleId)
     ?? vehicles.find((row) => vin && normalizeVin(row.vin) === normalizeVin(vin));
-  const entries = vehicle ? vehicleHistoryEntries(orders, vehicle, customers, vehicles) : [];
+  const entries = (vehicle ? vehicleHistoryEntries(orders, vehicle, customers, vehicles) : [])
+    .filter((entry) => entry.kind === "divider" || entry.order.id !== excludeOrderId);
   return (
-    <section aria-label="Vehicle history" className="mt-6">
-      <h3 className="font-display text-2xl leading-none">Vehicle history</h3>
-      {entries.length === 0 ? <p className="mt-2 text-sm text-muted">No other visits are on file for this VIN.</p> : (
-        <ul className="mt-2 grid gap-1 text-sm">
-          {entries.map((entry) => (
-            entry.kind === "divider"
-              ? <li key={entry.text} className="mt-2 font-semibold">{entry.text}</li>
-              : <li key={entry.order.id}>RO {entry.order.number} · {entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
-          ))}
-        </ul>
-      )}
+    <section aria-label="Vehicle history" className="no-print mt-6">
+      <details>
+        <summary className="cursor-pointer font-display text-2xl leading-none">Vehicle history</summary>
+        {entries.length === 0 ? <p className="mt-2 text-sm text-muted">No other visits are on file for this VIN.</p> : (
+          <ul className="mt-2 grid gap-1 text-sm">
+            {entries.map((entry) => (
+              entry.kind === "divider"
+                ? <li key={entry.text} className="mt-2 font-semibold">{entry.text}</li>
+                : <li key={entry.order.id}>RO {entry.order.number} · {entry.ownerName} · {entry.order.openedOn} · {entry.order.concern}</li>
+            ))}
+          </ul>
+        )}
+      </details>
     </section>
   );
 }

@@ -26,6 +26,13 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
 
   if (!order) return null;
   const snap = order.closeSnapshot;
+  const closedHeader = order.status === "closed" && snap?.storeName
+    ? { storeName: snap.storeName, address: snap.storeAddress ?? "", city: snap.storeCity ?? "", phone: snap.storePhone ?? "" }
+    : null;
+  const headerName = closedHeader?.storeName || settings.storeName;
+  const headerLine = closedHeader
+    ? [closedHeader.address, closedHeader.city, closedHeader.phone].filter(Boolean).join(" · ") || closedHeader.city
+    : [settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || settings.city;
   const copy = customerCopyIdentity(order, customer);
   const version = closedRows.reduce((max, row) => Math.max(max, row.version ?? 1), order.status === "closed" ? 1 : 0);
   const money = orderMoney(order);
@@ -37,9 +44,9 @@ export function RepairOrderPrint({ orderId }: { orderId: string }) {
     <article className="ro-print">
       <header className="ro-head">
         <div>
-          <p className="ro-kicker">{settings.storeName}</p>
+          <p className="ro-kicker">{headerName}</p>
           <h1>Repair order {order.number}</h1>
-          <p>{[settings.address, settings.city, settings.phone].filter(Boolean).join(" · ") || settings.city}</p>
+          <p>{headerLine}</p>
         </div>
         <div>
           <p>Opened {order.openedOn}</p>

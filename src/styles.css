@@ -116,6 +116,10 @@
     border-color: #8a3b2a;
   }
 
+  .desk-actions .btn {
+    min-height: 44px;
+  }
+
   .btn-small {
     min-height: 2.25rem;
     padding: 0.2rem 0.65rem;

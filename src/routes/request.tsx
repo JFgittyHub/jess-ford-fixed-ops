@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { DeskLocked } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
+import { confirmedDemoStaffAccess } from "@/lib/demo";
 import { today } from "@/lib/format";
 import { lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
 import { useShop } from "@/lib/store";
@@ -16,10 +18,14 @@ const STORES: { id: StoreId; label: string }[] = [
 
 function RequestPage() {
   const shop = useShop();
+  const dataset = useShop((state) => state.dataset);
+  const storeName = useShop((state) => state.settings.storeName);
+  const [hydrated, setHydrated] = useState(() => useShop.persist.hasHydrated());
   const switchStore = useShop((state) => state.switchStore);
   const [step, setStep] = useState<"lookup" | "code" | "details" | "visit" | "sent">("lookup");
   const [query, setQuery] = useState("");
   const [note, setNote] = useState("");
+  const [customerNote, setCustomerNote] = useState("");
   const [error, setError] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [issuedCode, setIssuedCode] = useState<string | null>(null);
@@ -132,6 +138,7 @@ function RequestPage() {
       make,
       model,
       vin,
+      note: customerNote,
       plate,
     });
     if (!result.ok) {
@@ -141,7 +148,9 @@ function RequestPage() {
           ? "The code did not match, so the saved vehicle was not used."
           : result.reason === "vin"
             ? (vinScheduleError(vin) || "Enter a 17-character VIN.")
-            : "Enter the visit details and try again.");
+            : result.reason === "limit"
+              ? "This phone or email already has 3 requests waiting."
+              : "Enter the visit details and try again.");
       return;
     }
     setSentId(result.id);
@@ -149,15 +158,21 @@ function RequestPage() {
   }
 
   useEffect(() => {
-    void useShop.persist.rehydrate();
+    let live = true;
+    void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
+      if (live) setHydrated(true);
+    });
+    return () => { live = false; };
   }, []);
+
+  if (!hydrated || !confirmedDemoStaffAccess({ dataset })) return <DeskLocked storeName={storeName} />;
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl bg-bg px-4 py-8 text-ink">
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Online request</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Request a visit</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        Pick a service, a day, a time, an advisor, and waiter or drop-off. This stays a request until the shop confirms it. The menu shows labor time only.
+        Pick a service, a day, a time, and waiter or drop-off. This stays a request until the shop confirms it. The menu shows labor time only.
       </p>
       <div role="group" aria-label="Store" className="mt-4 flex flex-wrap gap-2">
         {STORES.map((store) => (
@@ -211,6 +226,7 @@ function RequestPage() {
             checkCode();
           }}
         >
+          {/* BLOCKER before real SMS or real data: the one-time code is shown on this page for the demo only. */}
           <p role="status" className="text-sm">
             Demo text to the mobile ending {mobileLast4}. The code is <strong className="tabular-nums">{issuedCode}</strong>. Nothing was sent.
           </p>
@@ -269,14 +285,15 @@ function RequestPage() {
             </fieldset>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Name"><input className="field" value={name} onChange={(event) => setName(event.target.value)} /></Field>
-              <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
-              <Field label="Email"><input className="field" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+              <Field label="Name"><input className="field" maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></Field>
+              <Field label="Phone"><input className="field" maxLength={20} value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+              <Field label="Email"><input className="field" maxLength={120} value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
               <Field label="Year"><input className="field tabular-nums" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
               <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} /></Field>
               <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} /></Field>
-              <Field label="VIN"><input className="field font-mono uppercase" value={vin} onChange={(event) => setVin(event.target.value.toUpperCase())} /></Field>
-              <Field label="License plate"><input className="field uppercase" value={plate} onChange={(event) => setPlate(event.target.value.toUpperCase())} /></Field>
+              <Field label="VIN"><input className="field font-mono uppercase" maxLength={17} value={vin} onChange={(event) => setVin(event.target.value.toUpperCase())} /></Field>
+              <Field label="License plate"><input className="field uppercase" maxLength={10} value={plate} onChange={(event) => setPlate(event.target.value.toUpperCase())} /></Field>
+              <Field label="Notes"><textarea className="field min-h-20" maxLength={500} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} /></Field>
             </div>
           )}
           {error ? <p role="alert" className="text-sm text-primary">{error}</p> : null}
@@ -344,7 +361,26 @@ function RequestPage() {
             {sent.customerName} · {sent.serviceName} · {sent.date} at {sent.time} · {sent.transportName}. This is waiting for the shop. It is not a confirmed appointment.
           </p>
           <p className="mt-2 text-sm">{sent.verified ? "Identity verified." : "Unverified. The shop will match the record when it confirms the request."}</p>
-          <Button className="mt-4" onClick={() => { setStep("lookup"); setSentId(null); setQuery(""); setEnteredCode(""); setVerified(false); }}>Request another</Button>
+          <Button className="mt-4" onClick={() => {
+            setStep("lookup");
+            setSentId(null);
+            setQuery("");
+            setEnteredCode("");
+            setVerified(false);
+            setCustomerId(null);
+            setVehicleId("");
+            setName("");
+            setPhone("");
+            setEmail("");
+            setYear("2020");
+            setMake("");
+            setModel("");
+            setVin("");
+            setPlate("");
+            setNote("");
+            setCustomerNote("");
+            setError("");
+          }}>Request another</Button>
         </div>
       ) : null}
     </main>

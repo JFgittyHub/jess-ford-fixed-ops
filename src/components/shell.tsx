@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
+import { deskActor } from "@/lib/cancel";
 import { isLockedPath, SECTION_LOCK_HINT, SECTION_LOCK_NOTICE } from "@/lib/section-lock";
 import { shopHasOperationalData, useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
@@ -135,9 +136,12 @@ function OpenDesk({ children }: { children: ReactNode }) {
     [serviceManagers],
   );
   const managerIds = new Set(managers.map((row) => row.id));
-  const staffId = managers.some((row) => row.id === workingAsId) || advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
-    ? workingAsId
-    : managers[0]?.id ?? advisors[0]?.id ?? techs[0]?.id ?? "";
+  const knownWorker = managers.some((row) => row.id === workingAsId) || advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId);
+  const staffId = knownWorker ? workingAsId : "";
+  const actor = useShop((state) => deskActor(state));
+  const canEditSettings = actor === "advisor" || actor === "service-manager";
+  const settingsLog = useShop((state) => state.settingsLog ?? []);
+  const requestLog = useShop((state) => state.requestLog ?? []);
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
   const clearShop = useShop((state) => state.clearShop);
@@ -199,7 +203,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {staffId ? (
+              {managers.length + advisors.length + techs.length > 0 ? (
                 <label className="flex items-center gap-2 text-xs text-muted">
                   <span className="max-w-[9.5rem] leading-snug">Working as isn't a real sign-in yet.</span>
                   <select
@@ -208,6 +212,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                     value={staffId}
                     onChange={(event) => setWorkingAs(event.target.value)}
                   >
+                    <option value="">Choose who is working</option>
                     {managers.length > 0 ? (
                       <optgroup label="Service managers">
                         {managers.map((manager) => <option key={manager.id} value={manager.id}>#{manager.number} {manager.name}</option>)}
@@ -268,31 +273,32 @@ function OpenDesk({ children }: { children: ReactNode }) {
             setOpen(false);
           }}
         >
+          {!canEditSettings ? <p role="status" className="text-sm text-[#8a3b2a] sm:col-span-2">Only an advisor or service manager can change store settings.</p> : null}
           <Field label="Store name">
-            <input className="field" maxLength={80} value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
+            <input className="field" maxLength={80} disabled={!canEditSettings} value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
           </Field>
           <Field label="Street address">
-            <input className="field" value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />
+            <input className="field" disabled={!canEditSettings} value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />
           </Field>
           <Field label="Shop phone">
-            <input className="field" value={settings.phone} onChange={(event) => updateSettings({ phone: event.target.value })} />
+            <input className="field" disabled={!canEditSettings} value={settings.phone} onChange={(event) => updateSettings({ phone: event.target.value })} />
           </Field>
           <Field label="City">
-            <input className="field" value={settings.city} onChange={(event) => updateSettings({ city: event.target.value })} />
+            <input className="field" disabled={!canEditSettings} value={settings.city} onChange={(event) => updateSettings({ city: event.target.value })} />
           </Field>
           <Field label="Target effective labor rate">
-            <input className="field tabular-nums" type="number" min={0} step={1} value={settings.targetElr} onChange={(event) => updateSettings({ targetElr: Number(event.target.value) || 0 })} />
+            <input className="field tabular-nums" type="number" min={0} step={1} disabled={!canEditSettings} value={settings.targetElr} onChange={(event) => updateSettings({ targetElr: Number(event.target.value) || 0 })} />
           </Field>
           <Field label="Absorption target %">
-            <input className="field tabular-nums" type="number" min={0} step={1} value={Math.round(settings.targetAbsorption * 100)} onChange={(event) => updateSettings({ targetAbsorption: (Number(event.target.value) || 0) / 100 })} />
+            <input className="field tabular-nums" type="number" min={0} step={1} disabled={!canEditSettings} value={Math.round(settings.targetAbsorption * 100)} onChange={(event) => updateSettings({ targetAbsorption: (Number(event.target.value) || 0) / 100 })} />
           </Field>
           <Field label="Policy guide % of CP labor">
-            <input className="field tabular-nums" type="number" min={0} step={0.1} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
+            <input className="field tabular-nums" type="number" min={0} step={0.1} disabled={!canEditSettings} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
           </Field>
           <SchedulingSettingsForm />
           <div className="flex flex-wrap gap-2 sm:col-span-2">
             <Button tone="primary" type="submit">Done</Button>
-            {isDemoMode() ? (
+            {isDemoMode() && actor === "service-manager" ? (
               <Button
                 tone={confirmReset ? "accent" : "ghost"}
                 onClick={() => {
@@ -309,7 +315,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
               </Button>
             ) : null}
-            {isDemoMode() ? (
+            {isDemoMode() && actor === "service-manager" ? (
               <Button
                 tone={confirmClear ? "accent" : "ghost"}
                 onClick={() => {
@@ -327,13 +333,29 @@ function OpenDesk({ children }: { children: ReactNode }) {
               </Button>
             ) : null}
           </div>
+          {actor === "service-manager" ? (
+            <section className="sm:col-span-2" aria-label="Change log">
+              <h2 className="font-display text-2xl leading-none">Change log</h2>
+              <p className="mt-1 text-sm text-muted">Read only. Who changed a setting or decided an online request.</p>
+              {settingsLog.length === 0 && requestLog.length === 0 ? <p className="mt-2 text-sm text-muted">No changes on this store yet.</p> : (
+                <ul className="mt-2 grid max-h-48 gap-1 overflow-auto text-sm">
+                  {settingsLog.map((row) => (
+                    <li key={`${row.at}-${row.field}-${row.after}`}>{row.who} · {row.field} · {row.before || "blank"} → {row.after || "blank"} · {row.at}</li>
+                  ))}
+                  {requestLog.map((row) => (
+                    <li key={`${row.at}-${row.requestId}-${row.action}`}>{row.who} · {row.action} request {row.requestId} · {row.at}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
         </form>
       </Modal>
     </div>
   );
 }
 
-function DeskLocked({ storeName }: { storeName: string }) {
+export function DeskLocked({ storeName }: { storeName: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4">
       <div className="w-full max-w-md text-center">

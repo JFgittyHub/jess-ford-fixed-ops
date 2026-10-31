@@ -66,6 +66,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [day, setDay] = useState(today());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
+  const [bookingDirty, setBookingDirty] = useState(false);
+  const [discardBooking, setDiscardBooking] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(() => openRequests || wantsOnlineRequests(locationHash));
   const [timesOpen, setTimesOpen] = useState(false);
   const ignoreRequestsHash = useRef(false);
@@ -226,8 +228,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBooking(true); }}>Book appointment</Button>
+        <div className="desk-actions flex flex-wrap items-center gap-2">
+          <Button small tone="primary" onClick={() => { setDate(day); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
           <Button small id="online-requests" onClick={() => setRequestsOpen(true)}>Online requests ({pendingCount})</Button>
           <Button small onClick={() => setTimesOpen(true)}>Online times</Button>
           <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
@@ -369,9 +371,19 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         )}
       </Modal>
 
-      <Modal open={booking} onClose={() => setBooking(false)} title="Book an appointment" description={`${dayLabel(date)} at ${clockTime(time)}.`}>
+      <Modal open={booking} onClose={() => { if (bookingDirty) { setDiscardBooking(true); return; } setBooking(false); }} title="Book an appointment" description={`${dayLabel(date)} at ${clockTime(time)}.`}>
+        {discardBooking ? (
+          <div className="grid gap-3">
+            <p role="alert">Discard this booking?</p>
+            <div className="flex flex-wrap gap-2">
+              <Button tone="primary" onClick={() => { setDiscardBooking(false); setBookingDirty(false); setBooking(false); }}>Discard</Button>
+              <Button onClick={() => setDiscardBooking(false)}>Keep editing</Button>
+            </div>
+          </div>
+        ) : null}
         <AppointmentFields
           key={`${shop.activeStoreId}-${date}-${time}-${techId}`}
+          onDirty={() => setBookingDirty(true)}
           customers={shop.customers.filter((customer) => !customer.formerRecord)}
           vehicles={shop.vehicles.filter((vehicle) => !vehicle.transferredTo)}
           advisors={shop.advisors}
@@ -549,6 +561,7 @@ function AppointmentFields({
   showStatus,
   capacityFor,
   onSubmit,
+  onDirty,
 }: {
   initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">;
   customers: { id: string; name: string; noShows?: number }[];
@@ -561,6 +574,7 @@ function AppointmentFields({
   showStatus?: boolean;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onDirty?: () => void;
 }) {
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(snapHalfHour(initial.time));
@@ -587,6 +601,7 @@ function AppointmentFields({
 
   return (
     <form
+      onInput={() => onDirty?.()}
       ref={formRef}
       className="grid gap-3"
       onSubmit={(event) => {
