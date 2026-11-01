@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { displayRecordedWhen } from "./cancel.ts";
 import { closedHeaderCopy } from "./format.ts";
-import { migrateSavedShop, createShopStore, useShop } from "./store.ts";
+import { migrateSavedShop, createShopStore } from "./store.ts";
 import { submitOnlineRequest } from "./online-request.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { fullVin } from "./vin.ts";

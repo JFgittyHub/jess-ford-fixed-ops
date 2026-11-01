@@ -317,8 +317,7 @@ describe("round 17 requests, roles, and ownership", () => {
       assert.equal(fourth.scope, "contact");
     }
     const foreign = send({ phone: "+52 509 555 0300", email: "other@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 221 }) }, "rq-foreign", pending);
-    assert.equal(foreign.ok, false);
-    if (!foreign.ok) assert.equal(foreign.reason, "contact");
+    assert.equal(foreign.ok, true, JSON.stringify(foreign));
     const extension = send({ phone: "509-555-0300 ext 12", email: "ext@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 222 }) }, "rq-ext", pending);
     assert.equal(extension.ok, false);
     if (!extension.ok) assert.equal(extension.limit, 3);

@@ -57,15 +57,15 @@ describe("shop sample data", () => {
     pinClock("2026-02-01T20:00:00.000Z");
     const shop = createSeed();
     assert.equal(todayIso(), "2026-02-01");
-    assert.equal(shop.orders.find((order) => order.id === "open-helen")?.openedOn, "2026-02-02");
+    assert.equal(shop.orders.find((order) => order.id === "open-helen")?.openedOn, "2026-01-31");
     assert.equal(shop.orders.find((order) => order.id === "open-ruth")?.openedOn, "2026-01-30");
     assert.equal(shop.parts.find((part) => part.id === "purge")?.lastSale, "2025-12-16");
     const closed = shop.orders.filter((order) => order.status === "closed");
     assert.ok(closed.length > 0);
     for (const order of closed) assert.ok((order.invoicedOn ?? "") < "2026-02-01");
     assert.equal(shop.expenses.length, 0);
-    assert.equal(shop.appointments.find((row) => row.id === "a1")?.date, "2026-02-02");
-    assert.notEqual(new Date("2026-02-02T12:00:00.000Z").getUTCDay(), 0);
+    assert.equal(shop.appointments.find((row) => row.id === "a1")?.date, "2026-01-31");
+    assert.notEqual(new Date("2026-01-31T12:00:00.000Z").getUTCDay(), 0);
     assert.equal(shop.appointments.find((row) => row.id === "a7")?.date, "2026-02-02");
     assert.doesNotThrow(() => digest(shop));
   });
@@ -88,6 +88,8 @@ describe("shop sample data", () => {
         }
         assert.equal(shop.appointments.some((row) => new Date(`${row.date}T12:00:00.000Z`).getUTCDay() === 0), false);
         assert.equal(shop.orders.filter((order) => order.status !== "closed").some((order) => new Date(`${order.openedOn}T12:00:00.000Z`).getUTCDay() === 0), false);
+        assert.equal(shop.appointments.some((row) => (row.status === "no_show" || row.status === "in_shop") && row.date > today), false);
+        assert.equal(shop.orders.filter((order) => order.status !== "closed").every((order) => order.openedOn <= today), true);
         const byVehicle = new Map<string, typeof closed>();
         for (const order of shop.orders) {
           const list = byVehicle.get(order.vehicleId) ?? [];

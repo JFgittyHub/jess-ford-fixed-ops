@@ -59,7 +59,7 @@ describe("round 14", () => {
     assert.equal(JSON.stringify(shop.getState().settings.scheduling.hours), hours);
     shop.getState().setWorkingAs("megan");
     assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
-    const row = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "2026-12-24");
+    const row = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "Thu, Dec 24");
     assert.ok(row);
     assert.equal(row.who, "Megan Cho");
     assert.ok(row.at);

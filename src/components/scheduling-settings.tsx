@@ -33,7 +33,7 @@ export function SchedulingSettingsForm() {
         <p className="mt-1 text-sm normal-case tracking-normal text-muted">
           Hours, closed days, the online booking window, the service menu, and transport options belong to this store only. The menu has no prices and no free-text concern.
         </p>
-        {canEdit ? null : <p role="status" className="mt-2 text-sm text-[#8a3b2a]">{refused}</p>}
+        {actor === "customer" || canEdit ? null : <p role="status" className="mt-2 text-sm text-[#8a3b2a]">{refused}</p>}
       </div>
 
       <div className="grid gap-2">

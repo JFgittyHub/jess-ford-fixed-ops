@@ -7,7 +7,7 @@ import { Button, Field, Pill } from "@/components/ui";
 import { displayRecordedWhen } from "@/lib/cancel";
 import { vehicleHistoryEntries } from "@/lib/ownership";
 import { daySpan, today } from "@/lib/format";
-import { isSold, lookups } from "@/lib/metrics";
+import { isSold } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { Campaign } from "@/lib/types";
 
@@ -23,13 +23,11 @@ const AUDIENCES: { id: Campaign["audience"]; label: string }[] = [
 
 function CustomersPage() {
   const shop = useShop();
-  const look = lookups(shop);
   const navigate = useNavigate();
   const setFocus = useShop((state) => state.setFocus);
   const sendCampaign = useShop((state) => state.sendCampaign);
   const [query, setQuery] = useState("");
   const [riskOnly, setRiskOnly] = useState(false);
-  const [writing, setWriting] = useState<string | null>(null);
   const [name, setName] = useState("Maintenance reminder");
   const [audience, setAudience] = useState<Campaign["audience"]>("due7");
   const [message, setMessage] = useState("Jess Ford service: your vehicle is due for a visit. Call the store to book maintenance. Reply STOP to opt out.");

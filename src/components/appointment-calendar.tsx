@@ -7,17 +7,17 @@ const START = 7 * 60;
 const END = 18 * 60;
 const SNAP = 30;
 const SLOT = 32;
-const HANDLE = 44;
+const HANDLE = 10;
 
 export function cardBlockHeight(minutes: number) {
   return Math.max(SLOT - 2, (minutes / SNAP) * SLOT - 2);
 }
 
-/** The visible grip is one pixel of the bottom edge. The rest of the hit area hangs below the card. */
+/** The grip is the bottom 10px of the card. It does not hang into the next slot. */
 export function lengthHandleRange(minutes: number) {
   const height = cardBlockHeight(minutes);
-  const top = height - 1;
-  return { top, bottom: top + HANDLE, center: height / 2 };
+  const top = Math.max(0, height - HANDLE);
+  return { top, bottom: height, center: height / 2 };
 }
 
 export function planCalendarDrag(input: {
@@ -290,7 +290,7 @@ export function AppointmentCalendar({
 
   return (
     <div className="card mt-4 overflow-x-auto p-0">
-      <div className="grid min-w-[52rem]" style={{ gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(8.5rem, 1fr))` }}>
+      <div className="grid min-w-[52rem]" style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(8.5rem, 1fr))` }}>
         <div className="border-b border-line" />
         {columnGroups(techs).map((group) => (
           <div key={group.key} className="border-b border-l border-line px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide" style={{ gridColumn: `span ${group.count}`, background: BOARD_SHADE[group.board].head }}>
@@ -331,7 +331,9 @@ export function AppointmentCalendar({
               data-tech={tech.id}
               className="relative border-l border-line"
               style={{
+                position: "relative",
                 height,
+                overflow: "visible",
                 backgroundColor: BOARD_SHADE[tech.board].column,
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}
@@ -351,9 +353,10 @@ export function AppointmentCalendar({
                   <article
                     key={row.id}
                     data-appt
+                    data-appt-id={row.id}
                     data-drag="move"
-                    className={`absolute overflow-visible rounded-md border border-[#c5d7ee] bg-[#e7f1fb] px-1.5 py-1 pr-6 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
-                    style={{ top, height: block, left: 4 + offset * 12, right: 4, zIndex: hover?.id === row.id ? 30 : selected ? 5 : 1 + offset, cursor: "grab", touchAction: "none" }}
+                    className={`absolute overflow-hidden rounded-md border border-[#c5d7ee] bg-[#e7f1fb] px-1.5 py-1 pr-6 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
+                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
                     <p className="truncate text-xs font-semibold">{clockTime(row.time)} {label(row)}</p>
@@ -362,7 +365,8 @@ export function AppointmentCalendar({
                       type="button"
                       aria-label="Change length"
                       data-drag="resize"
-                      className="absolute left-1 right-8 top-[calc(100%-1px)] z-20 h-11 min-h-11 min-w-11 cursor-ns-resize border-0 bg-transparent p-0"
+                      className="absolute inset-x-1 bottom-0 cursor-ns-resize border-0 bg-transparent p-0"
+                      style={{ position: "absolute", left: 4, right: 32, bottom: 0, height: HANDLE, zIndex: 0 }}
                       onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
                     >
                       <span className="pointer-events-none block h-1 w-full rounded-full bg-[#5d87b0]" />

@@ -226,10 +226,10 @@ function weekdayNumber(iso: string) {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
-/** Shift a sample date onto the shop calendar. Sunday lands on the next open day. */
+/** Shift a sample date onto the shop calendar. Sunday uses the last open day, which is Saturday. */
 function shopDate(iso: string) {
   const shifted = addDays(today(), daysBetween(SAMPLE_ANCHOR, iso));
-  return weekdayNumber(shifted) === 0 ? addDays(shifted, 1) : shifted;
+  return weekdayNumber(shifted) === 0 ? addDays(shifted, -1) : shifted;
 }
 
 /** Later visits on one vehicle never show a lower odometer. */

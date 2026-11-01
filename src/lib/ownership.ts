@@ -1,4 +1,5 @@
 import { displayRecordedWhen } from "./cancel";
+import { cleanFreeText } from "./online-request";
 import { openedInstant } from "./mileage";
 import type { Customer, OwnershipChange, OwnershipSpan, RepairOrder, Vehicle } from "./types";
 import { isFullVin, normalizeVin } from "./vin";
@@ -6,7 +7,7 @@ import { isFullVin, normalizeVin } from "./vin";
 /** A transfer reason is required, trimmed, and kept to 500 characters. */
 export function transferReason(value: unknown): { text: string } | { error: string } {
   if (typeof value !== "string") return { error: "Add a reason for the transfer." };
-  const text = value.trim().replace(/\s+/g, " ");
+  const text = cleanFreeText(value).trim().replace(/\s+/g, " ");
   if (text.length < 10) return { error: "Add a reason for the transfer." };
   if (text.length > 500) return { error: "Keep the reason to 500 characters." };
   return { text };

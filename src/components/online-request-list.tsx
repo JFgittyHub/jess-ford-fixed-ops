@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import { formatVisit } from "@/lib/format";
 import type { ContactMethod, OnlineRequest } from "@/lib/types";
@@ -52,19 +52,9 @@ export function OnlineRequestList({
         </thead>
         <tbody>
           {listed.map((row) => (
-            <tr key={row.id}>
-              <td className="whitespace-nowrap">
-                <p>{formatVisit(row.date, row.time)}</p>
-                {rowWarning?.id === row.id ? (
-                  <div className="mt-2 grid max-w-xs gap-2">
-                    <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-2 py-1 text-sm text-[#8a5a00]">{rowWarning.text}</p>
-                    <div className="flex flex-wrap gap-2">
-                      <Button type="button" onClick={onCancelWarning}>Cancel</Button>
-                      <Button tone="primary" type="button" onClick={onConfirmWarning}>Override</Button>
-                    </div>
-                  </div>
-                ) : null}
-              </td>
+            <Fragment key={row.id}>
+            <tr>
+              <td className="whitespace-nowrap">{formatVisit(row.date, row.time)}</td>
               <td>{row.customerName}</td>
               <td>{vehicleLine(row)}</td>
               <td>{row.serviceName} · {row.laborHours} hr</td>
@@ -88,10 +78,30 @@ export function OnlineRequestList({
                 </td>
               ) : null}
             </tr>
+            {rowWarning?.id === row.id ? <WarningRow text={rowWarning.text} onCancel={onCancelWarning} onConfirm={onConfirmWarning} /> : null}
+            </Fragment>
           ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function WarningRow({ text, onCancel, onConfirm }: { text: string; onCancel?: () => void; onConfirm?: () => void }) {
+  const row = useRef<HTMLTableRowElement>(null);
+  useEffect(() => { row.current?.scrollIntoView({ block: "nearest" }); }, [text]);
+  return (
+    <tr ref={row}>
+      <td colSpan={9} className="w-full">
+        <div className="grid w-full gap-2">
+          <p role="status" className="w-full rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{text}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={onCancel}>Cancel</Button>
+            <Button tone="primary" type="button" onClick={onConfirm}>Override</Button>
+          </div>
+        </div>
+      </td>
+    </tr>
   );
 }
 

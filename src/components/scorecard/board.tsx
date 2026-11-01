@@ -288,14 +288,18 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
   const serviceGrossDetail = board.recorded && board.service.sales > 0 ? `${formatPct(board.service.gross / board.service.sales)} gross` : "Gross not in yet";
   const partsGrossDetail = partsGp === null || !board.recorded ? "Gross not in yet" : `${formatPct(partsGp)} gross`;
   const hoursDetail = pace.closed ? `Goal ${formatHours(board.hoursGoal)}` : `Projected of ${available ? formatHours(available) : "—"} available`;
+  const hoursLabel = pace.closed ? "Sold hours" : "MTD sold hours";
+  const laborLabel = pace.closed ? "Effective labor rate" : "MTD effective labor rate";
+  const serviceLabel = pace.closed ? "Service sales" : "MTD service sales";
+  const partsLabel = pace.closed ? "Parts sales" : "MTD parts sales";
 
   return (
     <div className="grid gap-3">
       <section className="grid grid-cols-2 gap-3 rounded-lg border-2 border-primary p-3 lg:grid-cols-4">
-        <Kpi label="MTD sold hours" value={board.recorded ? formatHours(board.service.totalHours) : "—"} secondary={pace.projected === null ? "—" : formatHours(pace.projected)} status={pace.status} detail={hoursDetail} bar={bar} />
-        <Kpi label="MTD effective labor rate" value={board.recorded && board.service.elr > 0 ? formatMoney(board.service.elr, 2) : "—"} status={elrStatus} detail={`Standard ${formatMoney(ELR_STANDARD, 2)}`} />
-        <Kpi label="MTD service sales" value={board.recorded ? formatMoney(board.service.sales) : "—"} secondary={board.recorded ? formatMoney(board.service.gross) : "—"} secondaryLabel="Gross" status="empty" detail={serviceGrossDetail} standard={formatPct(SERVICE_GP_STANDARD, 0)} />
-        <Kpi label="MTD parts sales" value={board.recorded ? formatMoney(board.parts.sales) : "—"} secondary={board.recorded ? formatMoney(board.parts.gross) : "—"} secondaryLabel="Gross" status="empty" detail={partsGrossDetail} standard={formatPct(PARTS_GP_STANDARD, 0)} />
+        <Kpi label={hoursLabel} value={board.recorded ? formatHours(board.service.totalHours) : "—"} secondary={pace.closed || pace.projected === null ? undefined : formatHours(pace.projected)} secondaryLabel={pace.closed ? "Total" : "Projected"} status={pace.status} detail={hoursDetail} bar={bar} />
+        <Kpi label={laborLabel} value={board.recorded && board.service.elr > 0 ? formatMoney(board.service.elr, 2) : "—"} status={elrStatus} detail={`Standard ${formatMoney(ELR_STANDARD, 2)}`} />
+        <Kpi label={serviceLabel} value={board.recorded ? formatMoney(board.service.sales) : "—"} secondary={board.recorded ? formatMoney(board.service.gross) : "—"} secondaryLabel="Gross" status="empty" detail={serviceGrossDetail} standard={formatPct(SERVICE_GP_STANDARD, 0)} />
+        <Kpi label={partsLabel} value={board.recorded ? formatMoney(board.parts.sales) : "—"} secondary={board.recorded ? formatMoney(board.parts.gross) : "—"} secondaryLabel="Gross" status="empty" detail={partsGrossDetail} standard={formatPct(PARTS_GP_STANDARD, 0)} />
       </section>
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi label="YTD sold hours" value={ytd.recorded ? formatHours(ytd.hours) : "—"} status="empty" detail="Year to date" />

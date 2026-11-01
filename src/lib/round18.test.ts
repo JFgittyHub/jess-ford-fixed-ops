@@ -160,13 +160,14 @@ describe("round 18 change log and edits", () => {
 });
 
 describe("round 18 contacts, mileage, and last visit", () => {
-  it("keeps josé, drops a leading 9 and bidi, and does not fold a foreign country code", () => {
+  it("keeps josé, drops a leading 9 and bidi, and keys a foreign country code on its own digits", () => {
     assert.equal(cleanFreeText("josé"), "josé");
     assert.equal(cleanFreeText("jo\u00ADse\u202E"), "jose");
     assert.equal(phoneKey("15095550300"), phoneKey("5095550300"));
     assert.equal(phoneKey("95095550300"), "5095550300");
     assert.equal(phoneKey("５０９５５５０３００"), "5095550300");
-    assert.equal(phoneKey("+52 509 555 0300"), "");
+    assert.equal(phoneKey("+52 509 555 0300"), "525095550300");
+    assert.notEqual(phoneKey("+52 509 555 0300"), phoneKey("5095550300"));
     const state = { ...createSeed(), activeStoreId: "grand-coulee" as const };
     const at = "2026-10-31T16:00:00.000Z";
     const base = {
@@ -243,17 +244,22 @@ describe("round 18 contacts, mileage, and last visit", () => {
     shop.getState().setWorkingAs("megan");
     const helen = shop.getState().orders.find((row) => row.id === "open-helen");
     assert.ok(helen);
+    const helenVehicle = shop.getState().vehicles.find((row) => row.id === helen.vehicleId);
+    assert.ok(helenVehicle);
     shop.setState({
+      vehicles: [...shop.getState().vehicles, { ...helenVehicle, id: "v-lv3", vin: fullVin({ prefix: "1FTAB12C", year: 2019, plant: "G", serial: 8803 }) }],
       orders: [
         ...shop.getState().orders.map((row) => row.id === "open-helen"
-          ? { ...row, status: "booked" as const, mileageOut: row.mileage + 4, openedAt: "2026-10-18T16:00:00.000Z", parts: row.parts.map((line) => ({ ...line, condition: "new" as const })), wa: { choice: "cap" as const, initials: "HC", date: "2026-10-19", time: "09:00", estimate: 0, cap: 50000, returnParts: false, plate: "", address: "100 Main Street", extras: [] } }
+          ? { ...row, vehicleId: "v-lv3", status: "booked" as const, mileage: 91000, mileageOut: 91004, openedAt: "2026-10-18T16:00:00.000Z", openedOn: "2026-10-18", parts: row.parts.map((line) => ({ ...line, condition: "new" as const })), wa: { choice: "cap" as const, initials: "HC", date: "2026-10-19", time: "09:00", estimate: 0, cap: 50000, returnParts: false, plate: "", address: "100 Main Street", extras: [] } }
           : row),
-        { ...helen, id: "newer-open", number: 999001, status: "open" as const, openedAt: "2026-10-19T18:00:00.000Z", openedOn: "2026-10-19", mileage: helen.mileage + 8000, mileageOut: null, closeSnapshot: undefined, authorizationLocked: false },
+        { ...helen, id: "prior-closed", vehicleId: "v-lv3", number: 999000, status: "closed" as const, openedAt: "2026-10-01T16:00:00.000Z", openedOn: "2026-10-01", mileage: 80000, mileageOut: 84201, authorizationLocked: true },
+        { ...helen, id: "prior-open", vehicleId: "v-lv3", number: 999001, status: "open" as const, openedAt: "2026-10-10T16:00:00.000Z", openedOn: "2026-10-10", mileage: 90000, mileageOut: null, closeSnapshot: undefined, authorizationLocked: false },
       ],
     });
     const closed = shop.getState().closeOrder("open-helen");
     assert.equal(closed.ok, true, closed.error ?? "");
     const note = shop.getState().orders.find((row) => row.id === "open-helen")?.closeSnapshot?.lastVisitNote ?? "";
-    assert.equal(note.includes(String(helen.mileage + 8000)), false);
+    assert.equal(note, "Last visit: left at 84,201 mi on Oct 1, 2026.");
+    assert.equal(note.includes("90,000"), false);
   });
 });

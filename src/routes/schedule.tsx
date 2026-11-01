@@ -228,7 +228,6 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           <p className="mt-2 max-w-xl text-muted">
             {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
           </p>
-          {actor === "customer" ? <p role="status" className="mt-2 text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
           {actor === "technician" ? <p role="note" className="mt-2 text-sm font-semibold text-[#8a5a00]">Techs can view only.</p> : null}
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
@@ -310,6 +309,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           }}
           onWrite={() => setPreset(selected)}
           onEdit={() => openAppointment(selected.id)}
+          onLength={(minutes) => {
+            const result = shop.moveAppointment(selected.id, { minutes });
+            setActionError(result.ok ? null : result.error);
+          }}
           onCancel={() => askCancel(selected.id)}
           cancelBlock={blockFor(selected)}
           onOpenOrder={selected.orderId && shop.orders.some((order) => order.id === selected.orderId) ? () => openRepairOrder(selected.orderId as string) : undefined}
@@ -536,6 +539,7 @@ function Selected({
   onStatus,
   onWrite,
   onEdit,
+  onLength,
   onCancel,
   onReinstate,
   cancelBlock,
@@ -552,12 +556,16 @@ function Selected({
   onStatus: (status: Appointment["status"]) => void;
   onWrite: () => void;
   onEdit: () => void;
+  onLength: (minutes: number) => void;
   onCancel: () => void;
   onReinstate: () => void;
   cancelBlock: string | null;
   onOpenOrder?: () => void;
   writeBlock: string | null;
 }) {
+  const [lengthOpen, setLengthOpen] = useState(false);
+  const lengthPicker = useRef<HTMLSelectElement>(null);
+  const lengths = [...new Set([...LENGTHS, row.minutes])].sort((a, b) => a - b);
   return (
     <div className="card mt-3 flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -577,7 +585,15 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
-        <Button small onClick={onEdit}>Change length</Button>
+        <Button small onClick={() => { setLengthOpen(true); queueMicrotask(() => lengthPicker.current?.focus()); }}>Change length</Button>
+        {lengthOpen ? (
+          <label className="grid basis-full gap-1 text-sm">
+            Visit length
+            <select ref={lengthPicker} className="field min-h-11 w-full max-w-xs" aria-label="Visit length" value={row.minutes} onChange={(event) => onLength(Number(event.target.value))}>
+              {lengths.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
+            </select>
+          </label>
+        ) : null}
         <Button small onClick={onEdit}>Edit details</Button>
         {!roCreationEnabled() ? <p className="text-sm text-muted">Repair orders come from Dealertrack.</p> : row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : writeBlock ? <p className="text-sm text-muted">{writeBlock}</p> : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>

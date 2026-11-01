@@ -1,3 +1,4 @@
+import { shopTodayDate } from "../clock";
 import type { StoreId } from "../types";
 
 export type { StoreId };
@@ -310,7 +311,7 @@ export type Pace = {
   future: boolean;
 };
 
-export function paceFor(board: MonthBoard, today = new Date()): Pace {
+export function paceFor(board: MonthBoard, today = shopTodayDate()): Pace {
   const { year, monthIndex } = parseMonth(board.month);
   const goal = board.hoursGoal;
   const hours = board.service.totalHours;
@@ -424,7 +425,7 @@ export function tally(rows: MetricRow[]): HealthTally {
   return { good, watch, bad, scored: scored.length, headline };
 }
 
-export function attentionItems(board: MonthBoard, today = new Date()): AttentionItem[] {
+export function attentionItems(board: MonthBoard, today = shopTodayDate()): AttentionItem[] {
   if (!board.recorded) return [];
   const items: AttentionItem[] = [];
   const pace = paceFor(board, today);

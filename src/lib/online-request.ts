@@ -188,7 +188,7 @@ export function submitOnlineRequest(
   let vin = rawVin;
   let plate = textField(cleanFreeText(input.plate), 10).toUpperCase();
   const note = textField(cleanFreeText(input.note), 500);
-  const deviceId = textField(input.deviceId, 40);
+  const deviceId = textField(cleanFreeText(input.deviceId), 40);
 
   if (input.verified) {
     const customer = shop.customers.find((row) => row.id === input.customerId);
@@ -214,7 +214,8 @@ export function submitOnlineRequest(
     return { ok: false, reason: "vin" };
   }
   if (verified && (!vin || vinScheduleError(vin))) return { ok: false, reason: "vin" };
-  const phoneOk = phone.length === 0 || phoneKey(phone).length === 10;
+  const phoneDigits = phoneKey(phone);
+  const phoneOk = phone.length === 0 || phoneDigits.length === 10 || (phone.trim().startsWith("+") && phoneDigits.length >= 8 && phoneDigits.length <= 15);
   const emailOk = email.length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   if (!phoneOk || !emailOk) return { ok: false, reason: "contact" };
   const phones = phoneKey(phone);
@@ -331,12 +332,16 @@ function textField(value: unknown, max: number): string {
 }
 
 function hiddenFormat(code: number) {
-  if (code <= 0x1f || code === 0x7f) return true;
-  if (code >= 0x80 && code <= 0x9f) return true;
-  if (code === 0xad || code === 0xfeff) return true;
+  if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return true;
+  if (code === 0x2028 || code === 0x2029 || code === 0xad || code === 0x34f || code === 0x61c || code === 0x180e || code === 0xfeff) return true;
+  if (code === 0x3164 || code === 0x115f || code === 0x1160 || code === 0xffa0) return true;
   if (code >= 0x200b && code <= 0x200f) return true;
   if (code >= 0x202a && code <= 0x202e) return true;
-  if (code >= 0x2066 && code <= 0x2069) return true;
+  if (code >= 0x2060 && code <= 0x2069) return true;
+  if (code >= 0xfff9 && code <= 0xfffb) return true;
+  if (code >= 0xfe00 && code <= 0xfe0f) return true;
+  if (code >= 0xe0100 && code <= 0xe01ef) return true;
+  if (code >= 0xe0000 && code <= 0xe007f) return true;
   return false;
 }
 
@@ -366,9 +371,12 @@ export function advisorForWebRequest(
 }
 
 export function phoneKey(value: string): string {
-  const cleaned = cleanFreeText(value);
+  const cleaned = cleanFreeText(value).trim();
   const withoutMarks = cleaned.replace(/(?:[#/]\s*\d+|(?:ext\.?|extension|x)\s*\d+)\s*$/i, "");
   const digits = withoutMarks.replace(/\D/g, "");
+  if (cleaned.startsWith("+") && !(digits.length === 11 && digits.startsWith("1"))) {
+    return digits.length >= 8 && digits.length <= 15 ? digits : "";
+  }
   if (digits.length === 11 && (digits.startsWith("1") || digits.startsWith("9"))) return digits.slice(1);
   if (digits.length === 10) return digits;
   return "";

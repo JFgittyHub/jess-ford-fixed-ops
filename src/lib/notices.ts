@@ -1,5 +1,5 @@
 import { laborHoursFor } from "./capacity";
-import { addDays, todayIso } from "./clock";
+import { addDays, now, todayIso } from "./clock";
 import { matchRequestCustomer } from "./online-request";
 import { textingAdapter } from "./adapters/texting";
 import type { Appointment, ContactMethod, Customer, OnlineRequest, ShopNotice, Vehicle } from "./types";
@@ -153,7 +153,7 @@ export function reminderMethod(request: OnlineRequest | undefined, customer: Cus
   return "call";
 }
 
-export function tomorrowIso(at = new Date()): string {
+export function tomorrowIso(at = now()): string {
   return addDays(todayIso(at), 1);
 }
 

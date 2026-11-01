@@ -230,6 +230,12 @@ function visitLabel(date: string, time: string) {
   return formatVisit(date, time);
 }
 
+function closedDateLabel(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const stamp = new Date(Date.UTC(year || 2026, (month || 1) - 1, day || 1, 12));
+  return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(stamp);
+}
+
 const HOUR_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function describeHours(row: { weekday: number; closed: boolean; open: string; close: string } | undefined) {
@@ -250,7 +256,7 @@ function appointmentStatusSentence(
 ) {
   const when = visitLabel(current.date, current.time);
   if (current.status === "no_show" && next !== "no_show") {
-    return `Put back ${customerName} for ${when}. The no-show count goes down because the visit is back on the board.`;
+    return `Put back to scheduled: ${customerName} for ${when}. The no-show count goes down because the visit is back on the board.`;
   }
   if (next === "no_show") return `Marked no-show: ${customerName} for ${when}.`;
   if (next === "arrived") return `Marked arrived: ${customerName} for ${when}.`;
@@ -275,7 +281,7 @@ function appointmentEditRows(
       appointmentStatusSentence(current, nextStatus, customerName),
     ));
   }
-  const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
+  const customerName = state.customers.find((row) => row.id === (patch.customerId || current.customerId))?.name ?? "Customer";
   const nameOf = (id: string, list: { id: string; name: string }[]) => list.find((row) => row.id === id)?.name ?? "none";
   const push = (field: string, before: string, after: string) => {
     if (before === after) return;
@@ -312,10 +318,12 @@ function appointmentEditRows(
   if (typeof patch.vin === "string") push("VIN", current.vin || "none", normalizeVin(patch.vin) || "none");
   if (Array.isArray(patch.lines)) {
     const before = current.lines.map((line) => line.concern).filter(Boolean).join("; ") || "none";
-    const after = patch.lines.map((line) => cleanFreeText(line.concern).trim()).filter(Boolean).join("; ") || "none";
+    const after = patch.lines.map((line) => cleanFreeText(line.concern).trim().slice(0, 500)).filter(Boolean).join("; ") || "none";
     push("concern", before, after);
   } else if (typeof patch.concern === "string") {
-    push("concern", current.concern || "none", patch.concern.trim() || "none");
+    const applied = cleanFreeText(patch.concern).trim().slice(0, 500);
+    const nextLines = applied ? [{ code: current.lines[0]?.code || "A", concern: applied }] : current.lines;
+    push("concern", current.concern || "none", concernFromLines(nextLines) || "none");
   }
   return rows;
 }
@@ -1459,26 +1467,26 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             changes.push({ at: stamp, who: who.name, whoId: who.id, field, before, after });
           };
           if (typeof patch.storeName === "string") {
-            const storeName = asText(patch.storeName, NAME_MAX);
+            const storeName = asText(cleanFreeText(patch.storeName), NAME_MAX);
             if (storeName) {
               note("Store name", settings.storeName, storeName);
               settings.storeName = storeName;
             }
           }
           if (typeof patch.city === "string") {
-            const city = asText(patch.city, TEXT_MAX);
+            const city = asText(cleanFreeText(patch.city), TEXT_MAX);
             if (city !== null) {
               note("City", settings.city, city);
               settings.city = city;
             }
           }
           if (typeof patch.phone === "string") {
-            const phone = patch.phone.trim().slice(0, 20);
+            const phone = cleanFreeText(patch.phone).trim().slice(0, 20);
             note("Shop phone", settings.phone, phone);
             settings.phone = phone;
           }
           if (typeof patch.address === "string") {
-            const address = asText(patch.address, TEXT_MAX);
+            const address = asText(cleanFreeText(patch.address), TEXT_MAX);
             if (address !== null) {
               note("Street address", settings.address, address);
               settings.address = address;
@@ -1577,7 +1585,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           added = true;
           return {
             settings: { ...state.settings, scheduling: next },
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Closed date", "", iso)],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Closed date", "", closedDateLabel(iso))],
           };
         });
         return added;
@@ -1615,9 +1623,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const next = addOnlineService(state.settings.scheduling, input, uid("svc"));
           if (!next) return state;
           added = true;
+          const saved = next.onlineMenu[next.onlineMenu.length - 1];
           return {
             settings: { ...state.settings, scheduling: next },
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Online service", "", `${input.name} ${input.laborHours}`)],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Online service", "", `${saved?.name ?? ""} ${saved?.laborHours ?? input.laborHours}`)],
           };
         });
         return added;
@@ -1659,9 +1668,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const next = addTransportOption(state.settings.scheduling, name, uid("ride"));
           if (!next) return state;
           added = true;
+          const saved = next.transportOptions[next.transportOptions.length - 1];
           return {
             settings: { ...state.settings, scheduling: next },
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Transport", "", name.trim())],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Transport", "", saved?.name ?? "")],
           };
         });
         return added;
@@ -1675,9 +1685,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const next = renameTransportOption(state.settings.scheduling, id, name);
           if (!next) return state;
           renamed = true;
+          const saved = next.transportOptions.find((row) => row.id === id);
           return {
             settings: { ...state.settings, scheduling: next },
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Transport", current?.name ?? id, name.trim())],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Transport", current?.name ?? id, saved?.name ?? "")],
           };
         });
         return renamed;
@@ -2914,10 +2925,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return id;
       },
       createCustomer: (input) => {
-        const name = asText(input.name, NAME_MAX);
-        const model = asText(input.model, NAME_MAX);
+        const name = asText(cleanFreeText(input.name), NAME_MAX);
+        const model = asText(cleanFreeText(input.model), NAME_MAX);
         if (!name || !model || typeof input.phone !== "string") return { customerId: "", vehicleId: "", error: "Add the customer name and model.", warning: null };
-        const phone = input.phone.trim();
+        const phone = cleanFreeText(input.phone).trim();
         if (phone && phoneDigits(phone).length !== 10) return { customerId: "", vehicleId: "", error: "Enter a 10-digit phone number.", warning: null };
         if (input.vin != null && typeof input.vin !== "string") return { customerId: "", vehicleId: "", error: "Enter a 17-character VIN.", warning: null };
         const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
@@ -3161,16 +3172,18 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
         const moved = current.date !== date || current.time !== time || current.techId !== techId;
         const resized = current.minutes !== minutes;
-        const sentence = moved
-          ? `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techName(current.techId)} to ${visitLabel(date, time)} with ${techName(techId)}`
-          : `Length: ${current.minutes} → ${minutes} min`;
-        const field = moved ? "Move appointment" : "Length";
+        const moveSentence = `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techName(current.techId)} to ${visitLabel(date, time)} with ${techName(techId)}`;
+        const lengthSentence = `Length: ${current.minutes} → ${minutes} min for ${customerName}`;
+        const logged = [
+          ...(moved ? [settingsChange(who, "Move appointment", "", moveSentence)] : []),
+          ...(resized ? [settingsChange(who, "Length", "", lengthSentence)] : []),
+        ];
         set((next) => ({
           appointments: next.appointments.map((row) => {
             if (row.id !== id || row.status === "cancelled") return row;
             return { ...row, minutes, time, date, techId };
           }),
-          settingsLog: !moved && !resized ? next.settingsLog : [...(next.settingsLog ?? []), settingsChange(who, field, "", sentence)],
+          settingsLog: logged.length === 0 ? next.settingsLog : [...(next.settingsLog ?? []), ...logged],
         }));
         return { ok: true, error: null };
       },
@@ -3193,10 +3206,22 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (current.status === "no_show" && patch.customerId && patch.customerId !== current.customerId) {
           return { ok: false, error: "A no-show stays with the customer who missed the visit." };
         }
-        if (patch.vehicleId && patch.vehicleId !== current.vehicleId) {
-          const vehicle = state.vehicles.find((row) => row.id === patch.vehicleId);
-          const customerId = patch.customerId || current.customerId;
-          if (!vehicle || vehicle.customerId !== customerId) {
+        const knownStatus = new Set(["scheduled", "arrived", "in_shop", "no_show", "cancelled"]);
+        if (patch.status && !knownStatus.has(patch.status)) return { ok: false, error: "That status is not on this desk." };
+        if (patch.customerId && !state.customers.some((row) => row.id === patch.customerId)) {
+          return { ok: false, error: "That customer is not on this store." };
+        }
+        if (patch.lane && !state.settings.scheduling.transportOptions.some((row) => row.id === patch.lane)) {
+          return { ok: false, error: "That lane is not on this store." };
+        }
+        if (Array.isArray(patch.laborOpIds) && patch.laborOpIds.some((id) => !state.laborOps.some((op) => op.id === id))) {
+          return { ok: false, error: "That labor operation is not on this store." };
+        }
+        const nextCustomerId = patch.customerId || current.customerId;
+        const nextVehicleId = patch.vehicleId || current.vehicleId;
+        if ((patch.customerId && patch.customerId !== current.customerId) || (patch.vehicleId && patch.vehicleId !== current.vehicleId)) {
+          const vehicle = state.vehicles.find((row) => row.id === nextVehicleId);
+          if (!vehicle || vehicle.customerId !== nextCustomerId) {
             return { ok: false, error: "That vehicle belongs to another customer." };
           }
         }
@@ -3223,13 +3248,18 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               const minutes = appointmentMinutes(patch.minutes, row.minutes);
               const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : row.time);
               const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : row.date;
+              const concernOnly = typeof patch.concern === "string" && !(Array.isArray(patch.lines) && patch.lines.length > 0)
+                ? cleanFreeText(patch.concern).trim().slice(0, 500)
+                : null;
               const lines = Array.isArray(patch.lines) && patch.lines.length > 0
                 ? patch.lines.map((line, index) => ({
                     id: line.id || uid("al"),
                     code: lineLetter(index),
-                    concern: cleanFreeText(line.concern).trim(),
+                    concern: cleanFreeText(line.concern).trim().slice(0, 500),
                   })).filter((line) => line.concern)
-                : row.lines;
+                : concernOnly
+                  ? [{ id: row.lines[0]?.id || uid("al"), code: row.lines[0]?.code || "A", concern: concernOnly }]
+                  : row.lines;
               const kept = lines.length > 0 ? lines.map((line, index) => ({ ...line, code: lineLetter(index) })) : row.lines;
               const vin = normalizeVin(patch.vin === undefined ? row.vin : patch.vin);
               const laborOpIds = Array.isArray(patch.laborOpIds) ? patch.laborOpIds : row.laborOpIds ?? [];
@@ -3259,10 +3289,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           const raw = input.lines?.length ? input.lines : [{ id: "", code: "A", concern: input.concern }];
           const lines = raw
-            .map((line, index) => ({ id: line.id || uid("al"), code: lineLetter(index), concern: cleanFreeText(line.concern).trim() }))
+            .map((line, index) => ({ id: line.id || uid("al"), code: lineLetter(index), concern: cleanFreeText(line.concern).trim().slice(0, 500) }))
             .filter((line) => line.concern)
             .map((line, index) => ({ ...line, code: lineLetter(index) }));
-          const kept = lines.length > 0 ? lines : [{ id: uid("al"), code: "A", concern: input.concern.trim() }];
+          const kept = lines.length > 0 ? lines : [{ id: uid("al"), code: "A", concern: cleanFreeText(input.concern).trim().slice(0, 500) }];
           let vehicleId = input.vehicleId;
           let vehicles = state.vehicles;
           const selected = state.vehicles.find((row) => row.id === input.vehicleId);
@@ -3393,7 +3423,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const record: AppointmentCancel = {
           action: "cancel",
           reason: input.reason,
-          note: (input.note ?? "").trim().slice(0, CANCEL_NOTE_MAX),
+          note: cleanFreeText(input.note ?? "").trim().slice(0, CANCEL_NOTE_MAX),
           who: who.name,
           whoId: who.id,
           at: now().toISOString(),

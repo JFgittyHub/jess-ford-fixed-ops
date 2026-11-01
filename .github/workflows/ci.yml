@@ -24,6 +24,8 @@ jobs:
       - name: Print toolchain versions
         run: node -v && npm -v
       - run: npm ci
+      - name: Install Chromium for calendar hit tests
+        run: npx playwright install chromium
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
@@ -31,5 +33,7 @@ jobs:
         run: JF_PIN_CLOCK=2026-11-01T20:00:00.000Z npm test
       - name: Tests pinned to 1 Dec 2026
         run: JF_PIN_CLOCK=2026-12-01T20:00:00.000Z npm test
+      - name: Tests pinned to 17 Nov 2026
+        run: JF_PIN_CLOCK=2026-11-17T20:00:00.000Z npm test
       - run: npm run test:shipped
       - run: npm run build
