@@ -74,10 +74,9 @@ export function lookupOnlineCustomer(
       if (customer.email.trim().toLowerCase() === email) matches.set(customer.id, customer);
     }
   } else {
-    const queryDigits = digits(trimmed);
-    if (queryDigits.length >= 7) {
+    if (phoneKey(trimmed)) {
       for (const customer of customers) {
-        if (phonesMatch(customer.phone, queryDigits) || phonesMatch(customer.mobile, queryDigits)) matches.set(customer.id, customer);
+        if (phonesMatch(customer.phone, trimmed) || phonesMatch(customer.mobile, trimmed)) matches.set(customer.id, customer);
       }
     }
     const vinKey = trimmed.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "");
@@ -215,7 +214,7 @@ export function submitOnlineRequest(
   }
   if (verified && (!vin || vinScheduleError(vin))) return { ok: false, reason: "vin" };
   const phoneDigits = phoneKey(phone);
-  const phoneOk = phone.length === 0 || phoneDigits.length === 10 || (phone.trim().startsWith("+") && phoneDigits.length >= 8 && phoneDigits.length <= 15);
+  const phoneOk = phone.length === 0 || phoneDigits.length === 10 || phoneDigits.startsWith("+");
   const emailOk = email.length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   if (!phoneOk || !emailOk) return { ok: false, reason: "contact" };
   const phones = phoneKey(phone);
@@ -286,14 +285,10 @@ function codeStillGood(challenges: OnlineChallenge[], customerId: string, code: 
   return now >= issued && now - issued <= CODE_WINDOW_MS;
 }
 
-function digits(value: string) {
-  return value.replace(/\D/g, "");
-}
-
-function phonesMatch(record: string, queryDigits: string) {
-  const stored = digits(record);
-  if (stored.length < 7) return false;
-  return stored.endsWith(queryDigits) || queryDigits.endsWith(stored);
+function phonesMatch(record: string, query: string) {
+  const stored = phoneKey(record);
+  const asked = phoneKey(query);
+  return stored.length > 0 && stored === asked;
 }
 
 function matchedCustomers(
@@ -308,10 +303,10 @@ function matchedCustomers(
       if (customer.email.trim().toLowerCase() === email) found.set(customer.id, customer);
     }
   }
-  const queryDigits = digits(request.phone ?? "");
-  if (queryDigits.length >= 7) {
+  const queryPhone = request.phone ?? "";
+  if (phoneKey(queryPhone)) {
     for (const customer of customers) {
-      if (phonesMatch(customer.phone, queryDigits) || phonesMatch(customer.mobile, queryDigits)) found.set(customer.id, customer);
+      if (phonesMatch(customer.phone, queryPhone) || phonesMatch(customer.mobile, queryPhone)) found.set(customer.id, customer);
     }
   }
   const vinKey = (request.vin ?? "").toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g, "");
@@ -331,25 +326,76 @@ function textField(value: unknown, max: number): string {
   return value.trim().slice(0, max);
 }
 
-function hiddenFormat(code: number) {
+const ZWJ = 0x200d;
+const ZWNJ = 0x200c;
+const VS16 = 0xfe0f;
+
+function isLetterOrMark(code: number) {
+  if (code <= 0) return false;
+  return /\p{L}|\p{M}/u.test(String.fromCodePoint(code));
+}
+
+function isEmojiBase(code: number) {
+  if (code >= 0x1f1e6 && code <= 0x1f1ff) return true;
+  if (code >= 0x1f3fb && code <= 0x1f3ff) return true;
+  if (code >= 0x1f300 && code <= 0x1faff) return true;
+  if (code >= 0x2600 && code <= 0x27bf) return true;
+  if (code >= 0x2300 && code <= 0x23ff) return true;
+  if (code === 0x20e3 || code === 0x3030 || code === 0x303d || code === 0x3297 || code === 0x3299) return true;
+  return false;
+}
+
+function keepVariationSelector(code: number) {
+  if (code >= 0xfe00 && code <= 0xfe0e) return true;
+  if (code >= 0xe0100 && code <= 0xe01ef) return true;
+  return false;
+}
+
+function isInvisible(code: number) {
   if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return true;
   if (code === 0x2028 || code === 0x2029 || code === 0xad || code === 0x34f || code === 0x61c || code === 0x180e || code === 0xfeff) return true;
   if (code === 0x3164 || code === 0x115f || code === 0x1160 || code === 0xffa0) return true;
-  if (code >= 0x200b && code <= 0x200f) return true;
+  if (code >= 0x0600 && code <= 0x0605) return true;
+  if (code === 0x06dd || code === 0x070f || code === 0x08e2) return true;
+  if (code >= 0x17b4 && code <= 0x17b5) return true;
+  if (code >= 0x180b && code <= 0x180f) return true;
+  if (code === 0x200b || code === 0x200e || code === 0x200f) return true;
   if (code >= 0x202a && code <= 0x202e) return true;
-  if (code >= 0x2060 && code <= 0x2069) return true;
+  if (code >= 0x2060 && code <= 0x206f) return true;
   if (code >= 0xfff9 && code <= 0xfffb) return true;
-  if (code >= 0xfe00 && code <= 0xfe0f) return true;
-  if (code >= 0xe0100 && code <= 0xe01ef) return true;
   if (code >= 0xe0000 && code <= 0xe007f) return true;
   return false;
 }
 
-/** Strip controls, bidi, and soft hyphens. Accented letters stay. Fullwidth digits become ASCII. */
+function keepJoiner(codes: number[], index: number) {
+  const prev = codes[index - 1] ?? 0;
+  const next = codes[index + 1] ?? 0;
+  const prevBase = prev === VS16 || (prev >= 0x1f3fb && prev <= 0x1f3ff) ? (codes[index - 2] ?? 0) : prev;
+  if (isLetterOrMark(prev) && isLetterOrMark(next)) return true;
+  if ((isEmojiBase(prev) || isEmojiBase(prevBase)) && isEmojiBase(next)) return true;
+  return false;
+}
+
+/** NFC, then drop invisibles. ZWJ and ZWNJ stay between letters or inside emoji. VS16 stays after an emoji. Other variation selectors stay. */
 export function cleanFreeText(value: unknown): string {
   if (typeof value !== "string") return "";
-  const normalized = value.normalize("NFKC");
-  return [...normalized].filter((char) => !hiddenFormat(char.codePointAt(0) ?? 0)).join("");
+  const chars = [...value.normalize("NFC")];
+  const codes = chars.map((char) => char.codePointAt(0) ?? 0);
+  return chars.filter((_, index) => {
+    const code = codes[index] ?? 0;
+    if (code === ZWJ || code === ZWNJ) return keepJoiner(codes, index);
+    if (code === VS16) return isEmojiBase(codes[index - 1] ?? 0);
+    if (keepVariationSelector(code)) return true;
+    return !isInvisible(code);
+  }).join("");
+}
+
+/** Same cleaned text with joiners removed, for matching. The stored text keeps a meaningful joiner. */
+export function dedupeKey(value: string): string {
+  return [...cleanFreeText(value)].filter((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code !== ZWJ && code !== ZWNJ;
+  }).join("");
 }
 
 /** Pick an advisor who still has room that day, instead of always the first name on the roster. */
@@ -370,13 +416,24 @@ export function advisorForWebRequest(
   return (open ?? ranked[0])?.id ?? "";
 }
 
+function foldPhoneText(value: string) {
+  return cleanFreeText(value).normalize("NFKC");
+}
+
+/** US numbers fold to 10 digits. A leading + keeps its own E.164 key, including the plus. */
 export function phoneKey(value: string): string {
-  const cleaned = cleanFreeText(value).trim();
+  const cleaned = foldPhoneText(value).trim();
   const withoutMarks = cleaned.replace(/(?:[#/]\s*\d+|(?:ext\.?|extension|x)\s*\d+)\s*$/i, "");
-  const digits = withoutMarks.replace(/\D/g, "");
-  if (cleaned.startsWith("+") && !(digits.length === 11 && digits.startsWith("1"))) {
-    return digits.length >= 8 && digits.length <= 15 ? digits : "";
+  const body = withoutMarks.trim();
+  if (body.startsWith("+")) {
+    if (/^\+\s*0/.test(body)) return "";
+    const digits = body.replace(/\(0\)/g, "").replace(/\D/g, "");
+    if (!digits || digits.startsWith("0")) return "";
+    if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+    if (digits.length >= 8 && digits.length <= 15) return `+${digits}`;
+    return "";
   }
+  const digits = body.replace(/\D/g, "");
   if (digits.length === 11 && (digits.startsWith("1") || digits.startsWith("9"))) return digits.slice(1);
   if (digits.length === 10) return digits;
   return "";

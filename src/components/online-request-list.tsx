@@ -34,7 +34,9 @@ export function OnlineRequestList({
     return <p className="card mt-4 text-muted">No pending requests on this store.</p>;
   }
   return (
-    <div className="mt-4 overflow-x-auto card p-0">
+    <div className="mt-4">
+      {rowWarning ? <WarningBanner text={rowWarning.text} onCancel={onCancelWarning} onConfirm={onConfirmWarning} /> : null}
+      <div className="overflow-x-auto card p-0">
       <table className="data-table min-w-[64rem]">
         <caption className="sr-only">Pending requests for this store</caption>
         <thead>
@@ -78,30 +80,26 @@ export function OnlineRequestList({
                 </td>
               ) : null}
             </tr>
-            {rowWarning?.id === row.id ? <WarningRow text={rowWarning.text} onCancel={onCancelWarning} onConfirm={onConfirmWarning} /> : null}
             </Fragment>
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
 
-function WarningRow({ text, onCancel, onConfirm }: { text: string; onCancel?: () => void; onConfirm?: () => void }) {
-  const row = useRef<HTMLTableRowElement>(null);
+function WarningBanner({ text, onCancel, onConfirm }: { text: string; onCancel?: () => void; onConfirm?: () => void }) {
+  const row = useRef<HTMLDivElement>(null);
   useEffect(() => { row.current?.scrollIntoView({ block: "nearest" }); }, [text]);
   return (
-    <tr ref={row}>
-      <td colSpan={9} className="w-full">
-        <div className="grid w-full gap-2">
-          <p role="status" className="w-full rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{text}</p>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={onCancel}>Cancel</Button>
-            <Button tone="primary" type="button" onClick={onConfirm}>Override</Button>
-          </div>
-        </div>
-      </td>
-    </tr>
+    <div ref={row} data-approve-warning className="mb-3 grid w-full max-w-full gap-2">
+      <p role="status" className="w-full rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{text}</p>
+      <div className="flex max-w-full flex-wrap gap-2">
+        <Button type="button" onClick={onCancel}>Cancel</Button>
+        <Button tone="primary" type="button" onClick={onConfirm}>Override</Button>
+      </div>
+    </div>
   );
 }
 

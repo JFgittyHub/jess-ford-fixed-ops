@@ -328,7 +328,7 @@ describe("round 7", () => {
     const typed = fullVin({ prefix: "1FTEW1EP", year: 2020, plant: "A", serial: 999111 });
     assert.notEqual(typed, original);
     const id = shop.getState().addAppointment({
-      date: "2026-10-30",
+      date: "2026-12-02",
       time: "09:00",
       minutes: 60,
       customerId: vehicle.customerId,

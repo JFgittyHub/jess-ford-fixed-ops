@@ -166,7 +166,7 @@ describe("round 18 contacts, mileage, and last visit", () => {
     assert.equal(phoneKey("15095550300"), phoneKey("5095550300"));
     assert.equal(phoneKey("95095550300"), "5095550300");
     assert.equal(phoneKey("５０９５５５０３００"), "5095550300");
-    assert.equal(phoneKey("+52 509 555 0300"), "525095550300");
+    assert.equal(phoneKey("+52 509 555 0300"), "+525095550300");
     assert.notEqual(phoneKey("+52 509 555 0300"), phoneKey("5095550300"));
     const state = { ...createSeed(), activeStoreId: "grand-coulee" as const };
     const at = "2026-10-31T16:00:00.000Z";

@@ -226,10 +226,16 @@ function weekdayNumber(iso: string) {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
-/** Shift a sample date onto the shop calendar. Sunday uses the last open day, which is Saturday. */
+/** Closed holidays for the seed currently being built. Sundays are closed for every store. */
+let seedClosed = new Set<string>();
+
+/** Shift a sample date onto the shop calendar. Sunday and a store holiday use the previous open day. */
 function shopDate(iso: string) {
-  const shifted = addDays(today(), daysBetween(SAMPLE_ANCHOR, iso));
-  return weekdayNumber(shifted) === 0 ? addDays(shifted, -1) : shifted;
+  let shifted = addDays(today(), daysBetween(SAMPLE_ANCHOR, iso));
+  for (let guard = 0; guard < 21 && (weekdayNumber(shifted) === 0 || seedClosed.has(shifted)); guard += 1) {
+    shifted = addDays(shifted, -1);
+  }
+  return shifted;
 }
 
 /** Later visits on one vehicle never show a lower odometer. */
@@ -362,7 +368,7 @@ function workingDaysBeforeToday(count = 30) {
     guard += 1;
     const [year, month, day] = cursor.split("-").map(Number);
     const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-    if (weekday !== 0) days.push(cursor);
+    if (weekday !== 0 && !seedClosed.has(cursor)) days.push(cursor);
     cursor = addDays(cursor, -1);
   }
   return days.reverse();
@@ -464,6 +470,7 @@ export function createEmptyShop(): ShopData {
 }
 
 export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
+  seedClosed = new Set(defaultScheduling(storeId).closedDates);
   const pullman = storeId === "pullman";
   const settings = baseSettings(storeId);
   const names = pullman ? PULLMAN_NAMES : NAMES;

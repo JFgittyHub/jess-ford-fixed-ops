@@ -70,7 +70,7 @@ describe("shop sample data", () => {
     assert.doesNotThrow(() => digest(shop));
   });
 
-  for (const pin of ["2026-11-01T20:00:00.000Z", "2026-11-02T20:00:00.000Z", "2026-12-01T20:00:00.000Z", "2026-02-01T20:00:00.000Z"]) {
+  for (const pin of ["2026-11-01T20:00:00.000Z", "2026-11-02T20:00:00.000Z", "2026-11-29T20:00:00.000Z", "2026-12-01T20:00:00.000Z", "2026-02-01T20:00:00.000Z"]) {
     it(`keeps closed repair orders on ${pin.slice(0, 10)} and stays stable for that day`, () => {
       pinClock(pin);
       const first = createSeed();
@@ -90,6 +90,9 @@ describe("shop sample data", () => {
         assert.equal(shop.orders.filter((order) => order.status !== "closed").some((order) => new Date(`${order.openedOn}T12:00:00.000Z`).getUTCDay() === 0), false);
         assert.equal(shop.appointments.some((row) => (row.status === "no_show" || row.status === "in_shop") && row.date > today), false);
         assert.equal(shop.orders.filter((order) => order.status !== "closed").every((order) => order.openedOn <= today), true);
+        const closedDays = new Set(shop.settings.scheduling.closedDates);
+        assert.equal(shop.orders.some((order) => closedDays.has(order.openedOn) || closedDays.has(order.invoicedOn ?? "")), false);
+        assert.equal(shop.appointments.some((row) => closedDays.has(row.date)), false);
         const byVehicle = new Map<string, typeof closed>();
         for (const order of shop.orders) {
           const list = byVehicle.get(order.vehicleId) ?? [];

@@ -205,8 +205,8 @@ describe("round 19 appointments, phones, and logs", () => {
     assert.equal(cleanFreeText("a\u200Eb\u200Fc"), "abc");
     assert.equal(cleanFreeText("a\u3164b\uFFF9c"), "abc");
     assert.equal(cleanFreeText("josé"), "josé");
-    assert.equal(phoneKey("+52 509 555 0300"), "525095550300");
-    assert.equal(phoneKey("+44 20 7946 0958"), "442079460958");
+    assert.equal(phoneKey("+52 509 555 0300"), "+525095550300");
+    assert.equal(phoneKey("+44 20 7946 0958"), "+442079460958");
     assert.equal(phoneKey("+1 509 555 0300"), "5095550300");
     assert.notEqual(phoneKey("+52 509 555 0300"), phoneKey("(509) 555-0300"));
     const reason = transferReason("Sold the truck\u2066 to José");
@@ -254,7 +254,7 @@ describe("round 19 appointments, phones, and logs", () => {
     if (saved.ok) {
       assert.equal(saved.request.phone, "+52 509 555 0300");
       assert.equal(saved.request.deviceId, "desk-1");
-      assert.equal(phoneKey(saved.request.phone), "525095550300");
+      assert.equal(phoneKey(saved.request.phone), "+525095550300");
     }
     const visit = shop.getState().appointments.find((item) => item.status === "scheduled" && !item.orderId);
     assert.ok(visit);
@@ -266,6 +266,7 @@ describe("round 19 appointments, phones, and logs", () => {
     const { id: _ignored, status: _status, orderId: _orderId, cancelHistory: _history, ...visitInput } = visit;
     const booked = shop.getState().addAppointment({
       ...visitInput,
+      date: "2026-12-02",
       concern: long,
       lines: [{ id: "long-a", code: "A", concern: `${long}\u202E` }],
     });

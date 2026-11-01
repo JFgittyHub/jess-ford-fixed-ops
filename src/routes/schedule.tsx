@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Calendar } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours } from "@/components/appointment-calendar";
+import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours, lengthLabel } from "@/components/appointment-calendar";
 import { CancelForm, CancelledHistory, DeskCancelActions } from "@/components/cancel-appointment";
 import { NewOrder } from "@/components/new-order";
 import { NoticeLog } from "@/components/notice-log";
@@ -590,7 +590,7 @@ function Selected({
           <label className="grid basis-full gap-1 text-sm">
             Visit length
             <select ref={lengthPicker} className="field min-h-11 w-full max-w-xs" aria-label="Visit length" value={row.minutes} onChange={(event) => onLength(Number(event.target.value))}>
-              {lengths.map((minutes) => <option key={minutes} value={minutes}>{minutes} min</option>)}
+              {lengths.map((minutes) => <option key={minutes} value={minutes}>{lengthLabel(minutes)}</option>)}
             </select>
           </label>
         ) : null}
@@ -688,7 +688,7 @@ function AppointmentFields({
         </Field>
         <Field label="Length">
           <select className="field" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}>
-            {lengths.map((item) => <option key={item} value={item}>{item < 60 ? `${item} min` : `${item / 60} hr`}</option>)}
+            {lengths.map((item) => <option key={item} value={item}>{lengthLabel(item)}</option>)}
           </select>
         </Field>
         <Field label="Lane">

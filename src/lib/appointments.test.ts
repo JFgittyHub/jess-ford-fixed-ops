@@ -119,7 +119,7 @@ describe("appointment actions", () => {
 
 function draft(customerId: string, vehicleId: string, advisorId: string, techId: string, time: string): Omit<Appointment, "id" | "orderId" | "status"> {
   return {
-    date: "2026-10-21",
+    date: "2026-12-02",
     time,
     minutes: 60,
     customerId,

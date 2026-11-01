@@ -146,6 +146,8 @@ describe("shipped flags", () => {
       shop.getState().removeFee(shop.getState().settings.fees[0]?.id ?? "");
       shop.getState().setOnHand(shop.getState().parts[0]?.id ?? "", 0);
       shop.getState().addSku({ number: "ZZ", description: "Bolt", bin: "A", onHand: 1, onOrder: 0, cost: 1, list: 2, lastSale: "", source: "shop" });
+      shop.getState().addExpense({ budgetId: "pol", date: "2026-01-15", vendor: "Shop", amount: 10, note: "Towels" });
+      assert.equal(shop.getState().expenses.length, expenses);
       shop.setState({
         expenses: [...shop.getState().expenses, { id: "seed-exp", budgetId: "pol", date: "2026-01-15", vendor: "Shop", amount: 10, note: "Towels" }],
       });

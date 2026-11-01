@@ -75,8 +75,8 @@ describe("capacity engine", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
     const before = shop.getState().appointments.length;
-    shop.getState().addAppointment(draft("10:00", 600));
-    shop.getState().addAppointment(draft("10:00", 60));
+    shop.getState().addAppointment(draft("10:00", 600, "2026-12-02"));
+    shop.getState().addAppointment(draft("10:00", 60, "2026-12-02"));
     assert.equal(shop.getState().appointments.length, before + 2);
     const saved = assessAppointment({
       scheduling: shop.getState().settings.scheduling,
@@ -84,7 +84,7 @@ describe("capacity engine", () => {
       techs: shop.getState().techs,
       appointments: shop.getState().appointments,
       laborOps: shop.getState().laborOps,
-      proposal: { date: tuesday, time: "10:30", advisorId: "megan", techId: "marcus", laborOpIds: [], minutes: 60 },
+      proposal: { date: "2026-12-02", time: "10:30", advisorId: "megan", techId: "marcus", laborOpIds: [], minutes: 60 },
     });
     assert.equal(saved.open, false);
     assert.match(saved.warning ?? "", /technician hours/);
@@ -285,9 +285,9 @@ function menu(scheduling: SchedulingSettings, id: string, laborHours: number): S
   };
 }
 
-function draft(time: string, minutes: number) {
+function draft(time: string, minutes: number, date = tuesday) {
   return {
-    date: tuesday,
+    date,
     time,
     minutes,
     customerId: "c1",

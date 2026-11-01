@@ -37,7 +37,7 @@ function draft(state: Desk, patch: Partial<Appointment> = {}): Omit<Appointment,
   const customer = state.customers[0];
   const vehicle = state.vehicles.find((row) => row.customerId === customer.id) ?? state.vehicles[0];
   return {
-    date: "2026-11-03",
+    date: "2026-12-02",
     time: "09:00",
     minutes: 60,
     customerId: customer.id,

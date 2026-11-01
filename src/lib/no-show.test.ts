@@ -72,7 +72,7 @@ describe("No-show", () => {
 
 function draft(customerId: string, vehicleId: string, advisorId: string, time = "09:00"): Omit<Appointment, "id" | "orderId" | "status"> {
   return {
-    date: "2026-10-23",
+    date: "2026-12-02",
     time,
     minutes: 60,
     customerId,

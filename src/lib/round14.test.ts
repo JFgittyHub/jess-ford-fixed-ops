@@ -115,7 +115,7 @@ describe("round 14", () => {
     const otherVehicle = shop.getState().vehicles.find((row) => row.customerId === other?.id);
     assert.ok(order && vehicle && other && otherVehicle);
     const saved = shop.getState().saveAdvisorAppointment({
-      date: "2026-10-30", time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
+      date: "2026-12-02", time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
       advisorId: "megan", techId: "marcus", concern: "Oil", lines: [{ id: "a", code: "A", concern: "Oil" }],
       vin: vehicle.vin, laborOpIds: [], lane: "drop", status: "scheduled",
     }, undefined, true, "Sold the truck to the new owner");

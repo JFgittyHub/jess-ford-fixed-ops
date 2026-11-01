@@ -58,8 +58,9 @@ describe("round 18 rendered desk", () => {
     assert.match(view.text, /Tue, Nov 10, 8:00 AM PT/);
     assert.equal(view.text.includes("2026-11-10"), false);
     assert.match(view.text, /Pat Example at Tue, Nov 10/);
-    assert.match(view.html, /colspan="9"/);
-    assert.equal(view.html.includes("max-w-xs"), false);
+    assert.match(view.html, /data-approve-warning/);
+    assert.match(view.html, />Cancel</);
+    assert.match(view.html, />Override</);
   });
 
   it("shows a frozen last-visit note and the recorded store name after a rename", () => {

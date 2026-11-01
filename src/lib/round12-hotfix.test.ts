@@ -25,7 +25,7 @@ function visit(shop: ReturnType<typeof createShopStore>, vin: string): Omit<Appo
   const customer = state.customers[0];
   const vehicle = state.vehicles.find((row) => row.customerId === customer.id) ?? state.vehicles[0];
   return {
-    date: "2026-10-30",
+    date: "2026-12-02",
     time: "09:00",
     minutes: 60,
     customerId: customer.id,

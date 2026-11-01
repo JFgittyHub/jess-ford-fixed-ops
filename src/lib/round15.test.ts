@@ -117,7 +117,7 @@ describe("round 15", () => {
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.status, "no_show");
     assert.equal(shop.getState().settingsLog?.some((item) => item.field === "No-show" && item.after.includes("Marked no-show")), true);
     const id = shop.getState().addAppointment({
-      date: "2026-11-03",
+      date: "2026-12-02",
       time: "10:00",
       minutes: 60,
       customerId: row.customerId,
@@ -131,7 +131,7 @@ describe("round 15", () => {
       lane: "drop",
     });
     assert.ok(id);
-    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Appointment" && item.after.includes("Nov 3")), true);
+    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Appointment" && item.after.includes("Dec 2")), true);
   });
 
   it("refuses a VIN transfer while a repair order is not closed, including a locked one", () => {

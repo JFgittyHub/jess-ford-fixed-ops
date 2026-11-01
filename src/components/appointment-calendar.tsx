@@ -9,6 +9,12 @@ const SNAP = 30;
 const SLOT = 32;
 const HANDLE = 10;
 
+export function lengthLabel(minutes: number) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? `${hours} hr` : `${hours} hr`;
+}
+
 export function cardBlockHeight(minutes: number) {
   return Math.max(SLOT - 2, (minutes / SNAP) * SLOT - 2);
 }
@@ -355,26 +361,29 @@ export function AppointmentCalendar({
                     data-appt
                     data-appt-id={row.id}
                     data-drag="move"
-                    className={`absolute overflow-hidden rounded-md border border-[#c5d7ee] bg-[#e7f1fb] px-1.5 py-1 pr-6 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
+                    className={`group absolute overflow-hidden rounded-md border border-[#c5d7ee] bg-[#e7f1fb] pl-1.5 pr-7 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
                     style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
-                    <p className="truncate text-xs font-semibold">{clockTime(row.time)} {label(row)}</p>
-                    <p className="truncate text-xs">{row.concern}</p>
+                    <div className="overflow-hidden" style={{ height: `calc(100% - ${HANDLE}px)`, paddingTop: 2 }}>
+                      <p className="truncate text-xs font-semibold leading-4">{clockTime(row.time)} {label(row)}</p>
+                      <p className="truncate text-xs leading-4">{row.concern}</p>
+                    </div>
                     <button
                       type="button"
                       aria-label="Change length"
                       data-drag="resize"
-                      className="absolute inset-x-1 bottom-0 cursor-ns-resize border-0 bg-transparent p-0"
-                      style={{ position: "absolute", left: 4, right: 32, bottom: 0, height: HANDLE, zIndex: 0 }}
+                      className="absolute inset-x-1 bottom-0 cursor-ns-resize border-0 p-0"
+                      style={{ position: "absolute", left: 4, right: 32, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
                       onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
                     >
-                      <span className="pointer-events-none block h-1 w-full rounded-full bg-[#5d87b0]" />
+                      <span className={`pointer-events-none mx-auto mt-1 block h-1 w-10 rounded-full ${selected ? "bg-primary" : "bg-[#5d87b0]"} group-hover:h-1.5`} />
                     </button>
                     <button
                       type="button"
                       aria-label="Appointment summary"
-                      className="absolute right-1 bottom-1 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
+                      className="absolute top-0.5 right-0.5 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
+                      style={{ top: 2, right: 2, height: 18, width: 18, minHeight: 0, minWidth: 0 }}
                       onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                       onMouseLeave={scheduleHide}
                       onPointerDown={(event) => event.stopPropagation()}

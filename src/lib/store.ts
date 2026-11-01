@@ -4,7 +4,7 @@ import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLa
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
-import { cleanFreeText, makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
+import { cleanFreeText, makeOnlineCode, phoneKey, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { appointmentMinutes as laborAppointmentMinutes, decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
 import { clockTime, formatVisit, money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
@@ -236,6 +236,36 @@ function closedDateLabel(iso: string) {
   return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(stamp);
 }
 
+const UPDATE_FIELDS = ["time", "date", "techId", "advisorId", "customerId", "concern", "lines", "vin", "minutes", "vehicleId", "lane", "laborOpIds", "status"];
+const MOVE_FIELDS = ["time", "date", "techId", "minutes"];
+const ADD_FIELDS = ["date", "time", "minutes", "customerId", "vehicleId", "advisorId", "concern", "lines", "vin", "laborOpIds", "techId", "lane"];
+
+function foreignField(value: object, allowed: string[]) {
+  return Object.keys(value).find((key) => !allowed.includes(key)) ?? "";
+}
+
+function realDay(iso: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [year, month, day] = iso.split("-").map(Number);
+  const stamp = new Date(Date.UTC(year, month - 1, day));
+  return stamp.getUTCFullYear() === year && stamp.getUTCMonth() === month - 1 && stamp.getUTCDate() === day;
+}
+
+function appointmentDateError(iso: string, scheduling: { hours: { weekday: number; closed: boolean }[]; closedDates: string[] }) {
+  if (!realDay(iso)) return "That date is not a real day.";
+  if (iso < today()) return "That day is already past.";
+  const weekday = new Date(`${iso}T12:00:00.000Z`).getUTCDay();
+  const hours = scheduling.hours.find((row) => row.weekday === weekday);
+  if (!hours || hours.closed || scheduling.closedDates.includes(iso)) return "The shop is closed that day.";
+  return "";
+}
+
+function storedPhone(value: string) {
+  const cleaned = cleanFreeText(value).trim();
+  const key = phoneKey(cleaned);
+  return key.length === 10 ? key : cleaned;
+}
+
 const HOUR_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function describeHours(row: { weekday: number; closed: boolean; open: string; close: string } | undefined) {
@@ -255,8 +285,11 @@ function appointmentStatusSentence(
   customerName: string,
 ) {
   const when = visitLabel(current.date, current.time);
-  if (current.status === "no_show" && next !== "no_show") {
+  if (next === "scheduled" && current.status === "no_show") {
     return `Put back to scheduled: ${customerName} for ${when}. The no-show count goes down because the visit is back on the board.`;
+  }
+  if (next === "scheduled" && current.status !== "scheduled") {
+    return `Put back to scheduled: ${customerName} for ${when}.`;
   }
   if (next === "no_show") return `Marked no-show: ${customerName} for ${when}.`;
   if (next === "arrived") return `Marked arrived: ${customerName} for ${when}.`;
@@ -274,9 +307,10 @@ function appointmentEditRows(
   const rows: SettingsChange[] = [];
   if (nextStatus !== current.status) {
     const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
+    const statusField = nextStatus === "no_show" ? "No-show" : nextStatus === "scheduled" ? "Put back" : nextStatus === "arrived" ? "Arrived" : "Appointment status";
     rows.push(settingsChange(
       who,
-      nextStatus === "no_show" ? "No-show" : current.status === "no_show" ? "Put back" : nextStatus === "arrived" ? "Arrived" : "Appointment status",
+      statusField,
       current.status,
       appointmentStatusSentence(current, nextStatus, customerName),
     ));
@@ -318,12 +352,13 @@ function appointmentEditRows(
   if (typeof patch.vin === "string") push("VIN", current.vin || "none", normalizeVin(patch.vin) || "none");
   if (Array.isArray(patch.lines)) {
     const before = current.lines.map((line) => line.concern).filter(Boolean).join("; ") || "none";
-    const after = patch.lines.map((line) => cleanFreeText(line.concern).trim().slice(0, 500)).filter(Boolean).join("; ") || "none";
-    push("concern", before, after);
+    const afterLines = patch.lines.map((line) => cleanFreeText(line.concern).trim().slice(0, 500)).filter(Boolean);
+    if (afterLines.length > 0) push("concern", before, afterLines.join("; "));
   } else if (typeof patch.concern === "string") {
     const applied = cleanFreeText(patch.concern).trim().slice(0, 500);
-    const nextLines = applied ? [{ code: current.lines[0]?.code || "A", concern: applied }] : current.lines;
-    push("concern", current.concern || "none", concernFromLines(nextLines) || "none");
+    const lineText = current.lines.length === 1 ? current.lines[0]?.concern ?? "" : "";
+    const same = !applied || applied === current.concern || applied === lineText || applied === concernFromLines(current.lines);
+    if (!same) push("concern", current.concern || "none", concernFromLines([{ code: "A", concern: applied }]) || "none");
   }
   return rows;
 }
@@ -1598,7 +1633,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (next === state.settings.scheduling) return state;
           return {
             settings: { ...state.settings, scheduling: next },
-            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Closed date", iso, "removed")],
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, "Closed date", closedDateLabel(iso), "removed")],
           };
         }),
       updateBookingWindow: (patch) =>
@@ -2231,7 +2266,6 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }),
         })),
       invoiceOrder: () => {
-        if (sectionLockEnabled()) return;
         // Month close counts Closed repair orders in the reports. It never writes a status.
       },
       closeOrder: (orderId) => {
@@ -2928,8 +2962,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const name = asText(cleanFreeText(input.name), NAME_MAX);
         const model = asText(cleanFreeText(input.model), NAME_MAX);
         if (!name || !model || typeof input.phone !== "string") return { customerId: "", vehicleId: "", error: "Add the customer name and model.", warning: null };
-        const phone = cleanFreeText(input.phone).trim();
-        if (phone && phoneDigits(phone).length !== 10) return { customerId: "", vehicleId: "", error: "Enter a 10-digit phone number.", warning: null };
+        const phone = storedPhone(input.phone);
+        if (phone && phoneKey(phone).length !== 10) return { customerId: "", vehicleId: "", error: "Enter a 10-digit phone number.", warning: null };
         if (input.vin != null && typeof input.vin !== "string") return { customerId: "", vehicleId: "", error: "Enter a 17-character VIN.", warning: null };
         const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
         const vinError = vinScheduleError(vinText);
@@ -2952,13 +2986,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const customerId = uid("c");
         const vehicleId = uid("v");
         set((shop) => ({
-          customers: [{ id: customerId, name, phone, mobile: input.mobile?.trim() ?? "", email: input.email?.trim() ?? "", noShows: 0 }, ...shop.customers],
+          customers: [{ id: customerId, name, phone, mobile: input.mobile ? storedPhone(input.mobile) : "", email: cleanFreeText(input.email ?? "").trim().toLowerCase(), noShows: 0 }, ...shop.customers],
           vehicles: [
             {
               id: vehicleId,
               customerId,
               year: input.year,
-              make: input.make === undefined ? "Ford" : input.make.trim(),
+              make: input.make === undefined ? "Ford" : (cleanFreeText(input.make).trim() || "Ford"),
               model,
               vin,
               ownership: [firstOwnership(customerId, now().toISOString(), namedActor(shop))],
@@ -3144,7 +3178,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!who || !rosterEditor(state)) return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
         const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
         const sentence = appointmentStatusSentence(current, status, customerName);
-        const field = current.status === "no_show" && status !== "no_show" ? "Put back" : status === "arrived" ? "Arrived" : status === "no_show" ? "No-show" : "Appointment status";
+        const field = status === "no_show" ? "No-show" : status === "scheduled" ? "Put back" : status === "arrived" ? "Arrived" : "Appointment status";
         set((next) => ({
           appointments: next.appointments.map((row) => (row.id === id ? { ...row, status } : row)),
           customers: adjustNoShows(next.customers, noShowChanges(current.status, status, current.customerId, current.customerId)),
@@ -3154,6 +3188,12 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       moveAppointment: (id, patch) => {
         const state = get();
+        if (foreignField(patch, MOVE_FIELDS)) return { ok: false, error: "That field is not on an appointment." };
+        const moving = state.appointments.find((row) => row.id === id);
+        if (patch.date && patch.date !== moving?.date) {
+          const dateError = appointmentDateError(patch.date, state.settings.scheduling);
+          if (dateError) return { ok: false, error: dateError };
+        }
         const who = namedActor(state);
         if (!who || !rosterEditor(state)) return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
         const current = state.appointments.find((row) => row.id === id);
@@ -3192,6 +3232,28 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const current = state.appointments.find((row) => row.id === id);
         if (!current) return { ok: false, error: "That appointment is not on this store." };
         if (current.status === "cancelled") return { ok: false, error: CANCELLED_LOCKED };
+        if (foreignField(patch, UPDATE_FIELDS)) return { ok: false, error: "That field is not on an appointment." };
+        if (patch.status === "cancelled") return { ok: false, error: "Cancel an appointment from the cancel button." };
+        if (patch.customerId !== undefined && !String(patch.customerId).trim()) return { ok: false, error: "Choose a customer." };
+        if (patch.customerId && !state.customers.some((row) => row.id === patch.customerId)) {
+          return { ok: false, error: "That customer is not on this store." };
+        }
+        if (patch.vehicleId !== undefined && !state.vehicles.some((row) => row.id === patch.vehicleId)) {
+          return { ok: false, error: "That vehicle is not on this store." };
+        }
+        if (patch.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === patch.lane)) {
+          return { ok: false, error: "That lane is not on this store." };
+        }
+        if (Array.isArray(patch.laborOpIds)) {
+          if (new Set(patch.laborOpIds).size !== patch.laborOpIds.length) return { ok: false, error: "That labor operation is listed twice." };
+          if (patch.laborOpIds.some((opId) => !state.laborOps.some((op) => op.id === opId))) {
+            return { ok: false, error: "That labor operation is not on this store." };
+          }
+        }
+        if (patch.date && patch.date !== current.date) {
+          const dateError = appointmentDateError(patch.date, state.settings.scheduling);
+          if (dateError) return { ok: false, error: dateError };
+        }
         const staffError = staffBlockMessage(
           state.techs.some((tech) => tech.id === (patch.techId || current.techId)),
           state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
@@ -3199,24 +3261,15 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (staffError) return { ok: false, error: staffError };
         const editKeys = ["time", "date", "techId", "advisorId", "customerId", "concern", "lines", "vin", "minutes", "vehicleId", "lane", "laborOpIds"] as const;
         const editsSomething = editKeys.some((key) => patch[key] !== undefined);
-        const statusChange = Boolean(patch.status && patch.status !== current.status && patch.status !== "cancelled");
+        const statusChange = Boolean(patch.status && patch.status !== current.status);
         if ((editsSomething || statusChange) && (!namedActor(state) || !rosterEditor(state))) {
           return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
         }
         if (current.status === "no_show" && patch.customerId && patch.customerId !== current.customerId) {
           return { ok: false, error: "A no-show stays with the customer who missed the visit." };
         }
-        const knownStatus = new Set(["scheduled", "arrived", "in_shop", "no_show", "cancelled"]);
+        const knownStatus = new Set(["scheduled", "arrived", "in_shop", "no_show"]);
         if (patch.status && !knownStatus.has(patch.status)) return { ok: false, error: "That status is not on this desk." };
-        if (patch.customerId && !state.customers.some((row) => row.id === patch.customerId)) {
-          return { ok: false, error: "That customer is not on this store." };
-        }
-        if (patch.lane && !state.settings.scheduling.transportOptions.some((row) => row.id === patch.lane)) {
-          return { ok: false, error: "That lane is not on this store." };
-        }
-        if (Array.isArray(patch.laborOpIds) && patch.laborOpIds.some((id) => !state.laborOps.some((op) => op.id === id))) {
-          return { ok: false, error: "That labor operation is not on this store." };
-        }
         const nextCustomerId = patch.customerId || current.customerId;
         const nextVehicleId = patch.vehicleId || current.vehicleId;
         if ((patch.customerId && patch.customerId !== current.customerId) || (patch.vehicleId && patch.vehicleId !== current.vehicleId)) {
@@ -3251,22 +3304,54 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               const concernOnly = typeof patch.concern === "string" && !(Array.isArray(patch.lines) && patch.lines.length > 0)
                 ? cleanFreeText(patch.concern).trim().slice(0, 500)
                 : null;
-              const lines = Array.isArray(patch.lines) && patch.lines.length > 0
+              const editedLines = Array.isArray(patch.lines)
                 ? patch.lines.map((line, index) => ({
                     id: line.id || uid("al"),
                     code: lineLetter(index),
                     concern: cleanFreeText(line.concern).trim().slice(0, 500),
                   })).filter((line) => line.concern)
-                : concernOnly
+                : [];
+              const sameConcern = concernOnly !== null && (
+                concernOnly === row.concern
+                || concernOnly === row.lines[0]?.concern
+                || concernOnly === concernFromLines(row.lines)
+              );
+              const lines = editedLines.length > 0
+                ? editedLines
+                : concernOnly && !sameConcern
                   ? [{ id: row.lines[0]?.id || uid("al"), code: row.lines[0]?.code || "A", concern: concernOnly }]
                   : row.lines;
-              const kept = lines.length > 0 ? lines.map((line, index) => ({ ...line, code: lineLetter(index) })) : row.lines;
-              const vin = normalizeVin(patch.vin === undefined ? row.vin : patch.vin);
-              const laborOpIds = Array.isArray(patch.laborOpIds) ? patch.laborOpIds : row.laborOpIds ?? [];
+              const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index) }));
               const vehicleId = patch.vehicleId || row.vehicleId;
-              const lane = normalizeLane(patch.lane === undefined ? row.lane : patch.lane, state.settings.scheduling.transportOptions);
-              const status = row.status === "cancelled" || patch.status === "cancelled" ? row.status : (patch.status ?? row.status);
-              return { ...row, ...patch, minutes, time, date, lines: kept, concern: concernFromLines(kept) || row.concern, vin, laborOpIds, vehicleId, lane, status, cancelHistory: row.cancelHistory, id: row.id, orderId: row.orderId };
+              const vehicleChanged = Boolean((patch.customerId && patch.customerId !== row.customerId) || (patch.vehicleId && patch.vehicleId !== row.vehicleId));
+              const nextVin = patch.vin !== undefined
+                ? patch.vin
+                : vehicleChanged
+                  ? (state.vehicles.find((item) => item.id === vehicleId)?.vin ?? "")
+                  : row.vin;
+              const vin = normalizeVin(nextVin);
+              const laborOpIds = Array.isArray(patch.laborOpIds) ? patch.laborOpIds : row.laborOpIds ?? [];
+              const lane = patch.lane === undefined ? row.lane : patch.lane;
+              const status = patch.status ?? row.status;
+              return {
+                ...row,
+                minutes,
+                time,
+                date,
+                lines: kept,
+                concern: concernFromLines(kept) || row.concern,
+                vin,
+                laborOpIds,
+                vehicleId,
+                lane,
+                status,
+                techId: patch.techId || row.techId,
+                advisorId: patch.advisorId || row.advisorId,
+                customerId: patch.customerId || row.customerId,
+                cancelHistory: row.cancelHistory,
+                id: row.id,
+                orderId: row.orderId,
+              };
             })
             .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time)),
           customers: current
@@ -3280,9 +3365,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return { ok: true, error: null };
       },
       addAppointment: (input, id) => {
+        const state = get();
+        if (foreignField(input, ADD_FIELDS)) return "";
+        if (!input.customerId || !state.customers.some((row) => row.id === input.customerId)) return "";
+        const owned = state.vehicles.find((row) => row.id === input.vehicleId);
+        if (!owned || owned.customerId !== input.customerId) return "";
+        if (input.date && appointmentDateError(input.date, state.settings.scheduling)) return "";
+        if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
+        if (Array.isArray(input.laborOpIds)) {
+          if (new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
+          if (input.laborOpIds.some((opId) => !state.laborOps.some((op) => op.id === opId))) return "";
+        }
         const appointmentId = id ?? uid("ap");
-        const who = namedActor(get());
-        if (!who || !rosterEditor(get())) return "";
+        const who = namedActor(state);
+        if (!who || !rosterEditor(state)) return "";
         if (input.vin != null && typeof input.vin !== "string") return "";
         const vin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
         if (vin && vinScheduleError(vin)) return "";
@@ -3383,9 +3479,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             vehicleId = claim.vehicleId;
           }
         }
-        if (existingId) get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId });
-        else {
-          get().addAppointment({
+        if (existingId) {
+          const edited = get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId });
+          if (!edited.ok) return { ok: false, appointmentId: existingId, overrideId: null, error: edited.error };
+        } else {
+          const added = get().addAppointment({
             date: input.date,
             time: input.time,
             minutes: input.minutes,
@@ -3399,6 +3497,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             techId: input.techId,
             lane: input.lane,
           }, appointmentId);
+          if (!added) return { ok: false, appointmentId: "", overrideId: null, error: "That appointment could not be saved." };
         }
         const overrideId = logOverride(result, appointmentId, input);
         return { ok: true, appointmentId, overrideId, error: null };

@@ -45,9 +45,8 @@ import { useShop } from "@/lib/store";
 
 const STORAGE_KEY = SCORECARD_STORAGE_KEY;
 
-function pulsePeriod(activeMonth: string, todayKey: string, day: number, recorded: boolean) {
+function pulsePeriod(activeMonth: string, todayKey: string, recorded: boolean) {
   const label = monthLabel(activeMonth);
-  if (activeMonth === todayKey && day === 1) return "Last 30 working days";
   if (activeMonth < todayKey && recorded) return `${label} (full month)`;
   return label;
 }
@@ -207,7 +206,7 @@ export function ScorecardPulse({ initialOwnerView = false }: { initialOwnerView?
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Fixed Ops Pulse</h1>
           <p className="mt-2 max-w-xl text-muted">
             As of {asOf}. {ownerView ? "Owner view. Read-only totals for both stores." : storeLine}
-            {demo ? " Sample data — regenerates daily." : ""}
+            {demo ? " Sample data." : ""}
           </p>
         </div>
         <Button
@@ -230,7 +229,7 @@ export function ScorecardPulse({ initialOwnerView = false }: { initialOwnerView?
           <button type="button" className="flex size-9 items-center justify-center disabled:opacity-40" aria-label="Previous month" disabled={state.activeMonth <= MIN_MONTH} onClick={() => go(-1)}>
             <ChevronLeft className="size-5" />
           </button>
-          <p className="min-w-36 text-center text-sm font-semibold tabular-nums">{pulsePeriod(state.activeMonth, todayKey, today.getDate(), Boolean(board.recorded))}</p>
+          <p className="min-w-36 text-center text-sm font-semibold tabular-nums">{pulsePeriod(state.activeMonth, todayKey, Boolean(board.recorded))}</p>
           <button type="button" className="flex size-9 items-center justify-center disabled:opacity-40" aria-label="Next month" disabled={state.activeMonth >= todayKey} onClick={() => go(1)}>
             <ChevronRight className="size-5" />
           </button>
@@ -287,16 +286,17 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
   const elrStatus: Status = !board.recorded || board.service.elr <= 0 ? "empty" : board.service.elr >= ELR_STANDARD ? "good" : board.service.elr >= 115 ? "watch" : "bad";
   const serviceGrossDetail = board.recorded && board.service.sales > 0 ? `${formatPct(board.service.gross / board.service.sales)} gross` : "Gross not in yet";
   const partsGrossDetail = partsGp === null || !board.recorded ? "Gross not in yet" : `${formatPct(partsGp)} gross`;
-  const hoursDetail = pace.closed ? `Goal ${formatHours(board.hoursGoal)}` : `Projected of ${available ? formatHours(available) : "—"} available`;
-  const hoursLabel = pace.closed ? "Sold hours" : "MTD sold hours";
-  const laborLabel = pace.closed ? "Effective labor rate" : "MTD effective labor rate";
-  const serviceLabel = pace.closed ? "Service sales" : "MTD service sales";
-  const partsLabel = pace.closed ? "Parts sales" : "MTD parts sales";
+  const finished = pace.closed || !board.recorded;
+  const hoursDetail = finished ? `Goal ${formatHours(board.hoursGoal)}` : `Projected of ${available ? formatHours(available) : "—"} available`;
+  const hoursLabel = finished ? "Sold hours" : "MTD sold hours";
+  const laborLabel = finished ? "Effective labor rate" : "MTD effective labor rate";
+  const serviceLabel = finished ? "Service sales" : "MTD service sales";
+  const partsLabel = finished ? "Parts sales" : "MTD parts sales";
 
   return (
     <div className="grid gap-3">
       <section className="grid grid-cols-2 gap-3 rounded-lg border-2 border-primary p-3 lg:grid-cols-4">
-        <Kpi label={hoursLabel} value={board.recorded ? formatHours(board.service.totalHours) : "—"} secondary={pace.closed || pace.projected === null ? undefined : formatHours(pace.projected)} secondaryLabel={pace.closed ? "Total" : "Projected"} status={pace.status} detail={hoursDetail} bar={bar} />
+        <Kpi label={hoursLabel} value={board.recorded ? formatHours(board.service.totalHours) : "—"} secondary={pace.projected === null ? undefined : formatHours(pace.closed ? board.service.totalHours : pace.projected)} secondaryLabel={pace.closed ? "Total" : "Projected"} status={pace.status} detail={hoursDetail} bar={bar} />
         <Kpi label={laborLabel} value={board.recorded && board.service.elr > 0 ? formatMoney(board.service.elr, 2) : "—"} status={elrStatus} detail={`Standard ${formatMoney(ELR_STANDARD, 2)}`} />
         <Kpi label={serviceLabel} value={board.recorded ? formatMoney(board.service.sales) : "—"} secondary={board.recorded ? formatMoney(board.service.gross) : "—"} secondaryLabel="Gross" status="empty" detail={serviceGrossDetail} standard={formatPct(SERVICE_GP_STANDARD, 0)} />
         <Kpi label={partsLabel} value={board.recorded ? formatMoney(board.parts.sales) : "—"} secondary={board.recorded ? formatMoney(board.parts.gross) : "—"} secondaryLabel="Gross" status="empty" detail={partsGrossDetail} standard={formatPct(PARTS_GP_STANDARD, 0)} />
