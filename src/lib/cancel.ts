@@ -1,4 +1,4 @@
-import type { AppointmentCancel, ApptStatus, CancelReason } from "./types";
+import type { AppointmentCancel, ApptStatus, CancelReason, RequestAction, SettingsChange } from "./types";
 
 export const CANCEL_REASONS: { id: CancelReason; label: string }[] = [
   { id: "customer-request", label: "Customer request" },
@@ -94,6 +94,30 @@ const SHOP_TZ = "America/Los_Angeles";
 export function displayRecordedName(value?: string | null) {
   const name = value?.trim() ?? "";
   return name ? name : "Unknown";
+}
+
+const SENTENCE_FIELDS = new Set([
+  "Move appointment",
+  "Cancel appointment",
+  "Reinstate appointment",
+  "Capacity override",
+  "Clear shop data",
+  "Appointment edited",
+  "Appointment",
+]);
+
+export function changeLogLine(row: SettingsChange) {
+  const when = `${displayRecordedWhen(row.at)} PT`;
+  if (SENTENCE_FIELDS.has(row.field) && row.after.trim()) return `${row.after} · ${when}`;
+  const before = row.before.trim() ? row.before : (row.after.trim() && row.after.trim() !== "removed" ? "none" : "removed");
+  const after = row.after.trim() ? row.after : "removed";
+  return `${row.field}: ${before} → ${after} · ${when}`;
+}
+
+export function requestLogLine(row: RequestAction) {
+  const customer = row.customerName?.trim() || "Customer";
+  const visit = row.visit?.trim() || "the visit";
+  return `${row.who} · ${row.action} ${customer} for ${visit} · ${displayRecordedWhen(row.at)} PT`;
 }
 
 export function displayRecordedWhen(value?: string | null) {

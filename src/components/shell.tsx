@@ -23,7 +23,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
-import { deskActor, displayRecordedWhen } from "@/lib/cancel";
+import { changeLogLine, deskActor, requestLogLine } from "@/lib/cancel";
 import { isLockedPath, SECTION_LOCK_HINT, SECTION_LOCK_NOTICE } from "@/lib/section-lock";
 import { shopHasOperationalData, useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
@@ -242,7 +242,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                   </select>
                 </label>
               ) : null}
-              {!staffId ? <p role="status" className="text-sm font-semibold text-[#8a5a00]">Choose who is working.</p> : null}
+              {!staffId ? <p role="status" className="text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
               <div role="group" aria-label="Active store" className="flex gap-1">
                 {STORES.map((store) => (
                   <Button
@@ -321,7 +321,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           </Field>
           <SchedulingSettingsForm />
           <div className="flex flex-wrap gap-2 sm:col-span-2">
-            <Button tone="primary" type="submit">Done</Button>
+            {confirmClear ? null : <Button tone="primary" type="submit">Done</Button>}
             {isDemoMode() && actor === "service-manager" ? (
               <Button
                 tone={confirmReset ? "accent" : "ghost"}
@@ -339,29 +339,38 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
               </Button>
             ) : null}
-            {isDemoMode() && actor === "service-manager" ? (
+            {isDemoMode() && actor === "service-manager" && !confirmClear ? (
               <Button
                 tone="ghost"
                 onClick={() => {
-                  if (!confirmClear) {
-                    setConfirmClear(true);
-                    setConfirmReset(false);
-                    return;
-                  }
-                  clearShop();
-                  setConfirmClear(false);
-                  setOpen(false);
+                  setConfirmClear(true);
+                  setConfirmReset(false);
                 }}
               >
-                {confirmClear ? "Clear open work now" : "Clear shop data"}
+                Clear shop data
               </Button>
             ) : null}
-            {confirmClear ? <Button type="button" onClick={() => setConfirmClear(false)}>Cancel</Button> : null}
           </div>
           {confirmClear ? (
-            <p role="status" className="text-sm text-muted sm:col-span-2">
-              This removes every appointment and every capacity override, and the open repair orders. Closed repair orders, the change log, the request log, and the rosters stay. Sample data resets when you reload.
-            </p>
+            <div className="sm:col-span-2 grid gap-2">
+              <p role="status" className="text-sm text-muted">
+                This removes every appointment and every capacity override, and the open repair orders. Closed repair orders, the change log, the request log, and the rosters stay. Sample data resets when you reload.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  tone="danger"
+                  type="button"
+                  onClick={() => {
+                    clearShop();
+                    setConfirmClear(false);
+                    setOpen(false);
+                  }}
+                >
+                  Clear open work now
+                </Button>
+                <Button type="button" onClick={() => setConfirmClear(false)}>Cancel</Button>
+              </div>
+            </div>
           ) : null}
           {actor === "service-manager" ? (
             <section className="sm:col-span-2" aria-label="Change log">
@@ -370,10 +379,10 @@ function OpenDesk({ children }: { children: ReactNode }) {
               {settingsLog.length === 0 && requestLog.length === 0 ? <p className="mt-2 text-sm text-muted">No changes on this store yet.</p> : (
                 <ul className="mt-2 grid max-h-48 gap-1 overflow-auto text-sm">
                   {settingsLog.map((row) => (
-                    <li key={`${row.at}-${row.field}-${row.after}`}>{row.who} · {row.after || row.field} · {displayRecordedWhen(row.at)} PT</li>
+                    <li key={`${row.at}-${row.field}-${row.after}`}>{changeLogLine(row)}</li>
                   ))}
                   {requestLog.map((row) => (
-                    <li key={`${row.at}-${row.requestId}-${row.action}`}>{row.who} · {row.action} request {row.requestId} · {displayRecordedWhen(row.at)}</li>
+                    <li key={`${row.at}-${row.requestId}-${row.action}`}>{requestLogLine(row)}</li>
                   ))}
                 </ul>
               )}

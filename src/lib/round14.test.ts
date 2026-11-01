@@ -65,14 +65,22 @@ describe("round 14", () => {
     assert.ok(row.at);
   });
 
-  it("prints a closed repair order from the store header captured at close", () => {
+  it("prints the header captured at close, and a fixture header as not recorded", () => {
+    const live = { storeName: "LIVE", address: "Live Road", city: "Live", phone: "(555) 000-0000" };
     const captured = closedHeaderCopy({
       status: "closed",
-      closeSnapshot: { storeName: "Captured At Close", storeAddress: "Captured Road", storeCity: "Captured City", storePhone: "5551112222", phone: "" },
-    }, { storeName: "Jess Ford Grand Coulee", address: "Grand Coulee service drive", city: "Grand Coulee, WA", phone: "(555) 633-1400" });
-    assert.equal(captured.name, "Captured At Close");
-    assert.match(captured.line, /Captured Road/);
-    assert.equal(captured.line.includes("Jess Ford Grand Coulee"), false);
+      closeSnapshot: { storeName: "Jess Ford Grand Coulee", storeAddress: "Grand Coulee service drive", storeCity: "Grand Coulee, WA", storePhone: "5556331400", phone: "" },
+    }, live);
+    assert.equal(captured.name, "Jess Ford Grand Coulee");
+    assert.match(captured.line, /Grand Coulee service drive/);
+    assert.equal(captured.line.includes("LIVE"), false);
+    const fixture = closedHeaderCopy({
+      status: "closed",
+      closeSnapshot: { storeName: "Captured At Close", storeAddress: "Captured Road", storeCity: "Captured City", storePhone: "5551112222", phone: "5552011400" },
+    }, live);
+    assert.equal(fixture.name, "Header not recorded");
+    assert.equal(fixture.line.includes("Captured"), false);
+    assert.equal(fixture.line.includes("201"), false);
   });
 
   it("keeps vehicle history out of print and off the repair order being viewed", () => {

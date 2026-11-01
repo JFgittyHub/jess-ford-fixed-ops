@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { now } from "./clock.ts";
 import { lastVisitMileage } from "./mileage.ts";
 import { createShopStore, migrateSavedShop } from "./store.ts";
 import { fullVin } from "./vin.ts";
@@ -221,7 +222,7 @@ describe("round 8", () => {
     shop.getState().clockIn("marcus", id);
     shop.getState().updateWa(id, { address: "10 Main Street" });
     shop.setState({
-      orders: shop.getState().orders.map((row) => (row.id === id ? { ...row, status: "closed" as const, authorizationLocked: true, closedAt: "2026-10-31T23:00:00.000Z" } : row)),
+      orders: shop.getState().orders.map((row) => (row.id === id ? { ...row, status: "closed" as const, authorizationLocked: true, closedAt: new Date(now().getTime() + 60 * 60 * 1000).toISOString() } : row)),
     });
     const before = shop.getState().orders.find((row) => row.id === id);
     shop.getState().clockOut("marcus");

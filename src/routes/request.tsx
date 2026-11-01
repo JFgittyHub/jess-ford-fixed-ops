@@ -2,9 +2,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { DeskLocked } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
+import { advisorDayCapacity } from "@/lib/capacity";
 import { confirmedDemoStaffAccess } from "@/lib/demo";
 import { today } from "@/lib/format";
-import { lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
+import { advisorForWebRequest, lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
 import { useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
 import { vinScheduleError } from "@/lib/vin";
@@ -55,7 +56,6 @@ function RequestPage() {
   const [vin, setVin] = useState("");
   const [plate, setPlate] = useState("");
   const [serviceId, setServiceId] = useState(shop.settings.scheduling.onlineMenu[0]?.id ?? "");
-  const advisorId = shop.advisors[0]?.id ?? "";
   const [transportId, setTransportId] = useState(shop.settings.scheduling.transportOptions[0]?.id ?? "");
   const [contactMethod, setContactMethod] = useState<"text" | "email" | "call">("text");
   const [date, setDate] = useState(today());
@@ -65,7 +65,12 @@ function RequestPage() {
   const menu = shop.settings.scheduling.onlineMenu;
   const transports = shop.settings.scheduling.transportOptions;
   const service = menu.some((row) => row.id === serviceId) ? serviceId : menu[0]?.id ?? "";
-  const advisor = advisorId;
+  const advisor = advisorForWebRequest(
+    shop.advisors,
+    shop.onlineRequests ?? [],
+    date,
+    Math.max(0, advisorDayCapacity(shop.settings.scheduling, date) - 1),
+  );
   const transport = transports.some((row) => row.id === transportId) ? transportId : transports[0]?.id ?? "";
   const slots = visitSlots(shop, { serviceId: service, advisorId: advisor });
   const dates = [...new Set(slots.map((slot) => slot.date))];
@@ -156,14 +161,18 @@ function RequestPage() {
       deviceId: requestDeviceId(),
     });
     if (!result.ok) {
-      setError(result.reason === "full"
-        ? "That time is no longer open."
+      const scope = "scope" in result ? result.scope : undefined;
+      const waiting = "limit" in result && result.limit != null ? result.limit : 3;
+      setError(result.reason === "full" || scope === "day"
+        ? "That day is full. Pick another day."
         : result.reason === "code"
           ? "The code did not match, so the saved vehicle was not used."
           : result.reason === "vin"
             ? (vinScheduleError(vin) || "Enter a 17-character VIN.")
             : result.reason === "limit"
-              ? `This phone, email, or browser already has ${"limit" in result && result.limit != null ? result.limit : 3} requests waiting.`
+              ? scope === "device"
+                ? `This browser already has ${waiting} requests waiting.`
+                : `This phone or email already has ${waiting} requests waiting.`
               : "Enter the visit details and try again.");
       return;
     }

@@ -64,6 +64,7 @@ describe("appointment actions", () => {
     const original = vehicle.vin;
     const typed = fullVin({ prefix: "1FTEW1EP", year: 2022, plant: "D", serial: 345 });
     assert.notEqual(typed, original);
+    shop.getState().setWorkingAs("megan");
 
     shop.getState().updateAppointment(row.id, { vin: `  ${typed.toLowerCase()}  ` });
     const next = shop.getState();

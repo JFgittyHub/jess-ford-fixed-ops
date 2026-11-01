@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui";
+import { formatVisit } from "@/lib/format";
 import type { ContactMethod, OnlineRequest } from "@/lib/types";
 
 const METHOD: Record<ContactMethod, string> = { text: "Text", email: "Email", call: "Call" };
@@ -46,7 +47,7 @@ export function OnlineRequestList({
         <tbody>
           {listed.map((row) => (
             <tr key={row.id}>
-              <td className="whitespace-nowrap tabular-nums">{row.date} · {row.time}</td>
+              <td className="whitespace-nowrap">{formatVisit(row.date, row.time)}</td>
               <td>{row.customerName}</td>
               <td>{vehicleLine(row)}</td>
               <td>{row.serviceName} · {row.laborHours} hr</td>

@@ -1,4 +1,4 @@
-import { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, ordinal, paceRatio, todayIso, todayLabel } from "./clock";
+import { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, now, ordinal, paceRatio, todayIso, todayLabel } from "./clock";
 import type { FeeLine } from "./types";
 
 export { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, ordinal, paceRatio, todayIso as today, todayLabel };
@@ -49,7 +49,7 @@ export function closedHeaderCopy(
   settings: { storeName: string; address: string; city: string; phone: string },
 ) {
   const snap = order.closeSnapshot;
-  const recorded = order.status === "closed" && snap?.storeName?.trim() ? snap.storeName.trim() : "";
+  const recorded = order.status === "closed" ? recordedStoreName(snap) : "";
   if (order.status !== "closed") {
     return {
       name: settings.storeName,
@@ -57,12 +57,25 @@ export function closedHeaderCopy(
     };
   }
   if (!recorded) {
-    return { name: "Header not recorded", line: formatShopPhone(snap?.storePhone || snap?.phone || "") };
+    return { name: "Header not recorded", line: "" };
   }
   return {
     name: recorded,
     line: [snap?.storeAddress, snap?.storeCity, formatShopPhone(snap?.storePhone || "")].filter(Boolean).join(" · "),
   };
+}
+
+/** A saved header that still holds the old sample fixture is treated as missing. The customer's phone is never the store phone. */
+function recordedStoreName(snap?: { storeName?: string; storeAddress?: string; storeCity?: string; storePhone?: string; phone?: string } | null) {
+  const name = snap?.storeName?.trim() ?? "";
+  if (!name) return "";
+  const address = snap?.storeAddress?.trim() ?? "";
+  const city = snap?.storeCity?.trim() ?? "";
+  const phone = (snap?.storePhone ?? "").replace(/\D/g, "");
+  const fixture = name === "Captured At Close"
+    || (address === "Captured Road" && city === "Captured City")
+    || (name.startsWith("Captured") && phone === "5551112222");
+  return fixture ? "" : name;
 }
 
 export function clockTime(time: string) {
@@ -140,7 +153,14 @@ export function formatDuration(hours: number) {
   return `${h}h ${m}m`;
 }
 
-export function localStamp(date = new Date()) {
+export function formatVisit(date: string, time: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const stamp = new Date(Date.UTC(year || 2026, (month || 1) - 1, day || 1, 12));
+  const dayText = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(stamp);
+  return `${dayText}, ${clockTime(time)} PT`;
+}
+
+export function localStamp(date = now()) {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
 }

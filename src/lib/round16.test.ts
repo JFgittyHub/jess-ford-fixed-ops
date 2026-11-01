@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { advisorDayCapacity } from "./capacity.ts";
-import { FIXED_CLOSE_HEADER, createShopStore, migrateSavedShop } from "./store.ts";
+import { createShopStore, migrateSavedShop } from "./store.ts";
 import { submitOnlineRequest } from "./online-request.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { fullVin } from "./vin.ts";
@@ -16,7 +16,7 @@ function memoryStorage(): ShopStorage {
 }
 
 describe("round 16", () => {
-  it("AV1/AV3 CL logs arrived, in shop, no-show, and put back for an advisor only", () => {
+  it("logs arrived, in shop, no-show, and put back for an advisor only", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const row = shop.getState().appointments.find((item) => item.status === "scheduled");
     assert.ok(row);
@@ -37,7 +37,7 @@ describe("round 16", () => {
     assert.equal(shop.getState().setAppointmentStatus(row.id, "no_show").ok, false);
   });
 
-  it("MV3/5/6/8 refuses a move from a technician and logs the tech names", () => {
+  it("refuses a move from a technician and logs the move", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const row = shop.getState().appointments.find((item) => item.status === "scheduled");
     assert.ok(row);
@@ -50,7 +50,7 @@ describe("round 16", () => {
     assert.match(logged?.after ?? "", /PT/);
   });
 
-  it("W2-W12 lets an advisor change scheduling and refuses a technician", () => {
+  it("lets an advisor add a closed date and refuses a technician", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("marcus");
     const before = JSON.stringify(shop.getState().settings.scheduling);
@@ -66,23 +66,21 @@ describe("round 16", () => {
     assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Closed date" && row.who === "Megan Cho"), true);
   });
 
-  it("SN1/SN2 stamps h241202 from the fixed table on either calendar day", () => {
-    const header = FIXED_CLOSE_HEADER["grand-coulee"];
+  it("leaves a blank closed header blank when a saved shop is loaded", () => {
     const blank = {
-      settings: { storeName: header.storeName, scheduling: { hours: [], closedDates: [], bookingWindow: { daysAhead: 1, minLeadHours: 0 }, onlineMenu: [], transportOptions: [] } },
+      settings: { storeName: "Jess Ford Grand Coulee", scheduling: { hours: [], closedDates: [], bookingWindow: { daysAhead: 1, minLeadHours: 0 }, onlineMenu: [], transportOptions: [] } },
       orders: [{ id: "h241202", status: "closed", closeSnapshot: { customerName: "A", phone: "", address: "", plate: "", vin: "", year: 2020, make: "Ford", model: "F-150", storeName: "" }, jobs: [], labor: [], parts: [], customerId: "c", vehicleId: "v", concern: "", mileage: 1, openedOn: "2026-10-01" }],
       customers: [],
       vehicles: [],
     };
+    const before = JSON.stringify(blank.orders[0]);
     const first = migrateSavedShop(blank);
-    const second = migrateSavedShop(blank);
-    assert.equal(first.orders[0]?.closeSnapshot?.storeName, header.storeName);
-    assert.equal(second.orders[0]?.closeSnapshot?.storeName, header.storeName);
-    assert.equal(JSON.stringify(first.orders[0]?.closeSnapshot).includes("Captured At Close"), false);
+    assert.equal(JSON.stringify(first.orders[0]), before);
+    assert.equal(first.orders[0]?.closeSnapshot?.storeName, "");
     assert.equal(advisorDayCapacity(createShopStore({ demoMode: true, storage: memoryStorage() }).getState().settings.scheduling, "2026-11-02") > 0, true);
   });
 
-  it("RQ5/RQ9 folds an aliased phone and refuses a missing date", () => {
+  it("folds an extension phone and refuses a missing date", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const state = shop.getState();
     const base = {
@@ -118,7 +116,7 @@ describe("round 16", () => {
     if (!held.ok) assert.equal(held.reason, "limit");
   });
 
-  it("K1 keeps the current owner of a closed vehicle after clear", () => {
+  it("keeps the current owner of a closed vehicle after clear", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("derek");
     const closed = shop.getState().orders.find((row) => row.status === "closed");

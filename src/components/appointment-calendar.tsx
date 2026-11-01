@@ -324,13 +324,13 @@ export function AppointmentCalendar({
                     <button
                       type="button"
                       aria-label="Change length"
-                      className="absolute bottom-0 left-1 right-6 h-2 cursor-ns-resize border-0 bg-transparent"
+                      className="absolute bottom-0 left-1 right-6 z-10 min-h-11 min-w-11 cursor-ns-resize border-0 bg-transparent"
                       onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
                     />
                     <button
                       type="button"
                       aria-label="Appointment summary"
-                      className="absolute right-1 bottom-1 z-10 flex size-4 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
+                      className="absolute right-1 bottom-1 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
                       onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                       onMouseLeave={scheduleHide}
                       onPointerDown={(event) => event.stopPropagation()}
@@ -395,7 +395,7 @@ function HoverCard({
       <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-muted">{detail.status}</p>
       <div className="mt-2 flex flex-wrap gap-2">
         <button type="button" className="btn btn-ghost btn-small min-h-11 min-w-11" onClick={() => onEdit(row.id)}>Edit details</button>
-        {onCancel && row.status !== "cancelled" ? <button type="button" className="btn btn-ghost btn-small" onClick={() => onCancel(row.id)}>Cancel appointment</button> : null}
+        {onCancel && row.status !== "cancelled" ? <button type="button" className="btn btn-ghost btn-small min-h-11 min-w-11" onClick={() => onCancel(row.id)}>Cancel appointment</button> : null}
         {detail.canWrite ? (
           <button type="button" className="btn btn-primary btn-small" onClick={() => onWrite(row.id)}>Write repair order</button>
         ) : null}

@@ -100,7 +100,7 @@ export function vehicleHistoryEntries(orders: RepairOrder[], vehicle: Vehicle, c
     if (key !== shown) {
       if (span && originalOwner && span.customerId !== originalOwner) {
         const named = customers.find((row) => row.id === span.customerId)?.name ?? owner;
-        lines.push({ kind: "divider", text: `New owner: ${named}, since ${displayRecordedWhen(span.startedAt)}` });
+        lines.push({ kind: "divider", text: `New owner: ${named}, since ${displayRecordedWhen(span.startedAt)} PT` });
       }
       shown = key;
     }

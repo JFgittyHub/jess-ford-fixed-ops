@@ -33,7 +33,7 @@ describe("round 15", () => {
     assert.equal(shop.getState().workingAsId, "derek");
     const row = shop.getState().settingsLog?.find((item) => item.field === "Clear shop data");
     assert.ok(row);
-    assert.match(row.after, /Closed repair orders/);
+    assert.match(row.after, /Cleared open work \(\d+ appointments, \d+ overrides\) — closed ROs kept/);
     assert.equal(JSON.stringify(shop.getState().requestLog ?? []), JSON.stringify(requestLog));
     const worker = shop.getState().workingAsId;
     shop.getState().resetDemo(true);
@@ -56,18 +56,25 @@ describe("round 15", () => {
       settings: { ...shop.getState().settings, storeName: "Jess Ford Grand Coulee" },
       orders: [{ ...order, id: "h241202", closeSnapshot: { ...order.closeSnapshot!, storeName: "" } }],
     });
-    assert.equal(kept.orders.find((row) => row.id === "h241202")?.closeSnapshot?.storeName, "Jess Ford Grand Coulee");
+    assert.equal(kept.orders.find((row) => row.id === "h241202")?.closeSnapshot?.storeName, "");
     assert.equal(JSON.stringify(kept.orders).includes("Captured At Close"), false);
   });
 
-  it("prints Header not recorded once, with a formatted phone", () => {
+  it("prints Header not recorded and never the customer's phone", () => {
     const header = closedHeaderCopy({
       status: "closed",
       closeSnapshot: { storeName: "", storeAddress: "", storeCity: "", storePhone: "", phone: "5556331400" },
     }, { storeName: "Jess Ford Grand Coulee", address: "Grand Coulee service drive", city: "Grand Coulee, WA", phone: "(555) 633-1400" });
     assert.equal(header.name, "Header not recorded");
-    assert.equal(header.line, "(555) 633-1400");
-    assert.equal(`${header.name} ${header.line}`.split("Header not recorded").length, 2);
+    assert.equal(header.line, "");
+    assert.equal(header.line.includes("633"), false);
+    const fixture = closedHeaderCopy({
+      status: "closed",
+      closeSnapshot: { storeName: "Captured At Close", storeAddress: "Captured Road", storeCity: "Captured City", storePhone: "5551112222", phone: "5552011400" },
+    }, { storeName: "Jess Ford Grand Coulee", address: "Live Road", city: "Live City", phone: "(555) 633-1400" });
+    assert.equal(fixture.name, "Header not recorded");
+    assert.equal(fixture.line.includes("201"), false);
+    assert.equal(fixture.line.includes("Captured"), false);
   });
 
   it("lets the worker be cleared and refuses a blank worker", () => {

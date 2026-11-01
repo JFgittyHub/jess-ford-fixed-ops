@@ -14,7 +14,7 @@ import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } 
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
-import { snapHalfHour, today } from "@/lib/format";
+import { formatVisit, snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
 import { lookups } from "@/lib/metrics";
 import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
@@ -228,7 +228,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           <p className="mt-2 max-w-xl text-muted">
             {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
           </p>
-          {actor !== "advisor" && actor !== "service-manager" ? <p role="status" className="mt-2 text-sm font-semibold text-[#8a5a00]">Choose who is working.</p> : null}
+          {actor !== "advisor" && actor !== "service-manager" ? <p role="status" className="mt-2 text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
           <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(day); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
@@ -253,7 +253,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onSelect={(id) => openAppointment(id)}
         onSlot={(nextTech, nextTime) => {
           if (actor !== "advisor" && actor !== "service-manager") {
-            setActionError("Choose who is working.");
+            setActionError("Choose who is working to book or change anything.");
             return;
           }
           setDate(day);
@@ -337,7 +337,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             if (!result.ok && result.reason === "warning" && result.warning) {
               const request = shop.onlineRequests.find((row) => row.id === id);
               const who = request?.customerName || "This customer";
-              const when = request ? `${request.date} at ${request.time}` : "that time";
+              const when = request ? formatVisit(request.date, request.time) : "that time";
               setApproveGate({ id, linkCustomerId, warning: `${who} at ${when}. ${result.warning}` });
               setRequestNote("");
               return;

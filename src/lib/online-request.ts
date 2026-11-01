@@ -165,7 +165,7 @@ export function submitOnlineRequest(
   input: OnlineRequestInput,
   id: string,
   at: string,
-): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" | "limit" | "date"; limit?: number } {
+): { ok: true; request: OnlineRequest } | { ok: false; reason: "service" | "advisor" | "transport" | "code" | "vehicle" | "contact" | "full" | "vin" | "limit" | "date"; limit?: number; scope?: "contact" | "device" | "day" } {
   const service = shop.settings.scheduling.onlineMenu.find((row) => row.id === input.serviceId);
   if (!service) return { ok: false, reason: "service" };
   const advisor = shop.advisors.find((row) => row.id === input.advisorId);
@@ -225,16 +225,16 @@ export function submitOnlineRequest(
     (phones && phoneKey(row.phone) === phones)
     || (mail && row.email && emailKey(row.email) === mail)
   ));
-  if (sameContact.length >= CONTACT_CAP) return { ok: false, reason: "limit", limit: CONTACT_CAP };
+  if (sameContact.length >= CONTACT_CAP) return { ok: false, reason: "limit", limit: CONTACT_CAP, scope: "contact" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date ?? "")) return { ok: false, reason: "date" };
   const dayCap = advisorDayCapacity(shop.settings.scheduling, input.date);
   if (dayCap <= 0) return { ok: false, reason: "full" };
   const advisorCap = Math.max(0, dayCap - 1);
   const sameAdvisorDay = pending.filter((row) => row.advisorId === advisor.id && row.date === input.date);
-  if (sameAdvisorDay.length >= advisorCap) return { ok: false, reason: "limit", limit: advisorCap };
-  const storeCap = Math.max(0, shop.advisors.length * dayCap - 1);
-  if (pending.filter((row) => row.date === input.date).length >= storeCap) return { ok: false, reason: "limit", limit: storeCap };
-  if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit", limit: DEVICE_CAP };
+  if (sameAdvisorDay.length >= advisorCap) return { ok: false, reason: "limit", limit: advisorCap, scope: "day" };
+  const storeCap = shop.advisors.length > 1 ? Math.max(0, shop.advisors.length * advisorCap - 1) : advisorCap;
+  if (pending.filter((row) => row.date === input.date).length >= storeCap) return { ok: false, reason: "limit", limit: storeCap, scope: "day" };
+  if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit", limit: DEVICE_CAP, scope: "device" };
 
   const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };
@@ -332,19 +332,45 @@ function textField(value: unknown, max: number): string {
 
 function cleanContact(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value.replace(/[\u200B-\u200D\uFEFF]/g, "").replace(/[^\u0020-\u007E]/g, "");
+  return [...value].filter((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    if (code >= 0x200b && code <= 0x200d) return false;
+    if (code === 0xfeff) return false;
+    return code > 0x1f && code !== 0x7f;
+  }).join("");
+}
+
+/** Pick an advisor who still has room that day, instead of always the first name on the roster. */
+export function advisorForWebRequest(
+  advisors: { id: string; name: string }[],
+  pending: { advisorId: string; date: string; status?: string }[],
+  date: string,
+  perAdvisorCap: number,
+) {
+  const counts = new Map<string, number>();
+  for (const row of pending) {
+    if (row.status && row.status !== "pending") continue;
+    if (row.date !== date) continue;
+    counts.set(row.advisorId, (counts.get(row.advisorId) ?? 0) + 1);
+  }
+  const ranked = [...advisors].sort((a, b) => (counts.get(a.id) ?? 0) - (counts.get(b.id) ?? 0) || a.name.localeCompare(b.name));
+  const open = ranked.find((row) => (counts.get(row.id) ?? 0) < perAdvisorCap);
+  return (open ?? ranked[0])?.id ?? "";
 }
 
 function phoneKey(value: string): string {
-  const withoutExtension = value.replace(/(?:ext\.?|extension|x)\s*\d+\s*$/i, "");
-  const digits = withoutExtension.replace(/\D/g, "");
+  const withoutMarks = value.replace(/(?:[#/]\s*\d+|(?:ext\.?|extension|x)\s*\d+)\s*$/i, "");
+  const digits = withoutMarks.replace(/\D/g, "");
   if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
-  if (digits.length >= 10) return digits.slice(-10);
+  if (digits.length === 11) return digits.slice(0, 10);
+  if (digits.length > 11) return digits.slice(-10);
+  if (digits.length === 10) return digits;
   return "";
 }
 
 function emailKey(value: string): string {
-  const lower = value.trim().toLowerCase();
+  const folded = value.trim().normalize("NFKD").replace(/\p{M}/gu, "");
+  const lower = folded.toLowerCase().replace(/\.+$/, "");
   const at = lower.lastIndexOf("@");
   if (at < 1) return lower;
   let local = lower.slice(0, at);

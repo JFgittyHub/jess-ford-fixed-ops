@@ -427,6 +427,8 @@ export interface RequestAction {
   whoId: string;
   requestId: string;
   action: "approved" | "declined";
+  customerName?: string;
+  visit?: string;
 }
 
 export interface ClosedRecord {

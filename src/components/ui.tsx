@@ -9,9 +9,9 @@ export function Button({
   className,
   type = "button",
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "primary" | "ghost" | "accent"; small?: boolean }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "primary" | "ghost" | "accent" | "danger"; small?: boolean }) {
   return (
-    <button type={type} className={cn("btn", tone === "primary" && "btn-primary", tone === "ghost" && "btn-ghost", tone === "accent" && "btn-accent", small && "btn-small", className)} {...props}>
+    <button type={type} className={cn("btn", tone === "primary" && "btn-primary", tone === "ghost" && "btn-ghost", tone === "accent" && "btn-accent", tone === "danger" && "btn-danger", small && "btn-small", className)} {...props}>
       {children}
     </button>
   );

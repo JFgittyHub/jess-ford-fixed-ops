@@ -544,6 +544,44 @@ describe("shipped flags", () => {
     }
   });
 
+  it("refuses appointFirstServiceManager while the section lock is on and no manager exists yet", () => {
+    const previous = flags.__SECTION_LOCK_ENABLED__;
+    flags.__SECTION_LOCK_ENABLED__ = true;
+    try {
+      const shop = createShopStore({ demoMode: false, storage: memoryStorage() });
+      shop.setState({
+        advisors: [{ id: "pat", number: "1", name: "Pat Reyes", role: "advisor", base: 1, laborPercent: 1, partsPercent: 1 }],
+        serviceManagers: [],
+        workingAsId: "pat",
+      });
+      const before = JSON.stringify(shop.getState().serviceManagers);
+      const result = shop.getState().appointFirstServiceManager("pat");
+      assert.match(result.error ?? "", /coming later/i);
+      assert.equal(JSON.stringify(shop.getState().serviceManagers), before);
+    } finally {
+      flags.__SECTION_LOCK_ENABLED__ = previous;
+    }
+  });
+
+  it("refuses removeServiceManager while the section lock is on", () => {
+    const previous = flags.__SECTION_LOCK_ENABLED__;
+    flags.__SECTION_LOCK_ENABLED__ = false;
+    const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("derek");
+    const added = shop.getState().addServiceManager({ number: "97", name: "Alex Rivera", base: 1, laborPercent: 1, partsPercent: 1 });
+    assert.equal(added.ok, true, added.error ?? "");
+    const alex = shop.getState().serviceManagers.find((row) => row.name === "Alex Rivera");
+    assert.ok(alex);
+    flags.__SECTION_LOCK_ENABLED__ = true;
+    try {
+      const removed = shop.getState().removeServiceManager(alex.id);
+      assert.match(removed.error ?? "", /coming later/i);
+      assert.equal(shop.getState().serviceManagers.some((row) => row.id === alex.id), true);
+    } finally {
+      flags.__SECTION_LOCK_ENABLED__ = previous;
+    }
+  });
+
   it("changes Helen, the clock, and the roster when the flags allow it", () => {
     const previous = {
       create: flags.__RO_CREATION_ENABLED__,

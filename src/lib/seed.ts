@@ -338,14 +338,19 @@ function scopeShop(shop: ShopData, prefix: string): ShopData {
   };
 }
 
-function workingDaysBeforeToday() {
-  const [year, month, day] = today().split("-").map(Number);
-  const days: number[] = [];
-  for (let cursor = 1; cursor < day; cursor += 1) {
-    const weekday = new Date(Date.UTC(year, month - 1, cursor)).getUTCDay();
+/** The last `count` shop days before today, skipping Sundays, including the previous month. */
+function workingDaysBeforeToday(count = 30) {
+  const days: string[] = [];
+  let cursor = addDays(today(), -1);
+  let guard = 0;
+  while (days.length < count && guard < 400) {
+    guard += 1;
+    const [year, month, day] = cursor.split("-").map(Number);
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
     if (weekday !== 0) days.push(cursor);
+    cursor = addDays(cursor, -1);
   }
-  return days;
+  return days.reverse();
 }
 
 function buildParts(): PartSku[] {
@@ -527,8 +532,8 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   const orders: Array<Omit<RepairOrder, "bay" | "mileageOut" | "fees" | "taxRate">> = [];
   let seq = pullman ? 318000 : 241200;
 
-  for (const day of workingDaysBeforeToday()) {
-    const [year, month] = today().split("-").map(Number);
+  for (const iso of workingDaysBeforeToday()) {
+    const [year, month, day] = iso.split("-").map(Number);
     const wd = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
     const count = wd === 6 ? 16 + Math.floor(rng() * 5) : 26 + Math.floor(rng() * 8);
     for (let n = 0; n < count; n += 1) {
@@ -568,7 +573,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
       orders.push({
         id: roKey,
         number: seq,
-        openedOn: padDay(day),
+        openedOn: iso,
         openedAt,
         promiseTime: "",
         status: "closed",
@@ -580,10 +585,23 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
         mileage: 14000 + Math.floor(rng() * 86000),
         labor,
         parts: partLines,
-        invoicedOn: padDay(day),
+        invoicedOn: iso,
         stockApplied: true,
         inspection: null,
       });
+    }
+  }
+
+  const mileageGroups = new Map<string, typeof orders>();
+  for (const order of orders) {
+    const list = mileageGroups.get(order.vehicleId) ?? [];
+    list.push(order);
+    mileageGroups.set(order.vehicleId, list);
+  }
+  for (const list of mileageGroups.values()) {
+    list.sort((a, b) => (a.openedAt ?? "").localeCompare(b.openedAt ?? "") || a.number - b.number);
+    for (let index = 1; index < list.length; index += 1) {
+      if (list[index].mileage <= list[index - 1].mileage) list[index].mileage = list[index - 1].mileage + 17;
     }
   }
 
@@ -823,6 +841,20 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
     const mileage = Math.max(order.mileage, floor > 0 ? floor : 0);
     return withJobIds({ ...order, openedAt, mileage, inspection: demoSheet(order.id) });
   });
+
+  const timeline = [...orders, ...open];
+  const timelineGroups = new Map<string, typeof timeline>();
+  for (const order of timeline) {
+    const list = timelineGroups.get(order.vehicleId) ?? [];
+    list.push(order);
+    timelineGroups.set(order.vehicleId, list);
+  }
+  for (const list of timelineGroups.values()) {
+    list.sort((a, b) => (a.openedAt ?? a.openedOn).localeCompare(b.openedAt ?? b.openedOn) || a.number - b.number);
+    for (let index = 1; index < list.length; index += 1) {
+      if (list[index].mileage <= list[index - 1].mileage) list[index].mileage = list[index - 1].mileage + 17;
+    }
+  }
 
   function appt(
     id: string,
