@@ -176,18 +176,18 @@ export function submitOnlineRequest(
   let verified = false;
   let customerId: string | null = null;
   let vehicleId: string | null = null;
-  let customerName = textField(input.customerName, 80);
-  let phone = textField(cleanContact(input.phone), 20);
-  let email = textField(cleanContact(input.email), 120).toLowerCase();
+  let customerName = textField(cleanFreeText(input.customerName), 80);
+  let phone = textField(cleanFreeText(input.phone), 20);
+  let email = textField(cleanFreeText(input.email), 120).toLowerCase();
   let year = Math.trunc(Number(input.year) || 0);
-  let make = textField(input.make, 40);
-  let model = textField(input.model, 40);
+  let make = textField(cleanFreeText(input.make), 40);
+  let model = textField(cleanFreeText(input.model), 40);
   if (input.vin != null && typeof input.vin !== "string") return { ok: false, reason: "vin" };
   const rawVin = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
   if (rawVin.length > 17) return { ok: false, reason: "vin" };
   let vin = rawVin;
-  let plate = textField(input.plate, 10).toUpperCase();
-  const note = textField(input.note, 500);
+  let plate = textField(cleanFreeText(input.plate), 10).toUpperCase();
+  const note = textField(cleanFreeText(input.note), 500);
   const deviceId = textField(input.deviceId, 40);
 
   if (input.verified) {
@@ -213,7 +213,7 @@ export function submitOnlineRequest(
   } else if (!vin || vinScheduleError(vin)) {
     return { ok: false, reason: "vin" };
   }
-  if (!vin || vinScheduleError(vin)) return { ok: false, reason: "vin" };
+  if (verified && (!vin || vinScheduleError(vin))) return { ok: false, reason: "vin" };
   const phoneOk = phone.length === 0 || phoneKey(phone).length === 10;
   const emailOk = email.length === 0 || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   if (!phoneOk || !emailOk) return { ok: false, reason: "contact" };
@@ -330,14 +330,21 @@ function textField(value: unknown, max: number): string {
   return value.trim().slice(0, max);
 }
 
-function cleanContact(value: unknown): string {
+function hiddenFormat(code: number) {
+  if (code <= 0x1f || code === 0x7f) return true;
+  if (code >= 0x80 && code <= 0x9f) return true;
+  if (code === 0xad || code === 0xfeff) return true;
+  if (code >= 0x200b && code <= 0x200f) return true;
+  if (code >= 0x202a && code <= 0x202e) return true;
+  if (code >= 0x2066 && code <= 0x2069) return true;
+  return false;
+}
+
+/** Strip controls, bidi, and soft hyphens. Accented letters stay. Fullwidth digits become ASCII. */
+export function cleanFreeText(value: unknown): string {
   if (typeof value !== "string") return "";
-  return [...value].filter((char) => {
-    const code = char.codePointAt(0) ?? 0;
-    if (code >= 0x200b && code <= 0x200d) return false;
-    if (code === 0xfeff) return false;
-    return code > 0x1f && code !== 0x7f;
-  }).join("");
+  const normalized = value.normalize("NFKC");
+  return [...normalized].filter((char) => !hiddenFormat(char.codePointAt(0) ?? 0)).join("");
 }
 
 /** Pick an advisor who still has room that day, instead of always the first name on the roster. */
@@ -358,12 +365,11 @@ export function advisorForWebRequest(
   return (open ?? ranked[0])?.id ?? "";
 }
 
-function phoneKey(value: string): string {
-  const withoutMarks = value.replace(/(?:[#/]\s*\d+|(?:ext\.?|extension|x)\s*\d+)\s*$/i, "");
+export function phoneKey(value: string): string {
+  const cleaned = cleanFreeText(value);
+  const withoutMarks = cleaned.replace(/(?:[#/]\s*\d+|(?:ext\.?|extension|x)\s*\d+)\s*$/i, "");
   const digits = withoutMarks.replace(/\D/g, "");
-  if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
-  if (digits.length === 11) return digits.slice(0, 10);
-  if (digits.length > 11) return digits.slice(-10);
+  if (digits.length === 11 && (digits.startsWith("1") || digits.startsWith("9"))) return digits.slice(1);
   if (digits.length === 10) return digits;
   return "";
 }

@@ -45,6 +45,13 @@ import { useShop } from "@/lib/store";
 
 const STORAGE_KEY = SCORECARD_STORAGE_KEY;
 
+function pulsePeriod(activeMonth: string, todayKey: string, day: number, recorded: boolean) {
+  const label = monthLabel(activeMonth);
+  if (activeMonth === todayKey && day === 1) return "Last 30 working days";
+  if (activeMonth < todayKey && recorded) return `${label} (full month)`;
+  return label;
+}
+
 function seed(source: Record<string, MonthBoard>): Record<string, MonthBoard> {
   return Object.fromEntries(Object.entries(source).map(([key, board]) => [key, structuredClone(board)]));
 }
@@ -200,6 +207,7 @@ export function ScorecardPulse({ initialOwnerView = false }: { initialOwnerView?
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Fixed Ops Pulse</h1>
           <p className="mt-2 max-w-xl text-muted">
             As of {asOf}. {ownerView ? "Owner view. Read-only totals for both stores." : storeLine}
+            {demo ? " Sample data — regenerates daily." : ""}
           </p>
         </div>
         <Button
@@ -222,7 +230,7 @@ export function ScorecardPulse({ initialOwnerView = false }: { initialOwnerView?
           <button type="button" className="flex size-9 items-center justify-center disabled:opacity-40" aria-label="Previous month" disabled={state.activeMonth <= MIN_MONTH} onClick={() => go(-1)}>
             <ChevronLeft className="size-5" />
           </button>
-          <p className="min-w-36 text-center text-sm font-semibold tabular-nums">{monthLabel(state.activeMonth)}</p>
+          <p className="min-w-36 text-center text-sm font-semibold tabular-nums">{pulsePeriod(state.activeMonth, todayKey, today.getDate(), Boolean(board.recorded))}</p>
           <button type="button" className="flex size-9 items-center justify-center disabled:opacity-40" aria-label="Next month" disabled={state.activeMonth >= todayKey} onClick={() => go(1)}>
             <ChevronRight className="size-5" />
           </button>

@@ -221,8 +221,23 @@ function pickJob(rng: () => number) {
 /** The original sample month was anchored on Monday, October 19, 2026. */
 const SAMPLE_ANCHOR = "2026-10-19";
 
+function weekdayNumber(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+/** Shift a sample date onto the shop calendar. Sunday lands on the next open day. */
 function shopDate(iso: string) {
-  return addDays(today(), daysBetween(SAMPLE_ANCHOR, iso));
+  const shifted = addDays(today(), daysBetween(SAMPLE_ANCHOR, iso));
+  return weekdayNumber(shifted) === 0 ? addDays(shifted, 1) : shifted;
+}
+
+/** Later visits on one vehicle never show a lower odometer. */
+export function clampMileageForward<T extends { mileage: number }>(list: T[]) {
+  for (let index = 1; index < list.length; index += 1) {
+    if (list[index].mileage <= list[index - 1].mileage) list[index].mileage = list[index - 1].mileage + 17;
+  }
+  return list;
 }
 
 function shopStamp(iso: string) {
@@ -600,9 +615,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   }
   for (const list of mileageGroups.values()) {
     list.sort((a, b) => (a.openedAt ?? "").localeCompare(b.openedAt ?? "") || a.number - b.number);
-    for (let index = 1; index < list.length; index += 1) {
-      if (list[index].mileage <= list[index - 1].mileage) list[index].mileage = list[index - 1].mileage + 17;
-    }
+    clampMileageForward(list);
   }
 
   const flagged = new Map<string, number>();
@@ -851,9 +864,7 @@ export function createSeed(storeId: StoreId = "grand-coulee"): ShopData {
   }
   for (const list of timelineGroups.values()) {
     list.sort((a, b) => (a.openedAt ?? a.openedOn).localeCompare(b.openedAt ?? b.openedOn) || a.number - b.number);
-    for (let index = 1; index < list.length; index += 1) {
-      if (list[index].mileage <= list[index - 1].mileage) list[index].mileage = list[index - 1].mileage + 17;
-    }
+    clampMileageForward(list);
   }
 
   function appt(

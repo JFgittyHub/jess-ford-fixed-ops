@@ -104,14 +104,20 @@ const SENTENCE_FIELDS = new Set([
   "Clear shop data",
   "Appointment edited",
   "Appointment",
+  "Length",
+  "No-show",
+  "Arrived",
+  "Put back",
+  "Appointment status",
 ]);
 
 export function changeLogLine(row: SettingsChange) {
   const when = `${displayRecordedWhen(row.at)} PT`;
-  if (SENTENCE_FIELDS.has(row.field) && row.after.trim()) return `${row.after} · ${when}`;
+  const who = `${row.who?.trim() || "Unknown"} · `;
+  if (SENTENCE_FIELDS.has(row.field) && row.after.trim()) return `${who}${row.after} · ${when}`;
   const before = row.before.trim() ? row.before : (row.after.trim() && row.after.trim() !== "removed" ? "none" : "removed");
   const after = row.after.trim() ? row.after : "removed";
-  return `${row.field}: ${before} → ${after} · ${when}`;
+  return `${who}${row.field}: ${before} → ${after} · ${when}`;
 }
 
 export function requestLogLine(row: RequestAction) {

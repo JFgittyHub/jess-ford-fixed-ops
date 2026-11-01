@@ -84,6 +84,10 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+export function deskGate(pathname: string, children: ReactNode) {
+  return isLockedPath(pathname) ? <ComingLater /> : children;
+}
+
 export function ComingLater() {
   return (
     <section className="card" aria-label={SECTION_LOCK_HINT}>
@@ -267,7 +271,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           </nav>
         </header>
         <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">
-          {isLockedPath(pathname) ? <ComingLater /> : children}
+          {deskGate(pathname, children)}
         </main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
           <p>

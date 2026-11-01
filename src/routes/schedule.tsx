@@ -228,7 +228,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           <p className="mt-2 max-w-xl text-muted">
             {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
           </p>
-          {actor !== "advisor" && actor !== "service-manager" ? <p role="status" className="mt-2 text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
+          {actor === "customer" ? <p role="status" className="mt-2 text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
+          {actor === "technician" ? <p role="note" className="mt-2 text-sm font-semibold text-[#8a5a00]">Techs can view only.</p> : null}
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
           <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(day); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
@@ -253,7 +254,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onSelect={(id) => openAppointment(id)}
         onSlot={(nextTech, nextTime) => {
           if (actor !== "advisor" && actor !== "service-manager") {
-            setActionError("Choose who is working to book or change anything.");
+            setActionError(actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything.");
             return;
           }
           setDate(day);
@@ -357,20 +358,15 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             const result = shop.declineOnlineRequest(id);
             setRequestNote(result.ok ? "" : "Only an advisor or service manager can approve or decline a request.");
           }}
+          rowWarning={approveGate ? { id: approveGate.id, text: approveGate.warning } : null}
+          onCancelWarning={() => setApproveGate(null)}
+          onConfirmWarning={() => {
+            if (!approveGate) return;
+            const result = shop.approveOnlineRequest(approveGate.id, approveGate.linkCustomerId, true);
+            setApproveGate(null);
+            setRequestNote(result.ok ? "" : "That request was not approved.");
+          }}
         />
-        {approveGate ? (
-          <div className="mt-3 grid gap-2">
-            <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{approveGate.warning}</p>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" onClick={() => setApproveGate(null)}>Cancel</Button>
-              <Button tone="primary" type="button" onClick={() => {
-                const result = shop.approveOnlineRequest(approveGate.id, approveGate.linkCustomerId, true);
-                setApproveGate(null);
-                setRequestNote(result.ok ? "" : "That request was not approved.");
-              }}>Override</Button>
-            </div>
-          </div>
-        ) : null}
         {requestNote ? (
           <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{requestNote}</p>
         ) : null}
@@ -581,6 +577,7 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
+        <Button small onClick={onEdit}>Change length</Button>
         <Button small onClick={onEdit}>Edit details</Button>
         {!roCreationEnabled() ? <p className="text-sm text-muted">Repair orders come from Dealertrack.</p> : row.orderId || row.status === "no_show" || row.status === "cancelled" ? null : writeBlock ? <p className="text-sm text-muted">{writeBlock}</p> : <Button small tone="primary" onClick={onWrite}>Write RO</Button>}
       </div>

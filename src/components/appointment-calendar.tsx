@@ -7,6 +7,45 @@ const START = 7 * 60;
 const END = 18 * 60;
 const SNAP = 30;
 const SLOT = 32;
+const HANDLE = 44;
+
+export function cardBlockHeight(minutes: number) {
+  return Math.max(SLOT - 2, (minutes / SNAP) * SLOT - 2);
+}
+
+/** The visible grip is one pixel of the bottom edge. The rest of the hit area hangs below the card. */
+export function lengthHandleRange(minutes: number) {
+  const height = cardBlockHeight(minutes);
+  const top = height - 1;
+  return { top, bottom: top + HANDLE, center: height / 2 };
+}
+
+export function planCalendarDrag(input: {
+  mode: "move" | "resize";
+  time: string;
+  minutes: number;
+  techId: string;
+  dx: number;
+  dy: number;
+  techIds: string[];
+  colWidth: number;
+}) {
+  const slots = Math.round(input.dy / SLOT);
+  if (input.mode === "resize") {
+    const start = toMinutes(input.time);
+    return {
+      time: input.time,
+      minutes: clamp(input.minutes + slots * SNAP, 30, END - start),
+      techId: input.techId,
+    };
+  }
+  const techShift = Math.round(input.dx / Math.max(1, input.colWidth));
+  const minutes = input.minutes;
+  const start = clamp(toMinutes(input.time) + slots * SNAP, START, END - minutes);
+  const index = Math.max(0, input.techIds.indexOf(input.techId));
+  const nextIndex = clamp(index + techShift, 0, Math.max(0, input.techIds.length - 1));
+  return { time: fromMinutes(start), minutes, techId: input.techIds[nextIndex] ?? input.techId };
+}
 export const TECH_DAY_GOAL = 8;
 
 type Draft = { id: string; time: string; minutes: number; techId: string };
@@ -221,20 +260,17 @@ export function AppointmentCalendar({
       const dx = ev.clientX - origin.x;
       const dy = ev.clientY - origin.y;
       if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
-      const slots = Math.round(dy / SLOT);
-      if (mode === "resize") {
-        const start = toMinutes(origin.time);
-        const minutes = clamp(origin.minutes + slots * SNAP, 30, END - start);
-        commitDraft({ id: appt.id, time: origin.time, minutes, techId: origin.techId });
-        return;
-      }
-      const techShift = Math.round(dx / colWidth);
-      const minutes = origin.minutes;
-      const start = clamp(toMinutes(origin.time) + slots * SNAP, START, END - minutes);
-      const index = Math.max(0, techIds.indexOf(origin.techId));
-      const nextIndex = clamp(index + techShift, 0, Math.max(0, techIds.length - 1));
-      const techId = techIds[nextIndex] ?? origin.techId;
-      commitDraft({ id: appt.id, time: fromMinutes(start), minutes, techId });
+      const next = planCalendarDrag({
+        mode,
+        time: origin.time,
+        minutes: origin.minutes,
+        techId: origin.techId,
+        dx,
+        dy,
+        techIds,
+        colWidth,
+      });
+      commitDraft({ id: appt.id, ...next });
     }
 
     function onUp() {
@@ -315,7 +351,8 @@ export function AppointmentCalendar({
                   <article
                     key={row.id}
                     data-appt
-                    className={`absolute overflow-hidden rounded-md border border-[#c5d7ee] bg-[#e7f1fb] px-1.5 py-1 pr-6 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
+                    data-drag="move"
+                    className={`absolute overflow-visible rounded-md border border-[#c5d7ee] bg-[#e7f1fb] px-1.5 py-1 pr-6 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
                     style={{ top, height: block, left: 4 + offset * 12, right: 4, zIndex: hover?.id === row.id ? 30 : selected ? 5 : 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
@@ -324,9 +361,12 @@ export function AppointmentCalendar({
                     <button
                       type="button"
                       aria-label="Change length"
-                      className="absolute bottom-0 left-1 right-6 z-10 min-h-11 min-w-11 cursor-ns-resize border-0 bg-transparent"
+                      data-drag="resize"
+                      className="absolute left-1 right-8 top-[calc(100%-1px)] z-20 h-11 min-h-11 min-w-11 cursor-ns-resize border-0 bg-transparent p-0"
                       onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
-                    />
+                    >
+                      <span className="pointer-events-none block h-1 w-full rounded-full bg-[#5d87b0]" />
+                    </button>
                     <button
                       type="button"
                       aria-label="Appointment summary"

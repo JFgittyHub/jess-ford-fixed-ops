@@ -4,9 +4,9 @@ import { OrderEditor } from "@/components/order-editor";
 import { Shell } from "@/components/shell";
 import { Button, Pill } from "@/components/ui";
 import { displayRecordedName, displayRecordedWhen } from "@/lib/cancel";
-import { BAY_LABEL, daySpan, monthName, roStatusLabel, usd } from "@/lib/format";
+import { BAY_LABEL, daySpan, roStatusLabel, usd } from "@/lib/format";
 import { mpiCounts } from "@/lib/mpi";
-import { closedRecord, isAdvisorClosed, isSold, isWorkOpen, lookups, orderMoney } from "@/lib/metrics";
+import { closedRecord, isAdvisorClosed, isWorkOpen, lookups, orderMoney } from "@/lib/metrics";
 import { roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
 import type { BayStatus, ClosedRecord, RepairOrder } from "@/lib/types";
@@ -75,7 +75,6 @@ function OrdersPage() {
   const visible = listed.slice(safePage * pageSize, safePage * pageSize + pageSize);
   const visibleHistory = history.slice(safePage * pageSize, safePage * pageSize + pageSize);
   const openCount = shop.orders.filter(isWorkOpen).length;
-  const closedCount = shop.orders.filter(isSold).length;
 
   return (
     <Shell>
@@ -83,8 +82,8 @@ function OrdersPage() {
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Repair orders</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
-          <p className="mt-2 max-w-xl text-muted">{openCount} open. {closedCount} closed in {monthName()}. These repair orders reflect Dealertrack. Scheduling stays on this desk.</p>
-          {shop.dataset === "sample" ? <p className="mt-2 text-sm text-muted">Sample data — in production these come from Dealertrack.</p> : null}
+          <p className="mt-2 max-w-xl text-muted">{openCount} open. {shop.orders.filter((order) => order.status === "closed").length} closed in the last 30 working days. These repair orders reflect Dealertrack. Scheduling stays on this desk.</p>
+          {shop.dataset === "sample" ? <p className="mt-2 text-sm text-muted">Sample data — regenerates daily.</p> : null}
           {!roWritesEnabled() ? <p className="mt-2 text-sm text-muted">Read-only — repair orders come from Dealertrack.</p> : null}
         </div>
       </div>

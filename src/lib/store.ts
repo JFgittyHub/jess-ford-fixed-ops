@@ -1,10 +1,10 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { advisorBookingNote, assessAppointment, overrideReason, staffBlockMessage, type CapacityResult } from "./capacity";
+import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
-import { makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
+import { cleanFreeText, makeOnlineCode, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { appointmentMinutes as laborAppointmentMinutes, decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
 import { clockTime, formatVisit, money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
@@ -275,15 +275,36 @@ function appointmentEditRows(
       appointmentStatusSentence(current, nextStatus, customerName),
     ));
   }
+  const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
   const nameOf = (id: string, list: { id: string; name: string }[]) => list.find((row) => row.id === id)?.name ?? "none";
   const push = (field: string, before: string, after: string) => {
     if (before === after) return;
-    rows.push(settingsChange(who, "Appointment edited", "", `Appointment edited: ${field} ${before} → ${after}`));
+    rows.push(settingsChange(who, "Appointment edited", "", `Appointment edited: ${field} ${before} → ${after} for ${customerName}`));
   };
   if (patch.time && /^\d{2}:\d{2}$/.test(patch.time)) push("time", clockTime(current.time), clockTime(snapHalfHour(patch.time)));
-  if (patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date)) {
-    const time = patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? snapHalfHour(patch.time) : current.time;
-    push("date", visitLabel(current.date, current.time), visitLabel(patch.date, time));
+  if (patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) && patch.date !== current.date) {
+    push("date", visitLabel(current.date, current.time), visitLabel(patch.date, current.time));
+  }
+  if (typeof patch.minutes === "number") {
+    const nextMinutes = appointmentMinutes(patch.minutes, current.minutes);
+    if (nextMinutes !== current.minutes) {
+      rows.push(settingsChange(who, "Length", "", `Length: ${current.minutes} → ${nextMinutes} min for ${customerName}`));
+    }
+  }
+  if (patch.lane && patch.lane !== current.lane) {
+    const laneName = (lane: string) => laneLabel(lane, state.settings.scheduling.transportOptions);
+    push("lane", laneName(current.lane), laneName(patch.lane));
+  }
+  if (Array.isArray(patch.laborOpIds)) {
+    const laborName = (ids: string[]) => ids.map((id) => state.laborOps.find((op) => op.id === id)?.opcode || id).filter(Boolean).join(", ") || "none";
+    push("labor", laborName(current.laborOpIds ?? []), laborName(patch.laborOpIds));
+  }
+  if (patch.vehicleId && patch.vehicleId !== current.vehicleId) {
+    const title = (id: string) => {
+      const vehicle = state.vehicles.find((row) => row.id === id);
+      return vehicle ? `${vehicle.year} ${vehicle.model}` : "none";
+    };
+    push("vehicle", title(current.vehicleId), title(patch.vehicleId));
   }
   if (patch.techId) push("technician", nameOf(current.techId, state.techs), nameOf(patch.techId, state.techs));
   if (patch.advisorId) push("advisor", nameOf(current.advisorId, state.advisors), nameOf(patch.advisorId, state.advisors));
@@ -291,7 +312,7 @@ function appointmentEditRows(
   if (typeof patch.vin === "string") push("VIN", current.vin || "none", normalizeVin(patch.vin) || "none");
   if (Array.isArray(patch.lines)) {
     const before = current.lines.map((line) => line.concern).filter(Boolean).join("; ") || "none";
-    const after = patch.lines.map((line) => line.concern.trim()).filter(Boolean).join("; ") || "none";
+    const after = patch.lines.map((line) => cleanFreeText(line.concern).trim()).filter(Boolean).join("; ") || "none";
     push("concern", before, after);
   } else if (typeof patch.concern === "string") {
     push("concern", current.concern || "none", patch.concern.trim() || "none");
@@ -1403,7 +1424,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorName: saved.advisors.find((advisor) => advisor.id === (row?.advisorId ?? fallback.advisorId))?.name ?? "No advisor",
             reason,
           };
-          const sentence = `Approved an override for ${record.customerName} at ${visitLabel(record.date, record.time)} with ${record.techName}. ${reason}`;
+          const sentence = `Approved an override for ${record.customerName} at ${visitLabel(record.date, record.time)} with ${record.techName}. ${overrideReasonLabel(reason)}`;
           set((current) => ({
             overrides: [...(current.overrides ?? []), record],
             settingsLog: [...(current.settingsLog ?? []), settingsChange(actor, "Capacity override", "", sentence)],
@@ -3138,14 +3159,18 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
         const techName = (tech: string) => state.techs.find((row) => row.id === tech)?.name ?? "No technician";
         const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
-        const sentence = `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techName(current.techId)} to ${visitLabel(date, time)} with ${techName(techId)}`;
-        const unchanged = current.date === date && current.time === time && current.techId === techId && current.minutes === minutes;
+        const moved = current.date !== date || current.time !== time || current.techId !== techId;
+        const resized = current.minutes !== minutes;
+        const sentence = moved
+          ? `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techName(current.techId)} to ${visitLabel(date, time)} with ${techName(techId)}`
+          : `Length: ${current.minutes} → ${minutes} min`;
+        const field = moved ? "Move appointment" : "Length";
         set((next) => ({
           appointments: next.appointments.map((row) => {
             if (row.id !== id || row.status === "cancelled") return row;
             return { ...row, minutes, time, date, techId };
           }),
-          settingsLog: unchanged ? next.settingsLog : [...(next.settingsLog ?? []), settingsChange(who, "Move appointment", "", sentence)],
+          settingsLog: !moved && !resized ? next.settingsLog : [...(next.settingsLog ?? []), settingsChange(who, field, "", sentence)],
         }));
         return { ok: true, error: null };
       },
@@ -3167,6 +3192,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         if (current.status === "no_show" && patch.customerId && patch.customerId !== current.customerId) {
           return { ok: false, error: "A no-show stays with the customer who missed the visit." };
+        }
+        if (patch.vehicleId && patch.vehicleId !== current.vehicleId) {
+          const vehicle = state.vehicles.find((row) => row.id === patch.vehicleId);
+          const customerId = patch.customerId || current.customerId;
+          if (!vehicle || vehicle.customerId !== customerId) {
+            return { ok: false, error: "That vehicle belongs to another customer." };
+          }
         }
         if (patch.vin != null && typeof patch.vin !== "string") return { ok: false, error: "Enter a 17-character VIN." };
         const nextVin = patch.vin === undefined ? current.vin : patch.vin;
@@ -3195,7 +3227,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 ? patch.lines.map((line, index) => ({
                     id: line.id || uid("al"),
                     code: lineLetter(index),
-                    concern: line.concern.trim(),
+                    concern: cleanFreeText(line.concern).trim(),
                   })).filter((line) => line.concern)
                 : row.lines;
               const kept = lines.length > 0 ? lines.map((line, index) => ({ ...line, code: lineLetter(index) })) : row.lines;
@@ -3227,7 +3259,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           const raw = input.lines?.length ? input.lines : [{ id: "", code: "A", concern: input.concern }];
           const lines = raw
-            .map((line, index) => ({ id: line.id || uid("al"), code: lineLetter(index), concern: line.concern.trim() }))
+            .map((line, index) => ({ id: line.id || uid("al"), code: lineLetter(index), concern: cleanFreeText(line.concern).trim() }))
             .filter((line) => line.concern)
             .map((line, index) => ({ ...line, code: lineLetter(index) }));
           const kept = lines.length > 0 ? lines : [{ id: uid("al"), code: "A", concern: input.concern.trim() }];

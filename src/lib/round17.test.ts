@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, it } from "node:test";
 import { changeLogLine, requestLogLine } from "./cancel.ts";
 import { advisorDayCapacity } from "./capacity.ts";
-import { pinClock, resetClock } from "./clock.ts";
+import { now, pinClock, resetClock } from "./clock.ts";
 import { closedHeaderCopy, formatVisit, localStamp } from "./format.ts";
 import { lastVisitMileage } from "./mileage.ts";
 import { advisorForWebRequest, submitOnlineRequest } from "./online-request.ts";
@@ -81,7 +81,7 @@ describe("round 17 clock and change log", () => {
     const stamp = localStamp();
     assert.match(stamp, /^2026-10-31T\d{2}:\d{2}:\d{2}$/);
     resetClock();
-    const live = new Date();
+    const live = now();
     const pad = (n: number) => String(n).padStart(2, "0");
     assert.equal(localStamp().slice(0, 10), `${live.getFullYear()}-${pad(live.getMonth() + 1)}-${pad(live.getDate())}`);
   });
@@ -318,14 +318,14 @@ describe("round 17 requests, roles, and ownership", () => {
     }
     const foreign = send({ phone: "+52 509 555 0300", email: "other@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 221 }) }, "rq-foreign", pending);
     assert.equal(foreign.ok, false);
-    if (!foreign.ok) assert.equal(foreign.limit, 3);
+    if (!foreign.ok) assert.equal(foreign.reason, "contact");
     const extension = send({ phone: "509-555-0300 ext 12", email: "ext@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 222 }) }, "rq-ext", pending);
     assert.equal(extension.ok, false);
     if (!extension.ok) assert.equal(extension.limit, 3);
     const hashed = send({ phone: "509-555-0300 #12", email: "hash@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 223 }) }, "rq-hash", pending);
     assert.equal(hashed.ok, false);
     if (!hashed.ok) assert.equal(hashed.scope, "contact");
-    const eleven = send({ phone: "50955503001", email: "eleven@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 224 }) }, "rq-11", pending);
+    const eleven = send({ phone: "95095550300", email: "nine@example.com", vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 224 }) }, "rq-11", pending);
     assert.equal(eleven.ok, false);
     if (!eleven.ok) assert.equal(eleven.scope, "contact");
   });

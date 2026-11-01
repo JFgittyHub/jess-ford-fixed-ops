@@ -13,6 +13,9 @@ export function OnlineRequestList({
   onDecline,
   canAct = true,
   refusal = "Only an advisor or service manager can approve or decline a request.",
+  rowWarning = null,
+  onCancelWarning,
+  onConfirmWarning,
 }: {
   rows: OnlineRequest[];
   customers?: { id: string; name: string }[];
@@ -22,6 +25,9 @@ export function OnlineRequestList({
   /** Techs and a blank working-as pick do not get Approve or Decline. */
   canAct?: boolean;
   refusal?: string;
+  rowWarning?: { id: string; text: string } | null;
+  onCancelWarning?: () => void;
+  onConfirmWarning?: () => void;
 }) {
   const listed = [...rows].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
   if (listed.length === 0) {
@@ -47,7 +53,18 @@ export function OnlineRequestList({
         <tbody>
           {listed.map((row) => (
             <tr key={row.id}>
-              <td className="whitespace-nowrap">{formatVisit(row.date, row.time)}</td>
+              <td className="whitespace-nowrap">
+                <p>{formatVisit(row.date, row.time)}</p>
+                {rowWarning?.id === row.id ? (
+                  <div className="mt-2 grid max-w-xs gap-2">
+                    <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-2 py-1 text-sm text-[#8a5a00]">{rowWarning.text}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" onClick={onCancelWarning}>Cancel</Button>
+                      <Button tone="primary" type="button" onClick={onConfirmWarning}>Override</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </td>
               <td>{row.customerName}</td>
               <td>{vehicleLine(row)}</td>
               <td>{row.serviceName} · {row.laborHours} hr</td>

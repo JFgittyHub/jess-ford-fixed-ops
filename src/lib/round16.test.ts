@@ -80,7 +80,7 @@ describe("round 16", () => {
     assert.equal(advisorDayCapacity(createShopStore({ demoMode: true, storage: memoryStorage() }).getState().settings.scheduling, "2026-11-02") > 0, true);
   });
 
-  it("folds an extension phone and refuses a missing date", () => {
+  it("refuses a missing date and a request once that advisor's day is full", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     const state = shop.getState();
     const base = {
