@@ -88,7 +88,12 @@ describe("round 19 page hits", () => {
           summaryCorners: (() => {
             const box = document.querySelector("[data-appt-id='upper'] [aria-label='Appointment summary']")?.getBoundingClientRect();
             if (!box) return false;
-            const points = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.left + 1, box.bottom - 1], [box.right - 1, box.bottom - 1]];
+            const points = [
+              [box.left + box.width / 2, box.top + box.height / 2],
+              [box.left + 4, box.top + 4],
+              [box.right - 4, box.top + 4],
+              [box.right - 4, box.bottom - 4],
+            ];
             return points.every(([x, y]) => document.elementFromPoint(x, y)?.closest("[aria-label='Appointment summary']"));
           })(),
           gripHit: (() => {
@@ -115,11 +120,151 @@ describe("round 19 page hits", () => {
       assert.ok(hit.concern && hit.concern.height >= 8);
       assert.equal(hit.concernText, "upper");
       assert.ok(hit.concern && hit.grip && hit.concern.bottom <= hit.grip.top + 1);
-      assert.ok(hit.summary && hit.summary.width >= 44 && hit.summary.height >= 44);
+      assert.ok(hit.summary && hit.summary.width >= 33 && hit.summary.width <= 35);
+      assert.ok(hit.summary.height <= hit.upper.height + 0.5);
+      assert.ok(Math.abs(hit.summary.right - hit.upper.right) <= 1);
+      assert.ok(Math.abs(hit.summary.bottom - hit.upper.bottom) <= 1);
+      assert.ok(hit.summary.top >= hit.upper.top - 1 && hit.summary.bottom <= hit.upper.bottom + 1);
+      assert.ok(hit.summary.left >= hit.upper.left - 1 && hit.summary.right <= hit.upper.right + 1);
       assert.equal(hit.summaryCorners, true);
       assert.equal(hit.gripHit, "resize");
       assert.ok(hit.soloColumn);
       assert.ok(hit.solo.bottom + 16 <= hit.soloColumn.bottom);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it("gives a longer appointment more concern lines than a 30-minute card", async () => {
+    const text = "Brake pulsation at highway speed. The pedal shakes and the noise gets worse after the first stop.";
+    const long = (id: string, minutes: number): Appointment => ({
+      ...card(id, "09:00", "marcus", minutes),
+      concern: text,
+      lines: [{ id: `${id}-a`, code: "A", concern: text }],
+    });
+    const html = renderToStaticMarkup(createElement(AppointmentCalendar, {
+      appointments: [long("short", 30), long("tall", 120)],
+      day: "2026-11-02",
+      techs: [{ id: "marcus", number: "1", name: "Marcus", board: "main" }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: () => undefined,
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      label: () => "Pat",
+      summary: () => ({
+        name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "9:00", lane: "Drop",
+        concern: text, vin: "", ops: "", status: "Scheduled", canWrite: false,
+      }),
+      hoursFor: () => 1,
+    }));
+    const css = await appCss(html);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
+      const measured = await page.evaluate(() => {
+        const box = (id: string) => document.querySelector(`[data-appt-id='${id}']`)?.getBoundingClientRect();
+        const concern = (id: string) => document.querySelector(`[data-appt-id='${id}'] [data-concern]`) as HTMLElement | null;
+        const grip = (id: string) => document.querySelector(`[data-appt-id='${id}'] [data-drag='resize']`)?.getBoundingClientRect();
+        const summary = (id: string) => document.querySelector(`[data-appt-id='${id}'] [aria-label='Appointment summary']`)?.getBoundingClientRect();
+        const read = (id: string) => {
+          const node = concern(id);
+          return {
+            card: box(id),
+            concern: node?.getBoundingClientRect(),
+            lines: Number(node?.getAttribute("data-concern-lines") ?? 0),
+            text: node?.textContent ?? "",
+            grip: grip(id),
+            summary: summary(id),
+          };
+        };
+        return { short: read("short"), tall: read("tall") };
+      });
+      assert.ok(measured.short.concern && measured.tall.concern && measured.short.grip && measured.tall.grip);
+      assert.ok(measured.tall.lines > measured.short.lines);
+      assert.ok(measured.tall.concern.height > measured.short.concern.height + 8);
+      assert.equal(measured.short.text, text);
+      assert.equal(measured.tall.text, text);
+      assert.ok(measured.short.concern.bottom <= measured.short.grip.top + 1);
+      assert.ok(measured.tall.concern.bottom <= measured.tall.grip.top + 1);
+      assert.ok(measured.short.summary && measured.short.concern.right <= measured.short.summary.left + 1);
+      assert.ok(measured.tall.summary && measured.tall.concern.right <= measured.tall.summary.left + 1);
+      assert.ok(measured.short.card && measured.tall.card && measured.short.summary && measured.tall.summary);
+      assert.ok(Math.abs(measured.short.summary.right - measured.short.card.right) <= 1);
+      assert.ok(Math.abs(measured.short.summary.bottom - measured.short.card.bottom) <= 1);
+      assert.ok(Math.abs(measured.tall.summary.right - measured.tall.card.right) <= 1);
+      assert.ok(Math.abs(measured.tall.summary.bottom - measured.tall.card.bottom) <= 1);
+      assert.ok(measured.tall.summary.top > measured.tall.card.top + 40);
+      assert.ok(measured.short.summary.width >= 33 && measured.short.summary.width <= 35);
+      assert.ok(measured.tall.summary.width >= 33 && measured.tall.summary.width <= 35);
+      assert.ok(measured.tall.summary.height >= 33 && measured.tall.summary.height <= 35);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it("pins the summary mark to the lower right and keeps it inside its card", async () => {
+    const html = renderToStaticMarkup(createElement(AppointmentCalendar, {
+      appointments: [card("upper", "09:00", "marcus", 30), card("lower", "09:30", "marcus", 90)],
+      day: "2026-11-02",
+      techs: [{ id: "marcus", number: "1", name: "Marcus", board: "main" }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: () => undefined,
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      label: (row) => row.id,
+      summary: () => ({
+        name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "9:00", lane: "Drop",
+        concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false,
+      }),
+      hoursFor: () => 1,
+    }));
+    const css = await appCss(html);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
+      const hit = await page.evaluate(() => {
+        const read = (id: string) => {
+          const cardBox = document.querySelector(`[data-appt-id='${id}']`)?.getBoundingClientRect();
+          const mark = document.querySelector(`[data-appt-id='${id}'] [data-summary-mark]`)?.getBoundingClientRect();
+          const concern = document.querySelector(`[data-appt-id='${id}'] [data-concern]`)?.getBoundingClientRect();
+          const grip = document.querySelector(`[data-appt-id='${id}'] [data-drag='resize']`)?.getBoundingClientRect();
+          const at = (x: number, y: number) => document.elementFromPoint(x, y);
+          const owner = (node: Element | null) => node?.closest("[data-summary-mark]")?.closest("[data-appt]")?.getAttribute("data-appt-id") ?? "";
+          const outside = mark && cardBox ? at(mark.left + mark.width / 2, cardBox.bottom + 2) : null;
+          const above = mark && cardBox ? at(mark.left + mark.width / 2, cardBox.top - 2) : null;
+          return {
+            card: cardBox,
+            mark,
+            concern,
+            grip,
+            outsideOwner: owner(outside),
+            aboveOwner: owner(above),
+          };
+        };
+        return { upper: read("upper"), lower: read("lower") };
+      });
+      for (const [id, row] of [["upper", hit.upper], ["lower", hit.lower]] as const) {
+        assert.ok(row.card && row.mark && row.concern && row.grip);
+        assert.ok(Math.abs(row.mark.right - row.card.right) <= 1);
+        assert.ok(Math.abs(row.mark.bottom - row.card.bottom) <= 1);
+        assert.ok(row.mark.top >= row.card.top - 1 && row.mark.left >= row.card.left - 1);
+        assert.ok(row.mark.width >= 33 && row.mark.width <= 35);
+        assert.ok(row.mark.height <= row.card.height + 0.5);
+        assert.ok(row.mark.height >= 24);
+        assert.ok(row.concern.right <= row.mark.left + 1);
+        assert.ok(row.concern.bottom <= row.grip.top + 1);
+        assert.ok(row.grip.right <= row.mark.left + 1);
+        assert.notEqual(row.aboveOwner, id);
+        assert.notEqual(row.outsideOwner, id);
+      }
+      assert.ok(hit.lower.mark && hit.upper.card && hit.lower.mark.top >= hit.upper.card.bottom - 1);
+      assert.ok(hit.upper.mark && hit.lower.card && hit.upper.mark.bottom <= hit.lower.card.top + 1);
     } finally {
       await browser.close();
     }

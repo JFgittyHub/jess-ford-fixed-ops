@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { bookableDay } from "./bookable-day.ts";
+import { todayIso } from "./clock.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -58,7 +59,7 @@ describe("appointment actions", () => {
 
   it("keeps a VIN edit on the appointment and leaves the vehicle record alone", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const row = shop.getState().appointments.find((item) => item.id === "a6");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     const vehicle = shop.getState().vehicles.find((item) => item.id === row.vehicleId);
     assert.ok(vehicle);

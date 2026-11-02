@@ -130,7 +130,7 @@ describe("round 21 bookings and dates", () => {
   it("refuses an unknown status, an unknown visit, and a time that is not on the clock", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments[0];
+    const row = shop.getState().appointments.find((item) => item.date >= todayIso()) ?? shop.getState().appointments[0];
     assert.match(shop.getState().setAppointmentStatus("missing", "arrived").error ?? "", /not on this store/);
     assert.match(shop.getState().setAppointmentStatus(row.id, "bogus" as "arrived").error ?? "", /status/);
     assert.match(shop.getState().moveAppointment(row.id, { time: "25:99" }).error ?? "", /not on the clock/);
@@ -224,7 +224,7 @@ describe("round 21 text and phones", () => {
   it("refuses the addAppointment cases that used to slip through", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     const other = shop.getState().customers.find((customer) => customer.id !== row?.customerId);
     const otherVehicle = shop.getState().vehicles.find((vehicle) => vehicle.customerId === other?.id);
     const op = shop.getState().laborOps[0];

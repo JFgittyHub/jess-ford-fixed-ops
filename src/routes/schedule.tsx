@@ -33,14 +33,16 @@ export function VisitLengthPicker({
   lengths,
   onChange,
   inputRef,
+  disabled,
 }: {
   minutes: number;
   lengths: number[];
   onChange: (minutes: number) => void;
   inputRef?: Ref<HTMLSelectElement>;
+  disabled?: boolean;
 }) {
   return (
-    <select ref={inputRef} className="field min-h-11 w-full max-w-xs" aria-label="Visit length" value={minutes} onChange={(event) => onChange(Number(event.target.value))}>
+    <select ref={inputRef} disabled={disabled} className="field min-h-11 w-full max-w-xs" aria-label="Visit length" value={minutes} onChange={(event) => onChange(Number(event.target.value))}>
       {lengths.map((item) => <option key={item} value={item}>{lengthLabel(item)}</option>)}
     </select>
   );
@@ -450,6 +452,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           transports={transports}
           submitLabel="Book it"
           capacityFor={(draft) => capacityFor(draft)}
+          onVisitChange={(next) => { setDate(next.date); setTime(next.time); }}
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value, confirmTransfer, transferReason) => {
             const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason);
@@ -605,7 +608,7 @@ function Selected({
         {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
         {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
         <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
-        <Button small onClick={() => { setLengthOpen(true); queueMicrotask(() => lengthPicker.current?.focus()); }}>Change length</Button>
+        {row.date < today() ? null : <Button small onClick={() => { setLengthOpen(true); queueMicrotask(() => lengthPicker.current?.focus()); }}>Change length</Button>}
         {lengthOpen ? (
           <label className="grid basis-full gap-1 text-sm">
             Visit length
@@ -619,7 +622,7 @@ function Selected({
   );
 }
 
-function AppointmentFields({
+export function AppointmentFields({
   initial,
   customers,
   vehicles,
@@ -632,6 +635,7 @@ function AppointmentFields({
   capacityFor,
   onSubmit,
   onDirty,
+  onVisitChange,
 }: {
   initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">;
   customers: { id: string; name: string; noShows?: number }[];
@@ -645,6 +649,7 @@ function AppointmentFields({
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onDirty?: () => void;
+  onVisitChange?: (next: { date: string; time: string }) => void;
 }) {
   const [date, setDate] = useState(initial.date);
   const [time, setTime] = useState(snapHalfHour(initial.time));
@@ -666,6 +671,7 @@ function AppointmentFields({
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
+  const pastVisit = initial.date < today();
   const capacity = capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
   const alertText = transferWarning ? null : (formError || (owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
@@ -698,23 +704,23 @@ function AppointmentFields({
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Day"><input className="field" type="date" value={date} onChange={(event) => setDate(event.target.value)} /></Field>
+        <Field label="Day"><input className="field" type="date" disabled={pastVisit} value={date} onChange={(event) => { setDate(event.target.value); onVisitChange?.({ date: event.target.value, time }); }} /></Field>
         <Field label="Starts">
-          <select className="field" value={STARTS.includes(time) ? time : snapHalfHour(time)} onChange={(event) => setTime(event.target.value)}>
+          <select className="field" disabled={pastVisit} value={STARTS.includes(time) ? time : snapHalfHour(time)} onChange={(event) => { setTime(event.target.value); onVisitChange?.({ date, time: event.target.value }); }}>
             {STARTS.map((item) => <option key={item} value={item}>{clockTime(item)}</option>)}
           </select>
         </Field>
         <Field label="Length">
-          <VisitLengthPicker minutes={minutes} lengths={lengths} onChange={setMinutes} />
+          <VisitLengthPicker minutes={minutes} lengths={lengths} disabled={pastVisit} onChange={setMinutes} />
         </Field>
         <Field label="Lane">
-          <select className="field" value={lane} onChange={(event) => setLane(event.target.value)}>
+          <select className="field" disabled={pastVisit} value={lane} onChange={(event) => setLane(event.target.value)}>
             {transports.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
           </select>
         </Field>
       </div>
       <Field label="Customer">
-        <select className="field" value={customerId} onChange={(event) => {
+        <select className="field" disabled={pastVisit} value={customerId} onChange={(event) => {
           const next = event.target.value;
           setCustomerId(next);
           const first = vehicles.find((vehicle) => vehicle.customerId === next);
@@ -726,7 +732,7 @@ function AppointmentFields({
         </select>
       </Field>
       <Field label="Vehicle">
-        <select className="field" value={resolvedVehicle} onChange={(event) => {
+        <select className="field" disabled={pastVisit} value={resolvedVehicle} onChange={(event) => {
           setVehicleId(event.target.value);
           setVin(vehicles.find((vehicle) => vehicle.id === event.target.value)?.vin ?? "");
         }}>
@@ -734,7 +740,7 @@ function AppointmentFields({
         </select>
       </Field>
       <Field label="VIN">
-        <input className="field font-mono uppercase" value={vin} spellCheck={false} onChange={(event) => { setVin(normalizeVin(event.target.value).slice(0, 17)); setTransferWarning(""); }} />
+        <input className="field font-mono uppercase" disabled={pastVisit} value={vin} spellCheck={false} onChange={(event) => { setVin(normalizeVin(event.target.value).slice(0, 17)); setTransferWarning(""); }} />
       </Field>
       {transferWarning ? (
         <div className="grid gap-2">
@@ -752,6 +758,7 @@ function AppointmentFields({
       <Field label="Labor op">
         <select
           className="field"
+          disabled={pastVisit}
           value=""
           onChange={(event) => {
             const id = event.target.value;
@@ -777,12 +784,12 @@ function AppointmentFields({
         </ul>
       ) : null}
       <Field label="Technician">
-        <select className="field" value={techId} onChange={(event) => setTechId(event.target.value)}>
+        <select className="field" disabled={pastVisit} value={techId} onChange={(event) => setTechId(event.target.value)}>
           {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
         </select>
       </Field>
       <Field label="Advisor">
-        <select className="field" value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
+        <select className="field" disabled={pastVisit} value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
           {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
         </select>
       </Field>
@@ -796,12 +803,12 @@ function AppointmentFields({
               ) : null}
             </div>
             <Field label="Concern">
-              <input className="field" value={line.concern} onChange={(event) => setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, concern: event.target.value } : row))} />
+              <input className="field" disabled={pastVisit} value={line.concern} onChange={(event) => setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, concern: event.target.value } : row))} />
             </Field>
           </div>
         ))}
         <div>
-          <Button small type="button" onClick={() => setLines((rows) => [...rows, { id: `new-${rows.length}-${lineLetter(rows.length)}`, code: lineLetter(rows.length), concern: "" }])}>Add line</Button>
+          {pastVisit ? null : <Button small type="button" onClick={() => setLines((rows) => [...rows, { id: `new-${rows.length}-${lineLetter(rows.length)}`, code: lineLetter(rows.length), concern: "" }])}>Add line</Button>}
         </div>
       </div>
       {showStatus ? (

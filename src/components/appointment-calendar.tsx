@@ -8,6 +8,14 @@ const END = 18 * 60;
 const SNAP = 30;
 const SLOT = 32;
 const HANDLE = 10;
+/** Prior help box was 44px. 34px is about 23% smaller and still a usable touch target. */
+const SUMMARY_MARK = 34;
+
+function summaryMarkBox(block: number) {
+  const width = SUMMARY_MARK;
+  const height = Math.min(SUMMARY_MARK, block);
+  return { width, height, top: Math.max(0, block - height), right: 0, bottom: 0 };
+}
 
 export { lengthLabel };
 
@@ -351,6 +359,13 @@ export function AppointmentCalendar({
                 const top = ((start - START) / SNAP) * SLOT;
                 const block = Math.max(SLOT - 2, (row.minutes / SNAP) * SLOT - 2);
                 const selected = row.id === selectedId;
+                const titleBand = 11;
+                const mark = summaryMarkBox(block);
+                const gutter = mark.width + 2;
+                const concernHeight = Math.max(8, block - HANDLE - titleBand - 1);
+                const concernLines = Math.max(1, Math.floor(concernHeight / 14));
+                const titleRight = mark.top < titleBand ? gutter : 6;
+                const concernRight = titleBand + concernHeight > mark.top ? gutter : 6;
                 return (
                   <article
                     key={row.id}
@@ -358,36 +373,52 @@ export function AppointmentCalendar({
                     data-appt-id={row.id}
                     data-drag="move"
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
-                    style={{ position: "absolute", overflow: "visible", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
+                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
-                      <p className={`pointer-events-none absolute text-[11px] font-semibold ${row.minutes >= 60 ? "" : "truncate"}`} style={{ left: 6, right: 48, top: 0, height: row.minutes >= 60 ? 28 : 11, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden", whiteSpace: row.minutes >= 60 ? "normal" : "nowrap" }}>{clockTime(row.time)} {label(row)}</p>
-                      <p className="pointer-events-none absolute truncate text-[11px] leading-[10px]" data-concern style={{ left: 6, right: 48, top: row.minutes >= 60 ? 28 : 11, height: 8, margin: 0, overflow: "hidden" }}>{row.concern}</p>
+                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
+                      <p
+                        className="pointer-events-none absolute text-[11px]"
+                        data-concern
+                        data-concern-lines={concernLines}
+                        style={{
+                          left: 6,
+                          right: concernRight,
+                          top: titleBand,
+                          height: concernHeight,
+                          margin: 0,
+                          lineHeight: "14px",
+                          overflow: "hidden",
+                          display: "-webkit-box",
+                          WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: concernLines,
+                        }}
+                      >{row.concern}</p>
                       <button
                         type="button"
                         aria-label="Change length"
                         data-drag="resize"
                         className="absolute cursor-ns-resize border-0 p-0"
-                        style={{ position: "absolute", left: 4, right: 48, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
+                        style={{ position: "absolute", left: 4, right: gutter, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
                         onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
                       >
                         <span className={`pointer-events-none mx-auto mt-1 block h-1 w-10 rounded-full ${selected ? "bg-primary" : "bg-[#5d87b0]"} group-hover:h-1.5`} />
                       </button>
+                      <button
+                        type="button"
+                        aria-label="Appointment summary"
+                        data-drag="move"
+                        data-summary-mark
+                        className="absolute z-20 flex items-center justify-center border border-line bg-surface font-semibold leading-none text-muted"
+                        style={{ position: "absolute", right: 0, bottom: 0, width: mark.width, height: mark.height, margin: 0, zIndex: 2 }}
+                        onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
+                        onMouseLeave={scheduleHide}
+                        onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move"); }}
+                      >
+                        <span className="pointer-events-none text-[8px] leading-none">?</span>
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      aria-label="Appointment summary"
-                      data-drag="move"
-                      className="absolute z-20 flex items-center justify-center border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
-                      style={{ top: -14, right: 0, width: 44, height: 44, margin: 0, zIndex: 30 }}
-                      onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
-                      onMouseLeave={scheduleHide}
-                      onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move"); }}
-                      onClick={() => onSelect(row.id)}
-                    >
-                      <span className="pointer-events-none text-[10px] leading-none">?</span>
-                    </button>
                   </article>
                 );
               })}

@@ -92,7 +92,7 @@ export function ComingLater() {
   return (
     <section className="card" aria-label={SECTION_LOCK_HINT}>
       <h1 className="font-display text-4xl leading-none">{SECTION_LOCK_NOTICE}</h1>
-      <p className="mt-3 max-w-xl text-muted">We'll focus on this part of the build later. Appointments, repair orders, and repair estimates stay open.</p>
+      <p className="mt-3 max-w-xl text-muted">We'll focus on this part of the build later. Pulse, appointments, overrides, and repair orders stay open.</p>
     </section>
   );
 }

@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync as makeTempDir, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+
+const temps = [];
+function mkdtempSync(prefix) {
+  const root = makeTempDir(prefix);
+  temps.push(root);
+  return root;
+}
+test.after(() => {
+  for (const root of temps) rmSync(root, { recursive: true, force: true });
+});
 import {
   MAX_CARD_BYTES,
   OG_PENDING_MAX_AGE_MS,

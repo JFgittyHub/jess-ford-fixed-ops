@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { displayRecordedWhen } from "./cancel.ts";
 import { bookableDay } from "./bookable-day.ts";
+import { todayIso } from "./clock.ts";
 import { closedHeaderCopy, formatVisit } from "./format.ts";
 import { migrateSavedShop, createShopStore } from "./store.ts";
 import { submitOnlineRequest } from "./online-request.ts";
@@ -108,7 +109,7 @@ describe("round 15", () => {
   it("logs a move, a no-show, and a new appointment for an advisor", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("marcus");
-    const row = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     assert.equal(shop.getState().moveAppointment(row.id, { time: "12:30" }).ok, false);
     shop.getState().setWorkingAs("megan");

@@ -6,7 +6,7 @@ import { NoticeLog } from "../components/notice-log.tsx";
 import { textingAdapter } from "./adapters/texting.ts";
 import { laborHoursFor } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
-import { requestHolds, visitSlots } from "./online-request.ts";
+import { phoneKey, requestHolds, visitSlots } from "./online-request.ts";
 import { onlineSlots } from "./capacity.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore, type ShopState } from "./store.ts";
@@ -102,7 +102,7 @@ describe("approval, decline, and simulated notices", () => {
     assert.equal(request.verified, false);
     assert.equal(shop.getState().vehicles.filter((row) => row.customerId === denise.id).length, beforeVehicles + 1);
     assert.equal(shop.getState().notices[0].method, "call");
-    assert.equal(shop.getState().notices[0].recipient, denise.phone);
+    assert.equal(shop.getState().notices[0].recipient, phoneKey(denise.phone));
   });
 
   it("frees the slot when an advisor declines", () => {

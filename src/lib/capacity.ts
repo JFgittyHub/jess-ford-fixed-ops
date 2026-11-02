@@ -338,6 +338,27 @@ function shopNow(date: Date): { date: string; minutes: number } {
   return { date: iso, minutes: hour * 60 + Number(map.minute) };
 }
 
+/** A bookable start is a half-hour on that day's open grid. Anything else is refused. */
+export function visitTimeError(scheduling: SchedulingSettings, iso: string, time: string): string | null {
+  if (!time || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !/^\d{2}:(00|30)$/.test(time)) {
+    return "That time is not on the clock.";
+  }
+  const day = shopDay(scheduling, iso);
+  if (day.closed) return "The shop is closed that day.";
+  const [hour, minute] = time.split(":").map(Number);
+  const mins = hour * 60 + minute;
+  if (mins < day.openMinutes || mins >= day.closeMinutes) return "That time is outside shop hours.";
+  return null;
+}
+
+/** Lengths are 30-minute steps. A bad length is refused, not replaced with 60. */
+export function visitLengthError(minutes: unknown): string | null {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes > 1440 || minutes % 30 !== 0) {
+    return "That length is not on this desk.";
+  }
+  return null;
+}
+
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }

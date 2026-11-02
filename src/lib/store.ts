@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, type CapacityResult } from "./capacity";
+import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitTimeError, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
@@ -274,9 +274,33 @@ export function nextOpenShopDay(from: string, scheduling: { hours: { weekday: nu
   return cursor;
 }
 
-function clockTimeError(time: string) {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return "That time is not on the clock.";
-  return "";
+const PAST_ONLY = "That visit is in the past. You can change the status only.";
+
+function pastFieldChangeError(current: Appointment, patch: Partial<Appointment>): string | null {
+  if (current.date >= today()) return null;
+  if (patch.time !== undefined && patch.time !== current.time) return PAST_ONLY;
+  if (patch.date !== undefined && patch.date !== current.date) return PAST_ONLY;
+  if (patch.minutes !== undefined && patch.minutes !== current.minutes) return PAST_ONLY;
+  if (patch.customerId !== undefined && patch.customerId !== current.customerId) return PAST_ONLY;
+  if (patch.vehicleId !== undefined && patch.vehicleId !== current.vehicleId) return PAST_ONLY;
+  if (patch.advisorId !== undefined && patch.advisorId !== current.advisorId) return PAST_ONLY;
+  if (patch.techId !== undefined && patch.techId !== current.techId) return PAST_ONLY;
+  if (patch.lane !== undefined && patch.lane !== current.lane) return PAST_ONLY;
+  if (typeof patch.vin === "string" && normalizeVin(patch.vin) !== normalizeVin(current.vin)) return PAST_ONLY;
+  if (typeof patch.concern === "string") {
+    const next = cleanFreeText(patch.concern).trim();
+    if (next && next !== current.concern && next !== current.lines[0]?.concern && next !== concernFromLines(current.lines)) return PAST_ONLY;
+  }
+  if (Array.isArray(patch.lines)) {
+    const next = patch.lines.map((line) => cleanFreeText(line.concern).trim()).filter(Boolean);
+    const prev = current.lines.map((line) => line.concern);
+    if (next.length !== prev.length || next.some((line, index) => line !== prev[index])) return PAST_ONLY;
+  }
+  if (Array.isArray(patch.laborOpIds)) {
+    const prev = current.laborOpIds ?? [];
+    if (patch.laborOpIds.length !== prev.length || patch.laborOpIds.some((id, index) => id !== prev[index])) return PAST_ONLY;
+  }
+  return null;
 }
 
 function storedPhone(value: string) {
@@ -3237,9 +3261,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === current.advisorId),
         );
         if (staffError) return { ok: false, error: staffError };
-        if (patch.time && clockTimeError(patch.time)) return { ok: false, error: clockTimeError(patch.time) };
-        const minutes = appointmentMinutes(patch.minutes, current.minutes);
-        const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : current.time);
+        if (current.date < today()) return { ok: false, error: PAST_ONLY };
+        if (patch.time !== undefined) {
+          const timeError = visitTimeError(state.settings.scheduling, patch.date || current.date, patch.time);
+          if (timeError) return { ok: false, error: timeError };
+        }
+        if (patch.minutes !== undefined && visitLengthError(patch.minutes)) return { ok: false, error: visitLengthError(patch.minutes) ?? "That length is not on this desk." };
+        const minutes = patch.minutes === undefined ? current.minutes : patch.minutes;
+        const time = patch.time === undefined ? current.time : patch.time;
         const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
         const techName = (tech: string) => state.techs.find((row) => row.id === tech)?.name ?? "No technician";
         const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
@@ -3283,7 +3312,17 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             return { ok: false, error: "That labor operation is not on this store." };
           }
         }
-        if (patch.time && clockTimeError(patch.time)) return { ok: false, error: clockTimeError(patch.time) };
+        const pastError = pastFieldChangeError(current, patch);
+        if (pastError) return { ok: false, error: pastError };
+        if (patch.time !== undefined) {
+          const timeError = visitTimeError(state.settings.scheduling, patch.date || current.date, patch.time);
+          if (timeError) return { ok: false, error: timeError };
+        }
+        if (patch.minutes !== undefined && visitLengthError(patch.minutes)) return { ok: false, error: visitLengthError(patch.minutes) ?? "That length is not on this desk." };
+        if (Array.isArray(patch.lines)) {
+          const concerns = patch.lines.map((line) => cleanFreeText(line.concern).trim()).filter(Boolean);
+          if (concerns.length === 0) return { ok: false, error: "Add a concern." };
+        }
         if (patch.date && patch.date !== current.date) {
           const dateError = appointmentDateError(patch.date, state.settings.scheduling);
           if (dateError) return { ok: false, error: dateError };
@@ -3332,8 +3371,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           appointments: state.appointments
             .map((row) => {
               if (row.id !== id) return row;
-              const minutes = appointmentMinutes(patch.minutes, row.minutes);
-              const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : row.time);
+              const minutes = patch.minutes === undefined || visitLengthError(patch.minutes) ? row.minutes : patch.minutes;
+              const time = patch.time && /^\d{2}:(00|30)$/.test(patch.time) ? patch.time : row.time;
               const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : row.date;
               const concernOnly = typeof patch.concern === "string" && !(Array.isArray(patch.lines) && patch.lines.length > 0)
                 ? cleanFreeText(patch.concern).trim().slice(0, 500)
@@ -3407,7 +3446,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const owned = state.vehicles.find((row) => row.id === input.vehicleId);
         if (!owned || owned.customerId !== input.customerId) return "";
         if (appointmentDateError(input.date || "", state.settings.scheduling)) return "";
-        if (input.time && clockTimeError(input.time)) return "";
+        if (visitTimeError(state.settings.scheduling, input.date || "", input.time || "")) return "";
+        if (input.minutes !== undefined && visitLengthError(input.minutes)) return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
         if (Array.isArray(input.laborOpIds)) {
           if (new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
@@ -3447,8 +3487,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             ...input,
             vehicleId,
             date: input.date || today(),
-            time: snapHalfHour(input.time || "07:00"),
-            minutes: appointmentMinutes(input.minutes, 60),
+            time: input.time,
+            minutes: input.minutes === undefined ? 60 : input.minutes,
             lines: kept,
             concern: concernFromLines(kept),
             vin,
@@ -3487,13 +3527,30 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (vehicleError) return { ok: false, appointmentId: "", overrideId: null, error: vehicleError };
         const concernError = bookingConcernError(input.lines, input.concern);
         if (concernError) return { ok: false, appointmentId: "", overrideId: null, error: concernError };
+        if (visitLengthError(input.minutes)) {
+          return { ok: false, appointmentId: "", overrideId: null, error: visitLengthError(input.minutes) ?? "That length is not on this desk." };
+        }
+        if (existing) {
+          const pastError = pastFieldChangeError(existing, input);
+          if (pastError) return { ok: false, appointmentId: existing.id, overrideId: null, error: pastError };
+          if (foreignField(input, UPDATE_FIELDS)) return { ok: false, appointmentId: existing.id, overrideId: null, error: "That field is not on an appointment." };
+          if (input.status === "cancelled") return { ok: false, appointmentId: existing.id, overrideId: null, error: "Cancel an appointment from the cancel button." };
+          if (input.status && !["scheduled", "arrived", "in_shop", "no_show"].includes(input.status)) {
+            return { ok: false, appointmentId: existing.id, overrideId: null, error: "That status is not on this desk." };
+          }
+          if (existing.status === "no_show" && input.customerId !== existing.customerId) {
+            return { ok: false, appointmentId: existing.id, overrideId: null, error: "A no-show stays with the customer who missed the visit." };
+          }
+        }
+        const pastStatusOnly = Boolean(existing && existing.date < today());
         const dateChanged = !existing || existing.date !== input.date;
-        if (!existing || dateChanged) {
+        if (!pastStatusOnly && (!existing || dateChanged)) {
           const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
           if (dateError) return { ok: false, appointmentId: "", overrideId: null, error: dateError };
         }
-        if (input.time && clockTimeError(input.time)) {
-          return { ok: false, appointmentId: "", overrideId: null, error: clockTimeError(input.time) };
+        if (!pastStatusOnly && (!existing || input.time !== existing.time)) {
+          const timeError = visitTimeError(state.settings.scheduling, input.date || existing?.date || "", input.time || "");
+          if (timeError) return { ok: false, appointmentId: "", overrideId: null, error: timeError };
         }
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) {
           return { ok: false, appointmentId: "", overrideId: null, error: "That lane is not on this store." };
@@ -3507,7 +3564,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }
         }
         const appointmentId = existingId ?? uid("ap");
-        const result = assessAppointment({
+        const result = pastStatusOnly ? null : assessAppointment({
           scheduling: state.settings.scheduling,
           advisors: state.advisors,
           techs: state.techs,
@@ -3523,10 +3580,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             ignoreId: existingId,
           },
         });
-        if (result.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
+        if (result?.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
         const vinText = normalizeVin(input.vin || "");
         let vehicleId = input.vehicleId;
-        if (vinText) {
+        if (!pastStatusOnly && vinText) {
           const vinError = vinScheduleError(vinText);
           if (vinError) return { ok: false, appointmentId: "", overrideId: null, error: vinError };
           const selected = state.vehicles.find((row) => row.id === input.vehicleId);
@@ -3557,7 +3614,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }, appointmentId);
           if (!added) return { ok: false, appointmentId: "", overrideId: null, error: "That appointment could not be saved." };
         }
-        const overrideId = logOverride(result, appointmentId, input);
+        const overrideId = result ? logOverride(result, appointmentId, input) : null;
         return { ok: true, appointmentId, overrideId, error: null };
       },
       cancelAppointment: (id, input, confirmArrived = false) => {

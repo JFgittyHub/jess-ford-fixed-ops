@@ -61,8 +61,8 @@ describe("No-show", () => {
     const vehicle = shop.getState().vehicles.find((row) => row.customerId === helen?.id);
     assert.ok(helen && vehicle);
     const before = helen.noShows;
-    shop.getState().addAppointment(draft(helen.id, vehicle.id, shop.getState().advisors[0].id, "15:00"));
-    const added = shop.getState().appointments.find((row) => row.customerId === helen.id && row.time === "15:00");
+    shop.getState().addAppointment(draft(helen.id, vehicle.id, shop.getState().advisors[0].id, "12:00"));
+    const added = shop.getState().appointments.find((row) => row.customerId === helen.id && row.time === "12:00");
     assert.ok(added);
     shop.getState().updateAppointment(added.id, { status: "no_show" });
     assert.equal(shop.getState().appointments.find((row) => row.id === added.id)?.status, "no_show");

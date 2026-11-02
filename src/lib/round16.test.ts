@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { advisorDayCapacity } from "./capacity.ts";
+import { todayIso } from "./clock.ts";
 import { createShopStore, migrateSavedShop } from "./store.ts";
 import { submitOnlineRequest } from "./online-request.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -39,7 +40,7 @@ describe("round 16", () => {
 
   it("refuses a move from a technician and logs the move", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const row = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     shop.getState().setWorkingAs("marcus");
     assert.equal(shop.getState().moveAppointment(row.id, { time: "12:00" }).ok, false);

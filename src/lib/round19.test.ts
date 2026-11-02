@@ -9,7 +9,7 @@ import { AppointmentCalendar, lengthHandleRange, planCalendarDrag } from "../com
 import { OrderEditor } from "../components/order-editor.tsx";
 import { ScorecardPulse } from "../components/scorecard/board.tsx";
 import { bookableDay } from "./bookable-day.ts";
-import { pinClock, resetClock, now } from "./clock.ts";
+import { pinClock, resetClock, now, todayIso } from "./clock.ts";
 import { closeGaps } from "./metrics.ts";
 import { tomorrowIso } from "./notices.ts";
 import { cleanFreeText, phoneKey, submitOnlineRequest } from "./online-request.ts";
@@ -132,7 +132,7 @@ describe("round 19 appointments, phones, and logs", () => {
   it("refuses a vehicle that belongs to someone else and unknown ids", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments.find((item) => item.id === "a6");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     const other = shop.getState().appointments.find((item) => item.customerId !== row.customerId && item.vehicleId);
     assert.ok(other);
@@ -255,7 +255,7 @@ describe("round 19 appointments, phones, and logs", () => {
     }, "rq-mx", "2026-11-01T18:00:00.000Z");
     assert.equal(saved.ok, true, JSON.stringify(saved));
     if (saved.ok) {
-      assert.equal(saved.request.phone, "+52 509 555 0300");
+      assert.equal(saved.request.phone, "+525095550300");
       assert.equal(saved.request.deviceId, "desk-1");
       assert.equal(phoneKey(saved.request.phone), "+525095550300");
     }

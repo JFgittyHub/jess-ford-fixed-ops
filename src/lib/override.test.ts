@@ -76,6 +76,7 @@ describe("capacity overrides", () => {
   });
 
   it("records advisor capacity, and both sides when hours and the advisor are full", () => {
+    pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("jordan");
     const state = shop.getState();
@@ -159,7 +160,7 @@ function draft(
 }
 
 function slot(index: number) {
-  const mins = 7 * 60 + index * 30;
+  const mins = 7 * 60 + 30 + index * 30;
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 }
 

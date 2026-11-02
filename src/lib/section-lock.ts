@@ -1,12 +1,13 @@
 import { devOverridesAllowed } from "./dev-overrides";
 
 /**
- * Brandon, Oct 30, 2026, 6:47 PM: everything below Repair estimates is grayed
- * out until that part of the build is in focus. Flip the flag to open them.
+ * Brandon, Nov 2, 2026, 10:48 AM: Repair estimates is grayed out with the
+ * other locked sections. Pulse, Appointments, Overrides, and Repair orders stay open.
  */
 export const SECTION_LOCK_ENABLED = true;
 
 export const LOCKED_SECTIONS = [
+  "/estimates",
   "/dispatch",
   "/tech-board",
   "/advisors",

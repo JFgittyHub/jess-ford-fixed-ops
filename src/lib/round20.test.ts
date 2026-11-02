@@ -7,7 +7,8 @@ import { createRoot } from "react-dom/client";
 import { lengthLabel } from "../components/appointment-calendar.tsx";
 import { SchedulingSettingsForm } from "../components/scheduling-settings.tsx";
 import { ScorecardPulse } from "../components/scorecard/board.tsx";
-import { pinClock, resetClock } from "./clock.ts";
+import { bookableDay } from "./bookable-day.ts";
+import { pinClock, resetClock, todayIso } from "./clock.ts";
 import { cleanFreeText, dedupeKey, matchRequestCustomer, phoneKey, submitOnlineRequest } from "./online-request.ts";
 import { createSeed } from "./seed.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -71,9 +72,10 @@ describe("round 20 appointment writes", () => {
     assert.equal(shop.getState().addAppointment({ ...row, vehicleId: "missing-vehicle" }), "");
     const past = shop.getState().moveAppointment(row.id, { date: "2026-10-30" });
     assert.match(past.error ?? "", /already past/);
-    const impossible = shop.getState().updateAppointment(row.id, { date: "2026-11-31" });
+    const future = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date > todayIso()) ?? row;
+    const impossible = shop.getState().updateAppointment(future.id, { date: "2026-11-31" });
     assert.match(impossible.error ?? "", /not a real day/);
-    const holiday = shop.getState().moveAppointment(row.id, { date: "2026-11-26" });
+    const holiday = shop.getState().moveAppointment(future.id, { date: "2026-11-26" });
     assert.match(holiday.error ?? "", /closed that day/);
     const emptyLane = shop.getState().updateAppointment(row.id, { lane: "" });
     assert.match(emptyLane.error ?? "", /lane/);
@@ -82,16 +84,16 @@ describe("round 20 appointment writes", () => {
     assert.ok(op);
     const duplicate = shop.getState().updateAppointment(row.id, { laborOpIds: [op.id, op.id] });
     assert.match(duplicate.error ?? "", /listed twice/);
-    const other = shop.getState().appointments.find((item) => item.customerId !== row.customerId);
+    const other = shop.getState().appointments.find((item) => item.customerId !== future.customerId);
     assert.ok(other);
     const otherVehicle = shop.getState().vehicles.find((item) => item.id === other.vehicleId);
     assert.ok(otherVehicle);
     shop.setState({
-      appointments: shop.getState().appointments.map((item) => item.id === row.id ? { ...item, vin: fullVin({ prefix: "1FTAB12C", year: 2018, plant: "G", serial: 4242 }) } : item),
+      appointments: shop.getState().appointments.map((item) => item.id === future.id ? { ...item, vin: fullVin({ prefix: "1FTAB12C", year: 2018, plant: "G", serial: 4242 }) } : item),
     });
-    const swapped = shop.getState().updateAppointment(row.id, { customerId: other.customerId, vehicleId: other.vehicleId });
+    const swapped = shop.getState().updateAppointment(future.id, { customerId: other.customerId, vehicleId: other.vehicleId });
     assert.equal(swapped.ok, true, swapped.error ?? "");
-    const saved = shop.getState().appointments.find((item) => item.id === row.id);
+    const saved = shop.getState().appointments.find((item) => item.id === future.id);
     assert.equal(saved?.vin, otherVehicle.vin);
     assert.notEqual(saved?.vin, fullVin({ prefix: "1FTAB12C", year: 2018, plant: "G", serial: 4242 }));
   });
@@ -99,7 +101,7 @@ describe("round 20 appointment writes", () => {
   it("leaves an unchanged concern alone and skips an empty line edit", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments.find((item) => item.lines.length === 1 && item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.lines.length === 1 && item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     const logs = () => shop.getState().settingsLog?.length ?? 0;
     const before = logs();
@@ -110,9 +112,10 @@ describe("round 20 appointment writes", () => {
     assert.equal(stored?.concern.includes("A. A."), false);
     assert.equal(logs(), before);
     const empty = shop.getState().updateAppointment(row.id, { lines: [{ id: "x", code: "A", concern: "  " }] });
-    assert.equal(empty.ok, true, empty.error ?? "");
-    assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.lines.length, 0);
-    assert.ok(logs() > before);
+    assert.equal(empty.ok, false);
+    assert.match(empty.error ?? "", /concern/);
+    assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.lines[0]?.concern, row.lines[0]?.concern);
+    assert.equal(logs(), before);
   });
 
   it("puts a visit back to scheduled in words and dates a removed closed day", () => {
@@ -127,6 +130,12 @@ describe("round 20 appointment writes", () => {
     assert.equal((back?.after ?? "").includes("Status arrived"), false);
     const missed = shop.getState().appointments.find((item) => item.status === "no_show");
     assert.ok(missed);
+    if (missed.date < todayIso()) {
+      const day = bookableDay(1);
+      shop.setState({
+        appointments: shop.getState().appointments.map((item) => item.id === missed.id ? { ...item, date: day } : item),
+      });
+    }
     const other = shop.getState().customers.find((item) => item.id !== missed.customerId);
     const otherVehicle = shop.getState().vehicles.find((item) => item.customerId === other?.id);
     assert.ok(other && otherVehicle);

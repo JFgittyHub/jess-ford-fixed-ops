@@ -47,11 +47,12 @@ function memoryStorage(): ShopStorage {
 }
 
 describe("shipped flags", () => {
-  it("pins the shipped flag constants and the 11 locked routes", () => {
+  it("pins the shipped flag constants and the 12 locked routes", () => {
     assert.equal(RO_WRITES_ENABLED, false);
     assert.equal(RO_CREATION_ENABLED, false);
     assert.equal(SECTION_LOCK_ENABLED, true);
     assert.deepEqual([...LOCKED_SECTIONS], [
+      "/estimates",
       "/dispatch",
       "/tech-board",
       "/advisors",
@@ -92,6 +93,11 @@ describe("shipped flags", () => {
         assert.equal(isLockedPath(path), true, path);
       }
       assert.equal(isLockedPath("/schedule"), false);
+      assert.equal(isLockedPath("/estimates"), true);
+      assert.equal(isLockedPath("/Estimates/"), true);
+      assert.equal(isLockedPath("/orders"), false);
+      assert.equal(isLockedPath("/overrides"), false);
+      assert.equal(isLockedPath("/"), false);
     } finally {
       flags.__SECTION_LOCK_ENABLED__ = previous;
     }
@@ -108,6 +114,7 @@ describe("shipped flags", () => {
       assert.equal(isLockedPath("/%66ees"), true);
       assert.equal(isLockedPath("/fees/extra"), true);
       assert.equal(isLockedPath("/schedule"), false);
+      assert.equal(isLockedPath("/estimates"), true);
     } finally {
       flags.__SECTION_LOCK_ENABLED__ = previous;
     }

@@ -317,7 +317,7 @@ function RequestPage() {
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Name"><input className="field" maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></Field>
-              <Field label="Phone"><input className="field" maxLength={20} value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+              <Field label="Phone"><input className="field" maxLength={40} value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
               <Field label="Email"><input className="field" maxLength={120} value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
               <Field label="Year"><input className="field tabular-nums" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
               <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} /></Field>

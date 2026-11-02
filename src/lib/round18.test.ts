@@ -3,7 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import { lengthHandleRange, planCalendarDrag } from "../components/appointment-calendar.tsx";
 import { changeLogLine, requestLogLine } from "./cancel.ts";
 import { advisorDayCapacity } from "./capacity.ts";
-import { pinClock, resetClock } from "./clock.ts";
+import { pinClock, resetClock, todayIso } from "./clock.ts";
 import { lastVisitHint, lastVisitMileage } from "./mileage.ts";
 import { advisorForWebRequest, cleanFreeText, phoneKey, submitOnlineRequest } from "./online-request.ts";
 import { mergeVinDuplicates } from "./ownership.ts";
@@ -74,13 +74,13 @@ describe("round 18 calendar drag", () => {
     assert.equal(resized.minutes, 90);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments.find((item) => item.minutes === 30) ?? shop.getState().appointments[0];
+    const row = shop.getState().appointments.find((item) => item.date >= todayIso() && item.status === "scheduled") ?? shop.getState().appointments[0];
     assert.ok(row);
     const before = row.minutes;
     const result = shop.getState().moveAppointment(row.id, { minutes: before + 60, time: row.time, techId: row.techId });
     assert.equal(result.ok, true, result.error ?? "");
     const logged = shop.getState().settingsLog?.find((item) => item.field === "Length");
-    assert.match(logged?.after ?? "", /Length: 30 min → 1\.5 hr|Length: \d+ min → /);
+    assert.match(logged?.after ?? "", /Length: .+ → /);
     assert.equal((logged?.after ?? "").includes("Moved"), false);
     assert.match(changeLogLine(logged as SettingsChange), new RegExp(`^${logged?.who} · Length: `));
   });
@@ -101,7 +101,7 @@ describe("round 18 change log and edits", () => {
   it("logs length, lane, and labor once, and skips an unchanged time", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     const same = shop.getState().updateAppointment(row.id, { time: row.time, date: row.date });
     assert.equal(same.ok, true);
@@ -127,7 +127,7 @@ describe("round 18 change log and edits", () => {
   it("refuses a vehicle that belongs to another customer and names an approved request", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments[0];
+    const row = shop.getState().appointments.find((item) => item.date >= todayIso()) ?? shop.getState().appointments[0];
     const other = shop.getState().vehicles.find((vehicle) => vehicle.customerId !== row.customerId);
     assert.ok(other);
     const refused = shop.getState().updateAppointment(row.id, { vehicleId: other.id });

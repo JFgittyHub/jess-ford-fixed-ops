@@ -108,7 +108,7 @@ describe("round 17 clock and change log", () => {
 
   it("logs a cancel, a reinstate, and an approve override in the change log", () => {
     const store = shop();
-    const id = store.getState().addAppointment(draft(store.getState(), { time: "15:00", concern: "Quiet visit", lines: [{ id: "q", code: "A", concern: "Quiet visit" }] }));
+    const id = store.getState().addAppointment(draft(store.getState(), { time: "11:00", concern: "Quiet visit", lines: [{ id: "q", code: "A", concern: "Quiet visit" }] }));
     const cancelled = store.getState().cancelAppointment(id, { reason: "customer-request", note: "They called" });
     assert.equal(cancelled.ok, true, cancelled.error ?? "");
     const cancelRow = store.getState().settingsLog?.find((row) => row.field === "Cancel appointment");
@@ -117,7 +117,7 @@ describe("round 17 clock and change log", () => {
     assert.equal(back.ok, true, back.error ?? "");
     assert.match(store.getState().settingsLog?.find((row) => row.field === "Reinstate appointment")?.after ?? "", /^Reinstated /);
     const heavy = store.getState().saveAdvisorAppointment({
-      ...draft(store.getState(), { time: "16:00", minutes: 600, concern: "Long diagnosis", lines: [{ id: "long", code: "A", concern: "Long diagnosis" }] }),
+      ...draft(store.getState(), { time: "12:00", minutes: 600, concern: "Long diagnosis", lines: [{ id: "long", code: "A", concern: "Long diagnosis" }] }),
       status: "scheduled",
     });
     assert.equal(heavy.ok, true, heavy.error ?? "");
@@ -540,7 +540,7 @@ describe("round 17 requests, roles, and ownership", () => {
 
   it("does not let an advisor load the sample month", () => {
     const store = shop();
-    const id = store.getState().addAppointment(draft(store.getState(), { time: "16:00" }));
+    const id = store.getState().addAppointment(draft(store.getState(), { time: "12:30" }));
     store.getState().resetDemo(true);
     assert.equal(store.getState().appointments.some((row) => row.id === id), true);
     assert.equal(store.getState().settingsLog?.some((row) => row.field === "Load sample month"), false);

@@ -118,8 +118,9 @@ describe("round 22 lines, transfers, and phones", () => {
     assert.equal(stored?.lines[0]?.concern, row.lines[0]?.concern);
     assert.ok((shop.getState().settingsLog?.length ?? 0) > before);
     const blanked = shop.getState().updateAppointment(row.id, { lines: [{ id: "x", code: "A", concern: "   " }] });
-    assert.equal(blanked.ok, true, blanked.error ?? "");
-    assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.lines.length, 0);
+    assert.equal(blanked.ok, false);
+    assert.match(blanked.error ?? "", /concern/);
+    assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.lines.length, 1);
     const length = shop.getState().updateAppointment(row.id, { minutes: 120 });
     assert.equal(length.ok, true, length.error ?? "");
     assert.match(shop.getState().settingsLog?.find((item) => item.after.includes("Length"))?.after ?? "", /2 hr/);
@@ -159,7 +160,7 @@ describe("round 22 lines, transfers, and phones", () => {
     const badLabor = book({ laborOpIds: [op.id, op.id] });
     assert.equal(badLabor.ok, false);
     assert.equal(shop.getState().vehicles.find((row) => row.id === helenVehicle.id)?.customerId, helen.id);
-    const row = shop.getState().appointments[0];
+    const row = shop.getState().appointments.find((item) => item.date >= todayIso()) ?? shop.getState().appointments[0];
     assert.match(shop.getState().updateAppointment(row.id, { time: "25:99" }).error ?? "", /not on the clock/);
     assert.equal(shop.getState().addAppointment({ ...row, time: "25:99", date: bookableDay() }), "");
     assert.equal(shop.getState().addAppointment({ ...row, date: bookableDay(), customerId: "nope" }), "");

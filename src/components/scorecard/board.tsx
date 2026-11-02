@@ -332,15 +332,15 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
           <ScopeControl ownerView={ownerView} onChange={onScope} label="Scorecard scope" />
         </div>
         <div className="grid gap-3 xl:grid-cols-2">
-          <MetricTable id="service" title="Service" rows={service} />
-          <MetricTable id="parts" title="Parts" rows={parts} />
+          <MetricTable id="service" title="Service" rows={service} partial={partial} />
+          <MetricTable id="parts" title="Parts" rows={parts} partial={partial} />
         </div>
-        <MetricTable id="ford-metrics" title="Ford metrics" rows={ford} />
+        <MetricTable id="ford-metrics" title="Ford metrics" rows={ford} partial={partial} />
         <section id="technicians">
           <h2 className="mb-3 font-display text-3xl leading-none">Technicians</h2>
           <div className="grid gap-3 xl:grid-cols-2">
-            <TechPeriod title="1st–15th" techs={board.period1} />
-            <TechPeriod title="16th–end of month" techs={board.period2} month={board.month} today={today} />
+            <TechPeriod title={partial && board.sampleSpan ? board.sampleSpan : "1st–15th"} techs={board.period1} partial={partial} />
+            <TechPeriod title={partial ? "Not in this sample" : "16th–end of month"} techs={board.period2} month={board.month} today={today} partial={partial} />
           </div>
         </section>
       </section>
@@ -436,11 +436,12 @@ function StatusPill({ status }: { status: Status }) {
   return <span className={cn("inline-flex h-6 shrink-0 items-center rounded-md px-2 text-xs font-semibold", tonePill(status))}>{statusLabel(status)}</span>;
 }
 
-function MetricTable({ id, title, rows }: { id: string; title: string; rows: MetricRow[] }) {
+function MetricTable({ id, title, rows, partial }: { id: string; title: string; rows: MetricRow[]; partial?: boolean }) {
   return (
     <section id={id} className="card p-0">
       <div className="border-b border-line px-4 py-3">
         <h2 className="font-display text-3xl leading-none">{title}</h2>
+        {partial ? <p className="mt-1 text-sm text-muted">Not graded. This sample does not cover a full month.</p> : null}
       </div>
       <ul>
         {rows.map((row) => (
@@ -448,8 +449,8 @@ function MetricTable({ id, title, rows }: { id: string; title: string; rows: Met
             <p className="text-sm font-semibold sm:col-span-4">{row.label}</p>
             <p className="text-sm tabular-nums sm:col-span-2">{row.actual}</p>
             <p className="text-sm text-muted tabular-nums sm:col-span-2">{row.standard}</p>
-            <p className={cn("text-sm tabular-nums sm:col-span-2", toneText(row.status))}>{row.variance}</p>
-            <div className="sm:col-span-2 sm:text-right"><StatusPill status={row.status} /></div>
+            <p className={cn("text-sm tabular-nums sm:col-span-2", partial ? "text-muted" : toneText(row.status))}>{partial ? "—" : row.variance}</p>
+            <div className="sm:col-span-2 sm:text-right">{partial ? <p className="text-sm text-muted">Not graded · {row.label}</p> : <StatusPill status={row.status} />}</div>
           </li>
         ))}
       </ul>
@@ -457,7 +458,7 @@ function MetricTable({ id, title, rows }: { id: string; title: string; rows: Met
   );
 }
 
-function TechPeriod({ title, techs, month, today }: { title: string; techs: Tech[]; month?: string; today?: Date }) {
+function TechPeriod({ title, techs, month, today, partial }: { title: string; techs: Tech[]; month?: string; today?: Date; partial?: boolean }) {
   const hidden = title.startsWith("16") && month && today && month === monthKey(today) && today.getDate() < 16;
   return (
     <section className="card p-0">
@@ -475,8 +476,12 @@ function TechPeriod({ title, techs, month, today }: { title: string; techs: Tech
                   <p className="text-sm text-muted">{tech.skill} · {formatHours(tech.soldHours)} sold / {formatHours(tech.clockHours)} clock</p>
                 </div>
                 <div className="text-right">
-                  <p className={cn("text-sm font-semibold tabular-nums", toneText(status))}>{eff === null ? "Excluded" : formatPct(eff, 0)}</p>
-                  {tech.elr > 0 ? <p className="text-sm text-muted tabular-nums">{formatMoney(tech.elr, 0)} ELR</p> : null}
+                  {partial ? <p className="text-sm text-muted">Not graded · {tech.name}</p> : (
+                    <>
+                      <p className={cn("text-sm font-semibold tabular-nums", toneText(status))}>{eff === null ? "Excluded" : formatPct(eff, 0)}</p>
+                      {tech.elr > 0 ? <p className="text-sm text-muted tabular-nums">{formatMoney(tech.elr, 0)} ELR</p> : null}
+                    </>
+                  )}
                 </div>
               </li>
             );

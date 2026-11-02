@@ -126,6 +126,7 @@ const LOCKED_BODY: Record<string, string> = {
   "/labor-ops": "The book every repair order sells from",
   "/pay-types": "Each pay type has its own labor rate",
   "/fees": "Misc shop fee is a percent",
+  "/estimates": "110% cap",
 };
 
 function staffNav(html: string) {
