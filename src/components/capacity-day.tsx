@@ -74,24 +74,38 @@ export function CapacityDayStrip({
         <p className="text-sm font-semibold">
           Arrivals and waiters · {arrivalCap} · {waiterCap}
         </p>
-        <ul className="mt-2 flex flex-wrap gap-1">
-          {view.slots.map((slot) => {
-            const over =
-              (view.arrivalCap != null && slot.arrivals > view.arrivalCap) ||
-              (view.waiterCap != null && slot.waiters > view.waiterCap);
-            return (
-              <li
-                key={slot.time}
-                className={`rounded-md border px-2 py-1 text-xs tabular-nums ${over ? "border-[#e7d7a8] bg-[#f8efd4]" : "border-line"}`}
-              >
-                {clockTime(slot.time)} · {slot.arrivals}
-                {view.arrivalCap == null ? "" : `/${view.arrivalCap}`} in · {slot.waiters}
-                {view.waiterCap == null ? "" : `/${view.waiterCap}`} waiting
-              </li>
-            );
-          })}
-        </ul>
+        <SlotCounts view={view} />
       </div>
     </section>
+  );
+}
+
+function SlotCounts({ view }: { view: DayCapacity }) {
+  const busy = view.slots.filter((slot) => slot.arrivals > 0 || slot.waiters > 0);
+  const quiet = view.slots.length - busy.length;
+  if (busy.length === 0) {
+    return <p className="mt-1 text-sm text-muted">No arrivals on this day yet. {quiet} open times.</p>;
+  }
+  return (
+    <>
+      <ul className="mt-2 flex flex-wrap gap-1">
+        {busy.map((slot) => {
+          const over =
+            (view.arrivalCap != null && slot.arrivals > view.arrivalCap) ||
+            (view.waiterCap != null && slot.waiters > view.waiterCap);
+          return (
+            <li
+              key={slot.time}
+              className={`rounded-md border px-2 py-1 text-xs tabular-nums ${over ? "border-[#e7d7a8] bg-[#f8efd4]" : "border-line"}`}
+            >
+              {clockTime(slot.time)} · {slot.arrivals}
+              {view.arrivalCap == null ? "" : `/${view.arrivalCap}`} in · {slot.waiters}
+              {view.waiterCap == null ? "" : `/${view.waiterCap}`} waiting
+            </li>
+          );
+        })}
+      </ul>
+      {quiet > 0 ? <p className="mt-1 text-xs text-muted">{quiet} other times are empty.</p> : null}
+    </>
   );
 }

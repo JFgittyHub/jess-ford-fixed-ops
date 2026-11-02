@@ -360,6 +360,71 @@ describe("capacity settings", () => {
     const view = board(store.getState().settings.scheduling, store.getState().advisors, counted);
     assert.equal(view.techs.find((row) => row.id === "marcus")?.usedHours, 1);
   });
+
+  it("keeps the exact cap open and the next unit closed, including a zero cap and a zero-hour day", () => {
+    const store = shop();
+    const scheduling = store.getState().settings.scheduling;
+    const nine = Array.from({ length: 9 }, (_, index) => load(`full-${index}`, {
+      advisorId: "megan",
+      techId: index % 2 === 0 ? "marcus" : "elena",
+      laborHours: 0.2,
+      time: "09:00",
+    }));
+    assert.equal(propose(scheduling, nine, { advisorId: "megan", minutes: 30 }).open, true);
+    assert.equal(propose(scheduling, [...nine, load("tenth", { advisorId: "megan", laborHours: 0.2 })], { advisorId: "megan", minutes: 30 }).open, false);
+
+    assert.equal(store.getState().updateTechCapacityHours("marcus", weekday, 2).ok, true);
+    assert.equal(store.getState().updateTechCapacityHours("elena", weekday, 0).ok, true);
+    let next = store.getState().settings.scheduling;
+    assert.equal(propose(next, [], { minutes: 120 }).open, true);
+    assert.equal(propose(next, [], { minutes: 150 }).open, false);
+    assert.equal(propose(next, [], { techId: "elena", minutes: 30 }).open, false);
+    assert.equal(board(next, store.getState().advisors, []).techs.find((row) => row.id === "elena")?.availableHours, 0);
+
+    assert.equal(store.getState().updateCapacityLimits({ maxWaiterPerSlot: 1, maxArrivalsPerSlot: 1 }).ok, true);
+    next = store.getState().settings.scheduling;
+    assert.equal(propose(next, [], { lane: "waiter", time: "11:00" }).open, true);
+    assert.equal(propose(next, [], { lane: "drop", time: "11:30" }).open, true);
+    assert.equal(store.getState().updateCapacityLimits({ maxWaiterPerSlot: 0, maxArrivalsPerSlot: 0 }).ok, true);
+    next = store.getState().settings.scheduling;
+    assert.equal(propose(next, [], { lane: "waiter", time: "11:00" }).open, false);
+    assert.equal(propose(next, [], { lane: "drop", time: "11:30" }).open, false);
+
+    const fresh = shop();
+    assert.equal(fresh.getState().addTechTimeOff({ techId: "marcus", date: tuesday, start: "12:00", end: "15:00" }).ok, true);
+    const blocked = fresh.getState().settings.scheduling;
+    assert.equal(propose(blocked, [], { time: "11:30", minutes: 30 }).open, true);
+    assert.equal(propose(blocked, [], { time: "15:00", minutes: 30 }).open, true);
+    assert.equal(slots(blocked, [], undefined, { techId: "marcus" }).some((row) => row.time === "15:00"), true);
+    assert.equal(slots(blocked, [], undefined, { techId: "marcus" }).some((row) => row.time === "11:30"), true);
+
+    assert.equal(fresh.getState().updateCapacityLimits({ onlineSharePercent: 50 }).ok, true);
+    let shared = fresh.getState().settings.scheduling;
+    assert.equal(slots(shared, [load("edge", { laborHours: 4.5, techId: "elena" })], undefined, { techId: "elena" }).some((row) => row.time === "09:00"), true);
+    assert.equal(slots(shared, [load("over", { laborHours: 5, techId: "elena" })], undefined, { techId: "elena" }).length, 0);
+
+    assert.equal(fresh.getState().updateCapacityLimits({ maxAdvisorAppointmentsPerHour: 2 }).ok, true);
+    shared = fresh.getState().settings.scheduling;
+    const hourHold = load("hour", { advisorId: "megan", time: "09:00", techId: "elena", laborHours: 0.3 });
+    assert.equal(propose(shared, [hourHold], { advisorId: "megan", time: "09:30", minutes: 30, techId: "elena" }).open, true);
+    assert.equal(slots(shared, [hourHold], undefined, { advisorId: "megan", techId: "marcus" }).some((row) => row.time === "09:30"), false);
+
+    assert.equal(fresh.getState().updateCapacityLimits({ maxAdvisorAppointmentsPerHour: null, maxWaiterPerSlot: 2 }).ok, true);
+    shared = fresh.getState().settings.scheduling;
+    const waiting = load("one-wait", { lane: "waiter", time: "10:00", advisorId: "jordan", techId: "elena" });
+    assert.equal(propose(shared, [waiting], { lane: "waiter", time: "10:00", minutes: 30 }).open, true);
+    assert.equal(slots(shared, [waiting], undefined, { transportId: "waiter", advisorId: "megan", techId: "marcus" }).some((row) => row.time === "10:00"), false);
+    assert.equal(slots(shared, [waiting], undefined, { transportId: "drop", advisorId: "megan", techId: "marcus" }).some((row) => row.time === "10:00"), true);
+
+    assert.equal(fresh.getState().updateCapacityLimits({ maxWaiterPerSlot: null, maxArrivalsPerSlot: 2 }).ok, true);
+    shared = fresh.getState().settings.scheduling;
+    const arrived = load("one-in", { lane: "drop", time: "10:30", advisorId: "jordan", techId: "elena" });
+    assert.equal(propose(shared, [arrived], { lane: "drop", time: "10:30", minutes: 30 }).open, true);
+    assert.equal(slots(shared, [arrived], undefined, { transportId: "drop", techId: "marcus" }).some((row) => row.time === "10:30"), false);
+
+    const heldWaiter = holdLoads([{ ...load("req-wait", { lane: "waiter", time: "09:00" }), status: "pending" }]);
+    assert.equal(board(scheduling, store.getState().advisors, heldWaiter).slots.find((row) => row.time === "09:00")?.waiters, 1);
+  });
 });
 
 function shop() {
