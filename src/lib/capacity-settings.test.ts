@@ -78,6 +78,7 @@ describe("capacity settings", () => {
   });
 
   it("counts a whole day off, a part-day block, and a pending request against booking, the day view, and online times", () => {
+    pinClock(morning);
     const store = shop();
     assert.equal(store.getState().addTechTimeOff({ techId: "marcus", date: tuesday }).ok, true);
     let scheduling = store.getState().settings.scheduling;
@@ -323,6 +324,7 @@ describe("capacity settings", () => {
   });
 
   it("counts a pending online request when an advisor saves, and does not count that request twice when it is approved", () => {
+    pinClock(when);
     const store = shop();
     store.setState({ appointments: [] });
     store.getState().setWorkingAs("derek");
@@ -391,6 +393,7 @@ describe("capacity settings", () => {
     assert.equal(propose(next, [], { lane: "drop", time: "11:30" }).open, false);
 
     const fresh = shop();
+    pinClock(morning);
     assert.equal(fresh.getState().addTechTimeOff({ techId: "marcus", date: tuesday, start: "12:00", end: "15:00" }).ok, true);
     const blocked = fresh.getState().settings.scheduling;
     assert.equal(propose(blocked, [], { time: "11:30", minutes: 30 }).open, true);

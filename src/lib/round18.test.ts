@@ -151,7 +151,7 @@ describe("round 18 change log and edits", () => {
 
   it("does not log hours when the day is saved unchanged", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    shop.getState().setWorkingAs("megan");
+    shop.getState().setWorkingAs("derek");
     const hours = shop.getState().settings.scheduling.hours.find((row) => row.weekday === 1);
     assert.ok(hours);
     shop.getState().updateDayHours(1, { open: hours.open, close: hours.close, closed: hours.closed });

@@ -1,5 +1,5 @@
 import { addDays, daysBetween, now } from "./clock";
-import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } from "./types";
+import type { Appointment, OverrideReason, SchedulingSettings, SettingsChange, TechTimeOff, WeekdayIndex } from "./types";
 
 /**
  * A slot is open only when it fits this store's capacity settings.
@@ -139,13 +139,13 @@ export function evaluateCapacity(input: { scheduling: SchedulingSettings; adviso
   const waiterCap = !day.closed ? rules.maxWaiterPerSlot : null;
   const arrivalCap = !day.closed ? rules.maxArrivalsPerSlot : null;
   const slot = slotKey(proposal.time);
-  const waiterUsed = sameDay.filter((row) => slotKey(row.time) === slot && isWaiter(row.lane)).length;
+  const waiterUsed = sameDay.filter((row) => slotKey(row.time) === slot && isWaiter(row.lane, input.scheduling)).length;
   const arrivalUsed = sameDay.filter((row) => slotKey(row.time) === slot).length;
-  const waiterAdding = isWaiter(proposal.lane) ? 1 : 0;
+  const waiterAdding = isWaiter(proposal.lane, input.scheduling) ? 1 : 0;
   const techOverloaded = !knownTech || off !== null || techUsed + adding > techCapacity + EPSILON;
   const hourOverloaded = hourCap != null && hourUsed + 1 > hourCap;
   const advisorOverloaded = !knownAdvisor || advisorUsed + 1 > advisorCapacity || hourOverloaded;
-  const waiterOverloaded = waiterCap != null && waiterAdding + waiterUsed > waiterCap;
+  const waiterOverloaded = waiterCap != null && waiterAdding > 0 && waiterAdding + waiterUsed > waiterCap;
   const arrivalsOverloaded = arrivalCap != null && arrivalUsed + 1 > arrivalCap;
   const blocked = day.closed ? "The shop is closed that day." : staffBlockMessage(knownTech, knownAdvisor);
   const warning = blocked
@@ -156,6 +156,9 @@ export function evaluateCapacity(input: { scheduling: SchedulingSettings; adviso
         advisorOverloaded,
         waiterOverloaded,
         arrivalsOverloaded,
+        waiterCap,
+        arrivalCap,
+        hourCap,
       });
   return {
     open: blocked === null && warning === null,
@@ -354,7 +357,16 @@ export function onlineSlots(input: {
   return slots;
 }
 
-function capacityWarning(input: { off: "day" | "part" | null; techOverloaded: boolean; advisorOverloaded: boolean; waiterOverloaded: boolean; arrivalsOverloaded: boolean }): string | null {
+function capacityWarning(input: {
+  off: "day" | "part" | null;
+  techOverloaded: boolean;
+  advisorOverloaded: boolean;
+  waiterOverloaded: boolean;
+  arrivalsOverloaded: boolean;
+  waiterCap: number | null;
+  arrivalCap: number | null;
+  hourCap: number | null;
+}): string | null {
   const hoursFull = input.techOverloaded && input.off === null;
   if (hoursFull && input.advisorOverloaded && !input.waiterOverloaded && !input.arrivalsOverloaded) {
     return "This would overload technician hours and advisor capacity.";
@@ -363,9 +375,9 @@ function capacityWarning(input: { off: "day" | "part" | null; techOverloaded: bo
   if (input.off === "day") parts.push("That technician is off that day.");
   else if (input.off === "part") parts.push("That technician is off then.");
   else if (input.techOverloaded) parts.push("This would overload technician hours for that job.");
-  if (input.advisorOverloaded) parts.push("This would overload advisor capacity.");
-  if (input.waiterOverloaded) parts.push("This would overload waiter appointments for that time.");
-  if (input.arrivalsOverloaded) parts.push("This would overload arrivals for that time.");
+  if (input.advisorOverloaded) parts.push(input.hourCap === 0 ? "Advisor appointments are closed for every hour." : "This would overload advisor capacity.");
+  if (input.waiterOverloaded) parts.push(input.waiterCap === 0 ? "Waiter appointments are closed for every time slot." : "This would overload waiter appointments for that time.");
+  if (input.arrivalsOverloaded) parts.push(input.arrivalCap === 0 ? "Arrivals are closed for every time slot." : "This would overload arrivals for that time.");
   if (parts.length === 0) return null;
   return parts.join(" ");
 }
@@ -392,6 +404,7 @@ export type DayCapacity = {
   advisorHourCap: number | null;
   waiterCap: number | null;
   arrivalCap: number | null;
+  onlineShareLeft: number;
   techs: TechDayTally[];
   usedHours: number;
   availableHours: number;
@@ -441,12 +454,14 @@ export function dayCapacity(input: { scheduling: SchedulingSettings; techs: { id
       slots.push({
         time,
         arrivals: rows.length,
-        waiters: rows.filter((row) => isWaiter(row.lane)).length,
+        waiters: rows.filter((row) => isWaiter(row.lane, input.scheduling)).length,
       });
     }
   }
+  const availableHours = round2(techs.reduce((sum, tech) => sum + tech.availableHours, 0));
+  const usedHours = round2(techs.reduce((sum, tech) => sum + tech.usedHours, 0));
   return {
-    date: input.date,
+      date: input.date,
     closed: day.closed,
     openHours: day.openHours,
     onlineSharePercent: rules.onlineSharePercent,
@@ -455,8 +470,9 @@ export function dayCapacity(input: { scheduling: SchedulingSettings; techs: { id
     waiterCap: rules.maxWaiterPerSlot,
     arrivalCap: rules.maxArrivalsPerSlot,
     techs,
-    usedHours: round2(techs.reduce((sum, tech) => sum + tech.usedHours, 0)),
-    availableHours: round2(techs.reduce((sum, tech) => sum + tech.availableHours, 0)),
+    usedHours,
+    availableHours,
+    onlineShareLeft: round2(Math.max(0, round2(availableHours * rules.onlineSharePercent / 100) - usedHours)),
     hours,
     slots,
     advisors: input.advisors.map((advisor) => ({
@@ -464,6 +480,32 @@ export function dayCapacity(input: { scheduling: SchedulingSettings; techs: { id
       dayUsed: counted.filter((row) => row.advisorId === advisor.id).length,
     })),
   };
+}
+
+/** Dates and the capacity log stay with the service manager. Everyone else gets an empty list. */
+export function timeOffForActor(actor: string | null, rows: TechTimeOff[]): TechTimeOff[] {
+  if (actor !== "service-manager") return [];
+  return rows.map((row) => ({ id: row.id, techId: row.techId, date: row.date, start: row.start, end: row.end }));
+}
+
+/** Newest first. Advisors and technicians do not receive the rows. */
+export function capacityLogForActor(actor: string | null, rows: SettingsChange[]): SettingsChange[] {
+  if (actor !== "service-manager") return [];
+  return rows
+    .filter((row) => row.field.startsWith("Capacity"))
+    .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
+
+/** Shaded ranges for one technician on one day. No reason and no other dates. */
+export function unavailableBands(scheduling: SchedulingSettings, iso: string, techId: string): { start: number; end: number }[] {
+  const day = shopDay(scheduling, iso);
+  if (day.closed) return [];
+  const blocks = blocksFor(scheduling, techId, iso);
+  if (blocks.some((block) => block.whole)) return [{ start: day.openMinutes, end: day.closeMinutes }];
+  return blocks
+    .filter((block) => !block.whole)
+    .map((block) => ({ start: Math.max(day.openMinutes, block.startMin), end: Math.min(day.closeMinutes, block.endMin) }))
+    .filter((block) => block.end > block.start);
 }
 
 /** Shop open hours for a weekday, before a technician's own hours or time off. */
@@ -591,7 +633,15 @@ function visitSpan(proposal: CapacityProposal) {
   return Math.max(0, proposal.laborHours) * 60;
 }
 
-function isWaiter(lane: string | undefined) {
+function isWaiter(lane: string | undefined, scheduling?: SchedulingSettings) {
+  if (!lane) return false;
+  const option = scheduling?.transportOptions.find((row) => row.id === lane);
+  if (option?.kind === "waiter" || option?.kind === "drop" || option?.kind === "other") return option.kind === "waiter";
+  if (option) {
+    const name = option.name.trim().toLowerCase();
+    if (name === "waiter" || name === "express") return true;
+    if (name === "drop-off" || name === "drop" || name === "loaner") return false;
+  }
   return lane === "waiter" || lane === "express";
 }
 

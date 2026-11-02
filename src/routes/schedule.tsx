@@ -11,7 +11,7 @@ import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, dayCapacity, holdLoads, onlineSlots } from "@/lib/capacity";
+import { advisorBookingNote, appointmentLoads, assessAppointment, dayCapacity, holdLoads, onlineSlots, unavailableBands } from "@/lib/capacity";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
@@ -71,6 +71,13 @@ export function SchedulePage({ openRequests = false }: { openRequests?: boolean 
   );
 }
 
+function closedChannel(scheduling: { capacity?: { maxWaiterPerSlot: number | null; maxArrivalsPerSlot: number | null } }, kind?: string) {
+  const caps = scheduling.capacity;
+  if (!caps) return false;
+  if (caps.maxArrivalsPerSlot === 0) return true;
+  return kind === "waiter" && caps.maxWaiterPerSlot === 0;
+}
+
 function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const shop = useShop();
   const navigate = useNavigate();
@@ -91,6 +98,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [discardBooking, setDiscardBooking] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(() => openRequests || wantsOnlineRequests(locationHash));
   const [timesOpen, setTimesOpen] = useState(false);
+  const [onlineTransport, setOnlineTransport] = useState("drop");
   const ignoreRequestsHash = useRef(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -162,6 +170,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         from: day,
         through: day,
         techId: techFilter,
+        transportId: transports.some((row) => row.id === onlineTransport) ? onlineTransport : transports[0]?.id,
       }).map((slot) => slot.time))]
     : [];
   const pendingCount = (shop.onlineRequests ?? []).filter((row) => row.status === "pending").length;
@@ -299,9 +308,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onCancel={canCancel ? (id) => askCancel(id) : undefined}
         label={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         hoursFor={(row) => laborHours(row, shop.laborOps)}
+        unavailableFor={(techId) => unavailableBands(shop.settings.scheduling, day, techId)}
         loadFor={(techId) => {
           const row = techLoad.get(techId);
-          const note = row?.off === "day" ? "Off" : row?.offLabel ? `Off ${row.offLabel}` : "";
+          const note = row && row.off !== "none" ? "Unavailable" : "";
           return { used: row?.usedHours ?? 0, available: row?.availableHours ?? 0, note };
         }}
         summary={(row) => {
@@ -423,7 +433,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         <NoticeLog rows={shop.notices ?? []} />
       </Modal>
 
-      <Modal open={timesOpen} onClose={() => setTimesOpen(false)} wide title="Online times" description="Customers only see a time that fits this store's capacity, including technician hours, time off, advisor limits, arrivals, and the online share. A full time is left off. Waiter limits apply when the customer chooses Waiter.">
+      <Modal open={timesOpen} onClose={() => setTimesOpen(false)} wide title="Online times" description="Customers only see a time that fits this store's capacity, including technician hours, time off, advisor limits, arrivals, and the online share. A full time is left off. Waiter limits apply when the customer chooses Waiter. Drop-off does not use the waiter cap. Express counts as a waiter.">
         <div className="flex flex-wrap gap-3">
           <Field label="Service">
             <select className="field" value={serviceId} onChange={(event) => patchSeed({ serviceId: event.target.value })}>
@@ -435,12 +445,17 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
               {board.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
             </select>
           </Field>
+          <Field label="Waiter or drop-off">
+            <select className="field" aria-label="Waiter or drop-off" value={transports.some((row) => row.id === onlineTransport) ? onlineTransport : transports[0]?.id ?? ""} onChange={(event) => setOnlineTransport(event.target.value)}>
+              {transports.map((row) => <option key={row.id} value={row.id}>{row.name}{row.kind === "waiter" ? " · waiter" : ""}</option>)}
+            </select>
+          </Field>
         </div>
         {onlineTimes.length === 0 ? (
-          <p className="mt-3 text-sm text-muted">No online openings for this technician on this day.</p>
+          <p className="mt-3 text-sm text-muted">{closedChannel(shop.settings.scheduling, transports.find((row) => row.id === onlineTransport)?.kind) ? "No online times are open. Call the shop." : "No online openings for this technician on this day."}</p>
         ) : (
           <ul className="mt-3 flex flex-wrap gap-2">
-            {onlineTimes.map((slot) => <li key={slot} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(slot)}</li>)}
+            {onlineTimes.map((slot) => <li key={slot} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(slot)} PT</li>)}
           </ul>
         )}
       </Modal>

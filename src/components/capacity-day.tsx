@@ -25,22 +25,25 @@ export function CapacityDayStrip({
       </section>
     );
   }
-  const hourCap =
-    view.advisorHourCap == null ? "no hourly limit" : `${view.advisorHourCap} per hour`;
-  const arrivalCap =
-    view.arrivalCap == null ? "no arrival cap" : `${view.arrivalCap} arrivals per slot`;
-  const waiterCap = view.waiterCap == null ? "no waiter cap" : `${view.waiterCap} waiters per slot`;
+  const hourCap = capPhrase(view.advisorHourCap, "per hour", "no hourly limit", "Advisor appointments are closed for every hour.");
+  const arrivalCap = capPhrase(view.arrivalCap, "arrival", "no arrival cap", "Arrivals are closed for every time slot.");
+  const waiterCap = capPhrase(view.waiterCap, "waiter", "no waiter cap", "Waiter appointments are closed for every time slot.");
   return (
     <section className="card mt-4 grid gap-3" aria-label="Capacity for this day">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-sm font-semibold">Capacity this day</p>
         <p className="text-sm text-muted">
-          Online share {view.onlineSharePercent}%. Pending requests count.{" "}
+          Online share {view.onlineSharePercent}%. {hoursLabel(view.onlineShareLeft)} of online share left today. Pending requests count for 48 hours.{" "}
           <Link to="/capacity" className="underline">
             Settings
           </Link>
         </p>
       </div>
+      {view.advisorHourCap === 0 || view.waiterCap === 0 || view.arrivalCap === 0 ? (
+        <p role="status" className="text-sm text-[#8a3b2a]">
+          {[view.advisorHourCap === 0 ? hourCap : "", view.waiterCap === 0 ? waiterCap : "", view.arrivalCap === 0 ? arrivalCap : ""].filter(Boolean).join(" ")}
+        </p>
+      ) : null}
       <p className="text-sm">
         Technicians {flagHours(view.usedHours)} / {flagHours(view.availableHours)} hrs
       </p>
@@ -59,7 +62,7 @@ export function CapacityDayStrip({
               key={hour.time}
               className="rounded-md border border-line px-2 py-1 text-xs tabular-nums"
             >
-              {clockTime(hour.time).replace(":00", "")}{" "}
+              {clockPt(hour.time)}{" "}
               {hour.advisors
                 .map(
                   (row) =>
@@ -80,6 +83,26 @@ export function CapacityDayStrip({
   );
 }
 
+function clockPt(time: string) {
+  return `${clockTime(time)} PT`;
+}
+
+function hoursLabel(n: number) {
+  const shown = flagHours(n);
+  return `${shown} ${shown === "1" ? "hr" : "hrs"}`;
+}
+
+function noun(n: number, one: string, many: string) {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+function capPhrase(cap: number | null, unit: string, openLabel: string, closedLabel: string) {
+  if (cap == null) return openLabel;
+  if (cap === 0) return closedLabel;
+  if (unit === "per hour") return `${cap} per hour`;
+  return `${noun(cap, unit, `${unit}s`)} per slot`;
+}
+
 function SlotCounts({ view }: { view: DayCapacity }) {
   const busy = view.slots.filter((slot) => slot.arrivals > 0 || slot.waiters > 0);
   const quiet = view.slots.length - busy.length;
@@ -98,9 +121,9 @@ function SlotCounts({ view }: { view: DayCapacity }) {
               key={slot.time}
               className={`rounded-md border px-2 py-1 text-xs tabular-nums ${over ? "border-[#e7d7a8] bg-[#f8efd4]" : "border-line"}`}
             >
-              {clockTime(slot.time)} · {slot.arrivals}
-              {view.arrivalCap == null ? "" : `/${view.arrivalCap}`} in · {slot.waiters}
-              {view.waiterCap == null ? "" : `/${view.waiterCap}`} waiting
+              {clockPt(slot.time)} · {noun(slot.arrivals, "arrival", "arrivals")}
+              {view.arrivalCap == null ? "" : `/${view.arrivalCap}`} · {noun(slot.waiters, "waiter", "waiters")}
+              {view.waiterCap == null ? "" : `/${view.waiterCap}`}
             </li>
           );
         })}

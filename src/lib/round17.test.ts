@@ -89,7 +89,9 @@ describe("round 17 clock and change log", () => {
 
   it("writes hours as a weekday and clock time, and a move as one sentence", () => {
     const store = shop();
+    store.getState().setWorkingAs("derek");
     store.getState().updateDayHours(1, { closed: true });
+    store.getState().setWorkingAs("megan");
     const hours = store.getState().settingsLog?.find((row) => row.field === "Hours Mon");
     assert.ok(hours);
     assert.equal(hours.before.includes("{"), false);
@@ -136,9 +138,9 @@ describe("round 17 clock and change log", () => {
     store.setState({ requestLog: [{ at: "2026-10-31T16:00:00.000Z", who: "Derek Lang", whoId: "derek", requestId: "rq-clear", action: "approved", customerName: "Pat Example", visit: formatVisit("2026-11-03", "09:00") }] });
     store.getState().clearShop();
     const row = store.getState().settingsLog?.find((item) => item.field === "Clear shop data");
-    assert.equal(row?.after, `Cleared open work (${appointments} appointments, ${overrides} overrides) — closed ROs kept`);
+    assert.equal(row?.after, `Cleared open work (${appointments} appointments, ${overrides} overrides). Reset capacity settings and ${(store.getState().settings.scheduling.capacity?.timeOff ?? []).length} time-off entries. Closed repair orders kept.`);
     assert.ok((store.getState().settingsLog?.length ?? 0) > before);
-    assert.match(changeLogLine(row!), /Cleared open work \(\d+ appointments, \d+ overrides\) — closed ROs kept · .+ PT$/);
+    assert.match(changeLogLine(row!), /Cleared open work \(\d+ appointments, \d+ overrides\)\. Reset capacity settings and \d+ time-off entries\. Closed repair orders kept\. · .+ PT$/);
     assert.equal(store.getState().requestLog?.some((item) => item.requestId === "rq-clear"), true);
   });
 });

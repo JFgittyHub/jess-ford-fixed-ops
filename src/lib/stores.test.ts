@@ -72,9 +72,10 @@ describe("two stores", () => {
     assert.deepEqual(shop.getState().settings.scheduling.closedDates, ["2026-11-27", "2026-12-24"]);
     assert.equal(shop.getState().settings.storeName, "Jess Ford Pullman");
 
+    shop.getState().setWorkingAs(shop.getState().serviceManagers.find((row) => row.active !== false)?.id ?? "");
     shop.getState().updateBookingWindow({ daysAhead: 9, minLeadHours: 6 });
     shop.getState().updateDayHours(6, { close: "12:00" });
-    assert.equal(shop.getState().addClosedDate("2026-12-31"), true);
+    assert.equal(shop.getState().addClosedDate("2026-12-31").ok, true);
     assert.equal(shop.getState().addOnlineService({ name: "Battery test", laborHours: 0.3 }), true);
     assert.equal(shop.getState().addOnlineService({ name: "Battery test", laborHours: 0 }), false);
     assert.equal(shop.getState().addTransportOption("Shuttle"), true);

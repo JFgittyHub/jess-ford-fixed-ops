@@ -77,7 +77,7 @@ describe("appointment actions", () => {
 
   it("refuses to remove a tech who still has appointments until those are reassigned", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    shop.getState().setWorkingAs("megan");
+    shop.getState().setWorkingAs("derek");
     assert.equal(
       shop.getState().addTech({
         number: "99",
@@ -111,7 +111,7 @@ describe("appointment actions", () => {
 
   it("still blocks removal when the tech is on a repair order", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    shop.getState().setWorkingAs("megan");
+    shop.getState().setWorkingAs("derek");
     const techId = "chris";
     assert.equal(shop.getState().appointments.some((row) => row.techId === techId), true);
     assert.equal(shop.getState().removeTech(techId), "used");

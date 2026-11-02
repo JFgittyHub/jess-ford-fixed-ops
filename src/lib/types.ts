@@ -86,10 +86,12 @@ export interface OnlineService {
   laborHours: number;
 }
 
-/** How the customer spends the visit. Seeded with Waiter and Drop-off. */
+/** How the customer spends the visit. The kind stays with the name, not a generated id. */
 export interface TransportOption {
   id: string;
   name: string;
+  /** Waiter includes Express. Drop-off never uses the waiter cap. */
+  kind?: "waiter" | "drop" | "other";
 }
 
 /** Available hours for one technician, Sunday through Saturday. Null uses the shop's open hours. */
@@ -124,6 +126,8 @@ export interface CapacitySettings {
   maxArrivalsPerSlot: number | null;
   /** 0–100. Online customers only see this share of capacity. */
   onlineSharePercent: number;
+  /** Set when stored settings were unreadable and reset. Empty when the save was fine. */
+  loadNotice: string;
 }
 
 export interface SchedulingSettings {

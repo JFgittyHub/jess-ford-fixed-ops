@@ -208,6 +208,7 @@ export function AppointmentCalendar({
   summary,
   hoursFor,
   loadFor,
+  unavailableFor,
 }: {
   appointments: Appointment[];
   day: string;
@@ -224,6 +225,8 @@ export function AppointmentCalendar({
   hoursFor: (appt: Appointment) => number;
   /** Used and available hours from the shop capacity settings, including pending requests. */
   loadFor?: (techId: string) => { used: number; available: number; note?: string };
+  /** Shop-minute ranges where this technician is unavailable. No reason. */
+  unavailableFor?: (techId: string) => { start: number; end: number }[];
 }) {
   const techIds = techs.map((tech) => tech.id);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -330,12 +333,12 @@ export function AppointmentCalendar({
         <div className="relative" style={{ height }}>
           {hours.map((mins) => (
             <p key={mins} className="absolute right-2 text-xs leading-none text-muted" style={{ top: ((mins - START) / SNAP) * SLOT + 6 }}>
-              {clockLabel(mins).replace(":00", "")}
+              {clockLabel(mins).replace(":00", "")} PT
             </p>
           ))}
           {nowTop !== null ? (
             <p className="absolute right-2 z-40 -translate-y-1/2 rounded-sm bg-[#b42318] px-1 text-[10px] font-semibold text-white" style={{ top: nowTop }}>
-              {clockLabel(Math.round(nowMins))}
+              {clockLabel(Math.round(nowMins))} PT
             </p>
           ) : null}
         </div>
@@ -360,6 +363,21 @@ export function AppointmentCalendar({
                 onSlot(tech.id, fromMinutes(mins));
               }}
             >
+              {(unavailableFor?.(tech.id) ?? []).map((band) => {
+                const top = ((band.start - START) / SNAP) * SLOT;
+                const block = Math.max(8, ((band.end - band.start) / SNAP) * SLOT);
+                return (
+                  <div
+                    key={`${band.start}-${band.end}`}
+                    data-unavailable="yes"
+                    aria-label="Unavailable"
+                    className="pointer-events-none absolute left-0 right-0"
+                    style={{ top, height: block, background: "repeating-linear-gradient(135deg, rgba(80, 70, 50, 0.16) 0 8px, rgba(80, 70, 50, 0.05) 8px 16px)" }}
+                  >
+                    <span className="pointer-events-none absolute left-1 top-1 text-[10px] font-semibold uppercase tracking-wide text-muted">Unavailable</span>
+                  </div>
+                );
+              })}
               {rows.map(({ row, offset }) => {
                 const start = toMinutes(row.time);
                 const top = ((start - START) / SNAP) * SLOT;

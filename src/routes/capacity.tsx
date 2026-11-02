@@ -15,8 +15,9 @@ function CapacityPage() {
         {storeName}. Service managers can change these settings. Advisors and technicians can look.
         The numbers stay with this store.
       </p>
-      <div className="mt-4">
-        <Link to="/schedule" className="btn btn-ghost btn-small">
+      <div className="tap-targets mt-4 flex flex-wrap gap-2">
+        <a href="#time-off" className="btn btn-ghost btn-small min-h-11">Time off</a>
+        <Link to="/schedule" className="btn btn-ghost btn-small min-h-11">
           Back to appointments
         </Link>
       </div>

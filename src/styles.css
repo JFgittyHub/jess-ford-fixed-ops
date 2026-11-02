@@ -129,6 +129,13 @@
     font-size: 0.875rem;
   }
 
+  .field:disabled,
+  .field[aria-readonly="true"] {
+    cursor: not-allowed;
+    color: var(--color-muted);
+    background: color-mix(in srgb, var(--color-surface) 82%, var(--color-line));
+  }
+
   .field {
     width: 100%;
     min-height: 2.75rem;

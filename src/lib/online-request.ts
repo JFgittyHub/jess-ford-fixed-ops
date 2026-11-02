@@ -1,4 +1,5 @@
 import { advisorDayCapacity, appointmentLoads, onlineSlots } from "./capacity";
+import { now } from "./clock";
 import type { ContactMethod, Customer, OnlineChallenge, OnlineRequest, SchedulingSettings, StoreId, Vehicle } from "./types";
 import { normalizeVin, vinScheduleError } from "./vin";
 
@@ -111,9 +112,19 @@ export function revealSavedVehicles(input: {
   };
 }
 
-/** Only a pending request holds capacity. Approved time moves to the appointment. Declined time is free. */
-export function requestHolds(requests: OnlineRequest[] | undefined) {
-  return (requests ?? []).filter((row) => row.status === "pending").map((row) => ({
+const HOLD_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** A pending request holds capacity for 48 hours. After that it stops counting. */
+export function pendingHoldsCapacity(row: { status?: string; createdAt?: string }, at = now()): boolean {
+  if (row.status !== "pending") return false;
+  const created = Date.parse(row.createdAt ?? "");
+  if (!Number.isFinite(created)) return false;
+  return at.getTime() - created < HOLD_WINDOW_MS;
+}
+
+/** Only a fresh pending request holds capacity. Approved time moves to the appointment. Declined time is free. */
+export function requestHolds(requests: OnlineRequest[] | undefined, at = now()) {
+  return (requests ?? []).filter((row) => pendingHoldsCapacity(row, at)).map((row) => ({
     id: row.id,
     date: row.date,
     time: row.time,
