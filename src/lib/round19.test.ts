@@ -194,7 +194,8 @@ describe("round 19 appointments, phones, and logs", () => {
     assert.equal(shop.getState().updateAppointment(back.id, { status: "scheduled" }).ok, true);
     const putBack = shop.getState().settingsLog?.find((item) => item.field === "Put back");
     assert.match(putBack?.after ?? "", /Put back to scheduled/);
-    assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
+    shop.getState().setWorkingAs("derek");
+    assert.equal(shop.getState().addClosedDate("2026-12-24").ok, true);
     const closedDate = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "Thu, Dec 24");
     assert.ok(closedDate);
     assert.equal((closedDate?.after ?? "").includes("2026-12-24"), false);
@@ -227,6 +228,7 @@ describe("round 19 appointments, phones, and logs", () => {
     assert.equal(shop.getState().settings.address.includes("\u2028"), false);
     assert.equal(shop.getState().addTransportOption("Shuttle\u200E van"), true);
     assert.equal(shop.getState().settings.scheduling.transportOptions.some((row) => row.name === "Shuttle van"), true);
+    shop.getState().setWorkingAs("derek");
     assert.equal(shop.getState().addOnlineService({ name: "Oil\u0007 change", laborHours: 0.4 }), true);
     assert.equal(shop.getState().settings.scheduling.onlineMenu.some((row) => row.name === "Oil change" && row.laborHours === 0.4), true);
     const created = shop.getState().createCustomer({ name: "José\u0001 Alvarez", phone: "5095550199", year: 2020, model: "F-150\u2060" });

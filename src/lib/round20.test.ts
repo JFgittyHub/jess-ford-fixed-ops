@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "node:test";
 import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from "@tanstack/react-router";
 import { lengthLabel } from "../components/appointment-calendar.tsx";
 import { SchedulingSettingsForm } from "../components/scheduling-settings.tsx";
 import { ScorecardPulse } from "../components/scorecard/board.tsx";
@@ -141,8 +142,9 @@ describe("round 20 appointment writes", () => {
     assert.ok(other && otherVehicle);
     const refused = shop.getState().updateAppointment(missed.id, { customerId: other.id, vehicleId: otherVehicle.id });
     assert.match(refused.error ?? "", /no-show stays/);
-    assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
-    assert.equal(shop.getState().removeClosedDate("2026-12-24"), undefined);
+    shop.getState().setWorkingAs("derek");
+    assert.equal(shop.getState().addClosedDate("2026-12-24").ok, true);
+    assert.equal(shop.getState().removeClosedDate("2026-12-24").ok, true);
     const removed = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "removed");
     assert.equal(removed?.before, "Thu, Dec 24");
   });
@@ -299,10 +301,37 @@ describe("round 20 pulse, seed, and settings", () => {
     assert.equal(pullman.appointments.some((row) => row.date === "2026-11-27"), false);
   });
 
-  it("does not tell a blank worker that only an advisor can change scheduling", () => {
+  it("does not tell a blank worker that only an advisor can change scheduling", async () => {
     const shop = createSeed();
     useShop.setState({ ...shop, workingAsId: "", dataset: "sample", activeStoreId: "grand-coulee", stores: { "grand-coulee": shop, pullman: shop } });
-    const text = mount(createElement(SchedulingSettingsForm, {}));
+    const rootRoute = createRootRoute({ component: () => createElement(Outlet) });
+    const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: SchedulingSettingsForm });
+    const capacityRoute = createRoute({ getParentRoute: () => rootRoute, path: "/capacity", component: () => createElement("p", null, "Capacity") });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([indexRoute, capacityRoute]),
+      history: createMemoryHistory({ initialEntries: ["/"] }),
+    });
+    await router.load();
+    (router as { _rendered?: unknown[] })._rendered = [];
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    flushSync(() => {
+      root.render(createElement(RouterProvider, { router: router as never }));
+    });
+    let text = host.textContent ?? "";
+    for (let i = 0; i < 20 && !text.includes("Scheduling"); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      text = host.textContent ?? "";
+    }
+    const monday = host.querySelector('[aria-label="Monday opens"]') as HTMLInputElement | null;
     assert.equal(text.includes("Only an advisor or service manager can change scheduling."), false);
+    assert.match(text, /Choose who is working/);
+    assert.match(text, /Only a service manager can change shop hours, closed dates, and service labor hours/);
+    assert.ok(monday);
+    assert.equal(monday.disabled, true);
+    assert.equal(monday.getAttribute("aria-readonly"), "true");
+    flushSync(() => { root.unmount(); });
+    host.remove();
   });
 });

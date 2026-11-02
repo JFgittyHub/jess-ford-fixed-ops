@@ -628,6 +628,7 @@ describe("shipped flags", () => {
       fresh.getState().moveWorkToJob("open-helen", "labor", "oh-l1", "oh-move");
       assert.equal(fresh.getState().orders.find((row) => row.id === "open-helen")?.labor.find((line) => line.id === "oh-l1")?.jobId, "oh-move");
       const beforeTech = fresh.getState().techs.length;
+      fresh.getState().setWorkingAs("derek");
       assert.equal(fresh.getState().addTech({ number: "99", name: "Temp Tech", skill: "b", payStyle: "flat", flagRate: 20, hourlyRate: 20, board: "main" }), true);
       const added = fresh.getState().techs.find((row) => row.number === "99");
       assert.ok(added);

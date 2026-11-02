@@ -1,4 +1,5 @@
 import { advisorDayCapacity, appointmentLoads, onlineSlots } from "./capacity";
+import { now } from "./clock";
 import type { ContactMethod, Customer, OnlineChallenge, OnlineRequest, SchedulingSettings, StoreId, Vehicle } from "./types";
 import { normalizeVin, vinScheduleError } from "./vin";
 
@@ -111,9 +112,19 @@ export function revealSavedVehicles(input: {
   };
 }
 
-/** Only a pending request holds capacity. Approved time moves to the appointment. Declined time is free. */
-export function requestHolds(requests: OnlineRequest[] | undefined) {
-  return (requests ?? []).filter((row) => row.status === "pending").map((row) => ({
+const HOLD_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** A pending request holds capacity for 48 hours. After that it stops counting. */
+export function pendingHoldsCapacity(row: { status?: string; createdAt?: string }, at = now()): boolean {
+  if (row.status !== "pending") return false;
+  const created = Date.parse(row.createdAt ?? "");
+  if (!Number.isFinite(created)) return false;
+  return at.getTime() - created < HOLD_WINDOW_MS;
+}
+
+/** Only a fresh pending request holds capacity. Approved time moves to the appointment. Declined time is free. */
+export function requestHolds(requests: OnlineRequest[] | undefined, at = now()) {
+  return (requests ?? []).filter((row) => pendingHoldsCapacity(row, at)).map((row) => ({
     id: row.id,
     date: row.date,
     time: row.time,
@@ -121,6 +132,7 @@ export function requestHolds(requests: OnlineRequest[] | undefined) {
     techId: row.techId,
     laborHours: row.laborHours,
     status: row.status,
+    lane: row.transportId,
   }));
 }
 
@@ -144,7 +156,7 @@ export function matchRequestCustomer(
   return { customerId: customer.id, vehicleId: vehicle?.id ?? null };
 }
 
-export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId?: string; date?: string; now?: Date }) {
+export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId?: string; date?: string; now?: Date; transportId?: string }) {
   return onlineSlots({
     scheduling: shop.settings.scheduling,
     advisors: shop.advisors,
@@ -156,6 +168,7 @@ export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId
     from: input.date,
     through: input.date,
     now: input.now,
+    transportId: input.transportId,
   });
 }
 
@@ -240,7 +253,7 @@ export function submitOnlineRequest(
   if (pending.filter((row) => row.date === input.date).length >= storeCap) return { ok: false, reason: "limit", limit: storeCap, scope: "day" };
   if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit", limit: DEVICE_CAP, scope: "device" };
 
-  const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
+  const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at), transportId: transport.id }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };
   const tech = shop.techs.find((row) => row.id === slot.techId);
   return {

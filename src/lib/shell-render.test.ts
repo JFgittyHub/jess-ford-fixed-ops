@@ -20,6 +20,7 @@ import type { ShopData } from "./types.ts";
 const ROUTES = process.env.SMOKE_ROUTES?.split(",") ?? [
   "/",
   "/schedule",
+  "/capacity",
   "/request",
   "/online-requests",
   "/overrides",
@@ -344,13 +345,13 @@ describe("desk client mount", () => {
       assert.ok(button);
       button.click();
       await new Promise((resolve) => setTimeout(resolve, 30));
-      assert.match(document.body.textContent ?? "", /Customers only see a time when the technician still has hours/);
+      assert.match(document.body.textContent ?? "", /fits this store's capacity/);
       const dialog = [...document.querySelectorAll("[role=dialog]")].at(-1);
       const close = [...(dialog?.querySelectorAll("button") ?? [])].find((item) => item.textContent === "Close");
       assert.ok(close);
       close.click();
       await new Promise((resolve) => setTimeout(resolve, 30));
-      assert.equal((document.body.textContent ?? "").includes("Customers only see a time when the technician still has hours"), false);
+      assert.equal((document.body.textContent ?? "").includes("fits this store's capacity"), false);
     });
     assert.equal(thrown, "");
   });

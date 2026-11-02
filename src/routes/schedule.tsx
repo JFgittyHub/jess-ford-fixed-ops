@@ -1,7 +1,8 @@
-import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Calendar } from "lucide-react";
 import { useEffect, useRef, useState, type Ref } from "react";
-import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours, lengthLabel } from "@/components/appointment-calendar";
+import { AppointmentCalendar, addDays, clockRange, clockTime, dayLabel, flagHours, lengthLabel } from "@/components/appointment-calendar";
+import { CapacityDayStrip } from "@/components/capacity-day";
 import { CancelForm, CancelledHistory, DeskCancelActions } from "@/components/cancel-appointment";
 import { NewOrder } from "@/components/new-order";
 import { NoticeLog } from "@/components/notice-log";
@@ -10,7 +11,7 @@ import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
+import { advisorBookingNote, appointmentLoads, assessAppointment, dayCapacity, holdLoads, onlineSlots, unavailableBands } from "@/lib/capacity";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
@@ -70,6 +71,13 @@ export function SchedulePage({ openRequests = false }: { openRequests?: boolean 
   );
 }
 
+function closedChannel(scheduling: { capacity?: { maxWaiterPerSlot: number | null; maxArrivalsPerSlot: number | null } }, kind?: string) {
+  const caps = scheduling.capacity;
+  if (!caps) return false;
+  if (caps.maxArrivalsPerSlot === 0) return true;
+  return kind === "waiter" && caps.maxWaiterPerSlot === 0;
+}
+
 function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const shop = useShop();
   const navigate = useNavigate();
@@ -90,6 +98,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [discardBooking, setDiscardBooking] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(() => openRequests || wantsOnlineRequests(locationHash));
   const [timesOpen, setTimesOpen] = useState(false);
+  const [onlineTransport, setOnlineTransport] = useState("drop");
   const ignoreRequestsHash = useRef(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -136,9 +145,14 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     .filter((tech) => tech.board !== "none")
     .sort((a, b) => rank[a.board] - rank[b.board] || a.number.localeCompare(b.number, undefined, { numeric: true }));
   const onBoard = appointmentsOnBoard(shop.appointments);
-  const dayHours = onBoard
-    .filter((row) => row.date === day)
-    .reduce((sum, row) => sum + laborHours(row, shop.laborOps), 0);
+  const capacityView = dayCapacity({
+    scheduling: shop.settings.scheduling,
+    techs: board,
+    advisors: shop.advisors,
+    loads: [...appointmentLoads(shop.appointments, shop.laborOps), ...holdLoads(requestHolds(shop.onlineRequests))],
+    date: day,
+  });
+  const techLoad = new Map(capacityView.techs.map((row) => [row.id, row]));
   const actor = deskActor(shop);
   const canCancel = mayCancelAppointment(actor);
   const cancelling = shop.appointments.find((row) => row.id === cancelId) ?? null;
@@ -156,6 +170,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         from: day,
         through: day,
         techId: techFilter,
+        transportId: transports.some((row) => row.id === onlineTransport) ? onlineTransport : transports[0]?.id,
       }).map((slot) => slot.time))]
     : [];
   const pendingCount = (shop.onlineRequests ?? []).filter((row) => row.status === "pending").length;
@@ -168,7 +183,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     }
   }
 
-  function capacityFor(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }, ignoreId?: string) {
+  function capacityFor(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; lane?: string }, ignoreId?: string) {
     const dateError = bookingDateMessage(draft.date, shop.settings.scheduling);
     if (dateError) return { blocked: dateError, warning: null };
     const result = assessAppointment({
@@ -245,7 +260,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Appointments</p>
           <h1 className="mt-1 flex flex-wrap items-baseline gap-3 font-display text-5xl leading-none tracking-tight">
             {day === today() ? "Today" : dayLabel(day)}
-            <span className="text-2xl tabular-nums text-muted">{flagHours(dayHours)} / {board.length * TECH_DAY_GOAL} hrs</span>
+            <span className="text-2xl tabular-nums text-muted">{capacityView.closed ? "Closed" : `${flagHours(capacityView.usedHours)} / ${flagHours(capacityView.availableHours)} hrs`}</span>
           </h1>
           <p className="mt-2 max-w-xl text-muted">
             {inShop} in or through the drive today. {noShows} no-show. Each column is a technician. Drag a card across to move it. A booking kept past a capacity warning is listed under Overrides for this store. Pending online requests open from Online requests.
@@ -254,6 +269,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
           <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(nextOpenShopDay(day, shop.settings.scheduling)); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
+          <Link to="/capacity" className="btn btn-ghost btn-small">Capacity</Link>
           <Button small id="online-requests" onClick={() => setRequestsOpen(true)}>Online requests ({pendingCount})</Button>
           <Button small onClick={() => setTimesOpen(true)}>Online times</Button>
           <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
@@ -292,6 +308,12 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onCancel={canCancel ? (id) => askCancel(id) : undefined}
         label={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         hoursFor={(row) => laborHours(row, shop.laborOps)}
+        unavailableFor={(techId) => unavailableBands(shop.settings.scheduling, day, techId)}
+        loadFor={(techId) => {
+          const row = techLoad.get(techId);
+          const note = row && row.off !== "none" ? "Unavailable" : "";
+          return { used: row?.usedHours ?? 0, available: row?.availableHours ?? 0, note };
+        }}
         summary={(row) => {
           const customer = look.customer.get(row.customerId);
           const vehicle = look.vehicle.get(row.vehicleId);
@@ -315,6 +337,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         }}
       />
       )}
+
+      <CapacityDayStrip view={capacityView} advisors={shop.advisors} />
 
       {selected ? (
         <Selected
@@ -409,7 +433,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         <NoticeLog rows={shop.notices ?? []} />
       </Modal>
 
-      <Modal open={timesOpen} onClose={() => setTimesOpen(false)} wide title="Online times" description="Customers only see a time when the technician still has hours for this service and the advisor is not full. A full time is left off.">
+      <Modal open={timesOpen} onClose={() => setTimesOpen(false)} wide title="Online times" description="Customers only see a time that fits this store's capacity, including technician hours, time off, advisor limits, arrivals, and the online share. A full time is left off. Waiter limits apply when the customer chooses Waiter. Drop-off does not use the waiter cap. Express counts as a waiter.">
         <div className="flex flex-wrap gap-3">
           <Field label="Service">
             <select className="field" value={serviceId} onChange={(event) => patchSeed({ serviceId: event.target.value })}>
@@ -421,12 +445,17 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
               {board.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
             </select>
           </Field>
+          <Field label="Waiter or drop-off">
+            <select className="field" aria-label="Waiter or drop-off" value={transports.some((row) => row.id === onlineTransport) ? onlineTransport : transports[0]?.id ?? ""} onChange={(event) => setOnlineTransport(event.target.value)}>
+              {transports.map((row) => <option key={row.id} value={row.id}>{row.name}{row.kind === "waiter" ? " · waiter" : ""}</option>)}
+            </select>
+          </Field>
         </div>
         {onlineTimes.length === 0 ? (
-          <p className="mt-3 text-sm text-muted">No online openings for this technician on this day.</p>
+          <p className="mt-3 text-sm text-muted">{closedChannel(shop.settings.scheduling, transports.find((row) => row.id === onlineTransport)?.kind) ? "No online times are open. Call the shop." : "No online openings for this technician on this day."}</p>
         ) : (
           <ul className="mt-3 flex flex-wrap gap-2">
-            {onlineTimes.map((slot) => <li key={slot} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(slot)}</li>)}
+            {onlineTimes.map((slot) => <li key={slot} className="rounded-md border border-line px-2 py-1 text-sm tabular-nums">{clockTime(slot)} PT</li>)}
           </ul>
         )}
       </Modal>
@@ -646,7 +675,7 @@ export function AppointmentFields({
   transports: TransportOption[];
   submitLabel: string;
   showStatus?: boolean;
-  capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
+  capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; lane?: string }) => { blocked: string | null; warning: string | null };
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
@@ -672,7 +701,7 @@ export function AppointmentFields({
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
   const pastVisit = initial.date < today();
-  const capacity = capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
+  const capacity = capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds, lane }) ?? { blocked: null, warning: null };
   const alertText = transferWarning ? null : (formError || (owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
   return (

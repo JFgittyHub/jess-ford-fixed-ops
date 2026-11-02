@@ -16,6 +16,7 @@ import {
   Timer,
   Activity,
   BadgeDollarSign,
+  Gauge,
   Package,
   Receipt,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const STORES: { id: StoreId; label: string }[] = [
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
   { to: "/schedule", label: "Appointments", icon: CalendarClock },
+  { to: "/capacity", label: "Capacity", icon: Gauge },
   { to: "/overrides", label: "Overrides", icon: NotebookPen },
   { to: "/orders", label: "Repair orders", icon: ClipboardList },
   { to: "/estimates", label: "Repair estimates", icon: FileText },
@@ -234,7 +236,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
                     <option value="">Choose who is working</option>
                     {managers.length > 0 ? (
                       <optgroup label="Service managers">
-                        {managers.map((manager) => <option key={manager.id} value={manager.id}>#{manager.number} {manager.name}</option>)}
+                        {managers.map((manager) => <option key={manager.id} value={manager.id}>#{manager.number} {manager.name} · Service manager</option>)}
                       </optgroup>
                     ) : null}
                     <optgroup label="Advisors">
@@ -358,7 +360,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           {confirmClear ? (
             <div className="sm:col-span-2 grid gap-2">
               <p role="status" className="text-sm text-muted">
-                This removes every appointment and every capacity override, and the open repair orders. Closed repair orders, the change log, the request log, and the rosters stay. Sample data resets when you reload.
+                This removes every appointment and every capacity override, resets capacity settings and time off, and removes the open repair orders. Closed repair orders, the change log, the request log, and the rosters stay. Time off is not removed on its own. Sample data resets when you reload.
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -382,7 +384,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
               <p className="mt-1 text-sm text-muted">Read only. Settings, appointments, and online request decisions. Times are Pacific.</p>
               {settingsLog.length === 0 && requestLog.length === 0 ? <p className="mt-2 text-sm text-muted">No changes on this store yet.</p> : (
                 <ul className="mt-2 grid max-h-48 gap-1 overflow-auto text-sm">
-                  {settingsLog.map((row) => (
+                  {[...settingsLog].reverse().map((row) => (
                     <li key={`${row.at}-${row.field}-${row.after}`}>{changeLogLine(row)}</li>
                   ))}
                   {requestLog.map((row) => (

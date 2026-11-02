@@ -35,7 +35,7 @@ describe("round 15", () => {
     assert.equal(shop.getState().workingAsId, "derek");
     const row = shop.getState().settingsLog?.find((item) => item.field === "Clear shop data");
     assert.ok(row);
-    assert.match(row.after, /Cleared open work \(\d+ appointments, \d+ overrides\) — closed ROs kept/);
+    assert.match(row.after, /Cleared open work \(\d+ appointments, \d+ overrides\)\. Reset capacity settings and \d+ time-off entries\. Closed repair orders kept/);
     assert.equal(JSON.stringify(shop.getState().requestLog ?? []), JSON.stringify(requestLog));
     const worker = shop.getState().workingAsId;
     shop.getState().resetDemo(true);

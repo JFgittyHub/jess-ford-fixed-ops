@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { deskActor } from "@/lib/cancel";
 import { WEEKDAY_LABELS } from "@/lib/scheduling";
@@ -24,16 +25,18 @@ export function SchedulingSettingsForm() {
   const [note, setNote] = useState("");
   const actor = useShop((state) => deskActor(state));
   const canEdit = actor === "advisor" || actor === "service-manager";
-  const refused = "Only an advisor or service manager can change scheduling.";
+  const canManageShop = actor === "service-manager";
+  const shopLocked = "Only a service manager can change shop hours, closed dates, and service labor hours.";
+  const refused = actor === "customer" ? "Choose who is working." : "Only an advisor or service manager can change the booking window and transport options.";
 
   return (
     <div className="grid gap-4 sm:col-span-2">
       <div>
         <h2 className="font-display text-2xl leading-none">Scheduling</h2>
         <p className="mt-1 text-sm normal-case tracking-normal text-muted">
-          Hours, closed days, the online booking window, the service menu, and transport options belong to this store only. The menu has no prices and no free-text concern.
+          Hours, closed days, the online booking window, the service menu, and transport options belong to this store only. The menu has no prices and no free-text concern. Technician hours, time off, advisor limits, waiter and arrival caps, and the online share are on <Link to="/capacity" className="underline">Capacity</Link>.
         </p>
-        {actor === "customer" || canEdit ? null : <p role="status" className="mt-2 text-sm text-[#8a3b2a]">{refused}</p>}
+        {canManageShop ? null : <p role="status" className="mt-2 text-sm text-[#8a3b2a]">{actor === "customer" ? "Choose who is working. " : ""}{shopLocked}</p>}
       </div>
 
       <div className="grid gap-2">
@@ -45,10 +48,11 @@ export function SchedulingSettingsForm() {
               <input
                 type="checkbox"
                 checked={row.closed}
-                disabled={!canEdit}
+                disabled={!canManageShop}
                 onChange={(event) => {
-                  if (!canEdit) { setNote(refused); return; }
-                  updateDayHours(row.weekday as WeekdayIndex, { closed: event.target.checked });
+                  if (!canManageShop) { setNote(shopLocked); return; }
+                  const result = updateDayHours(row.weekday as WeekdayIndex, { closed: event.target.checked });
+                  if (!result.ok && result.error) setNote(result.error);
                 }}
               />
               Closed
@@ -58,16 +62,24 @@ export function SchedulingSettingsForm() {
               type="time"
               aria-label={`${WEEKDAY_LABELS[row.weekday]} opens`}
               value={row.open}
-              disabled={row.closed || !canEdit}
-              onChange={(event) => updateDayHours(row.weekday as WeekdayIndex, { open: event.target.value })}
+              disabled={row.closed || !canManageShop}
+              aria-readonly={row.closed || !canManageShop}
+              onChange={(event) => {
+                const result = updateDayHours(row.weekday as WeekdayIndex, { open: event.target.value });
+                if (!result.ok && result.error) setNote(result.error);
+              }}
             />
             <input
               className="field"
               type="time"
               aria-label={`${WEEKDAY_LABELS[row.weekday]} closes`}
               value={row.close}
-              disabled={row.closed || !canEdit}
-              onChange={(event) => updateDayHours(row.weekday as WeekdayIndex, { close: event.target.value })}
+              disabled={row.closed || !canManageShop}
+              aria-readonly={row.closed || !canManageShop}
+              onChange={(event) => {
+                const result = updateDayHours(row.weekday as WeekdayIndex, { close: event.target.value });
+                if (!result.ok && result.error) setNote(result.error);
+              }}
             />
           </div>
         ))}
@@ -77,17 +89,17 @@ export function SchedulingSettingsForm() {
         <p className="text-sm font-semibold normal-case tracking-normal">Closed dates</p>
         <div className="flex flex-wrap items-end gap-2">
           <Field label="Date">
-            <input className="field" type="date" disabled={!canEdit} value={closedDate} onChange={(event) => setClosedDate(event.target.value)} />
+            <input className="field" type="date" disabled={!canManageShop} aria-readonly={!canManageShop} value={closedDate} onChange={(event) => setClosedDate(event.target.value)} />
           </Field>
           <Button
             type="button"
-            disabled={!canEdit}
+            disabled={!canManageShop}
             onClick={() => {
-              if (!canEdit) { setNote(refused); return; }
+              if (!canManageShop) { setNote(shopLocked); return; }
               if (!closedDate) return;
               const added = addClosedDate(closedDate);
-              setNote(added ? "" : canEdit ? "That date is already closed, or it is not a real date." : refused);
-              if (added) setClosedDate("");
+              setNote(added.ok ? "" : (added.error ?? shopLocked));
+              if (added.ok) setClosedDate("");
             }}
           >
             Add closed date
@@ -98,7 +110,7 @@ export function SchedulingSettingsForm() {
             {scheduling.closedDates.map((iso) => (
               <li key={iso} className="flex items-center justify-between gap-2 text-sm normal-case tracking-normal">
                 <span className="tabular-nums">{iso}</span>
-                <Button type="button" small disabled={!canEdit} onClick={() => { if (!canEdit) { setNote(refused); return; } removeClosedDate(iso); }}>Remove</Button>
+                <Button type="button" small disabled={!canManageShop} onClick={() => { if (!canManageShop) { setNote(shopLocked); return; } const result = removeClosedDate(iso); if (!result.ok && result.error) setNote(result.error); }}>Remove</Button>
               </li>
             ))}
           </ul>
@@ -141,7 +153,9 @@ export function SchedulingSettingsForm() {
         updateOnlineService={updateOnlineService}
         removeOnlineService={removeOnlineService}
         canEdit={canEdit}
+        canManageShop={canManageShop}
         refused={refused}
+        shopLocked={shopLocked}
       />
 
       <TransportEditor
@@ -172,11 +186,15 @@ function MenuEditor({
   updateOnlineService,
   removeOnlineService,
   canEdit,
+  canManageShop,
   refused,
+  shopLocked,
 }: {
   scheduling: SchedulingSettings;
   canEdit: boolean;
+  canManageShop: boolean;
   refused: string;
+  shopLocked: string;
   serviceName: string;
   serviceHours: string;
   setServiceName: (value: string) => void;
@@ -212,8 +230,12 @@ function MenuEditor({
                 min={0.1}
                 step={0.1}
                 value={service.laborHours}
-                disabled={!canEdit}
-                onChange={(event) => updateOnlineService(service.id, { laborHours: Number(event.target.value) })}
+                disabled={!canManageShop}
+                aria-readonly={!canManageShop}
+                onChange={(event) => {
+                  if (!canManageShop) { setNote(shopLocked); return; }
+                  updateOnlineService(service.id, { laborHours: Number(event.target.value) });
+                }}
               />
             </Field>
             <Button type="button" small disabled={!canEdit} onClick={() => removeOnlineService(service.id)}>Remove</Button>
@@ -225,13 +247,13 @@ function MenuEditor({
           <input className="field" disabled={!canEdit} value={serviceName} onChange={(event) => setServiceName(event.target.value)} />
         </Field>
         <Field label="Labor hours">
-          <input className="field tabular-nums" type="number" min={0.1} step={0.1} disabled={!canEdit} value={serviceHours} onChange={(event) => setServiceHours(event.target.value)} />
+          <input className="field tabular-nums" type="number" min={0.1} step={0.1} disabled={!canManageShop} aria-readonly={!canManageShop} value={serviceHours} onChange={(event) => setServiceHours(event.target.value)} />
         </Field>
         <Button
           type="button"
-          disabled={!canEdit}
+          disabled={!canManageShop}
           onClick={() => {
-            if (!canEdit) { setNote(refused); return; }
+            if (!canManageShop) { setNote(shopLocked); return; }
             const added = addOnlineService({ name: serviceName, laborHours: Number(serviceHours) });
             setNote(added ? "" : "Need a new service name and a labor time greater than zero.");
             if (added) setServiceName("");

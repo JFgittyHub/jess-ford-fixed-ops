@@ -17,7 +17,18 @@ export interface RoHistoryEntry {
   at: string;
   who: string;
   whoId: string;
-  kind: "labor-removed" | "part-removed" | "fees-dropped" | "closed" | "reopened" | "amended" | "job-removed" | "diagnosis-cleared" | "fee-changed" | "mileage-override" | "note";
+  kind:
+    | "labor-removed"
+    | "part-removed"
+    | "fees-dropped"
+    | "closed"
+    | "reopened"
+    | "amended"
+    | "job-removed"
+    | "diagnosis-cleared"
+    | "fee-changed"
+    | "mileage-override"
+    | "note";
   text: string;
   /** Which field changed, when this entry is an amendment. */
   field?: string;
@@ -39,7 +50,8 @@ export type Skill = "master" | "a" | "b" | "diesel" | "express" | "quick";
 export type TechBoard = "express" | "main" | "internal" | "none";
 export type ApptStatus = "scheduled" | "arrived" | "no_show" | "in_shop" | "cancelled";
 /** Why an advisor or service manager cancelled a visit. `other` needs a note. */
-export type CancelReason = "customer-request" | "rescheduled" | "vehicle-gone" | "duplicate" | "other";
+export type CancelReason =
+  "customer-request" | "rescheduled" | "vehicle-gone" | "duplicate" | "other";
 /** Transport option id. Older appointments used express and loaner; those load as waiter and drop. */
 export type Lane = string;
 export type Department = "service" | "parts";
@@ -74,10 +86,48 @@ export interface OnlineService {
   laborHours: number;
 }
 
-/** How the customer spends the visit. Seeded with Waiter and Drop-off. */
+/** How the customer spends the visit. The kind stays with the name, not a generated id. */
 export interface TransportOption {
   id: string;
   name: string;
+  /** Waiter includes Express. Drop-off never uses the waiter cap. */
+  kind?: "waiter" | "drop" | "other";
+}
+
+/** Available hours for one technician, Sunday through Saturday. Null uses the shop's open hours. */
+export interface TechWeekHours {
+  techId: string;
+  hours: (number | null)[];
+}
+
+/** A technician off for a whole date, or for part of that date. */
+export interface TechTimeOff {
+  id: string;
+  techId: string;
+  date: string;
+  /** Both empty means the whole date. Otherwise HH:MM, end not included. */
+  start: string;
+  end: string;
+}
+
+/**
+ * Shop-defined capacity. Null caps mean "no extra limit": each technician gets
+ * the open day, and each advisor still gets one appointment per open hour
+ * across the day. Online share 100 leaves the whole day bookable online.
+ */
+export interface CapacitySettings {
+  techHours: TechWeekHours[];
+  timeOff: TechTimeOff[];
+  /** Appointments one advisor may start in the same clock hour. */
+  maxAdvisorAppointmentsPerHour: number | null;
+  /** Waiter arrivals that may start in the same 30-minute slot. */
+  maxWaiterPerSlot: number | null;
+  /** Appointments of any kind that may start in the same 30-minute slot. */
+  maxArrivalsPerSlot: number | null;
+  /** 0–100. Online customers only see this share of capacity. */
+  onlineSharePercent: number;
+  /** Set when stored settings were unreadable and reset. Empty when the save was fine. */
+  loadNotice: string;
 }
 
 export interface SchedulingSettings {
@@ -86,6 +136,7 @@ export interface SchedulingSettings {
   bookingWindow: BookingWindow;
   onlineMenu: OnlineService[];
   transportOptions: TransportOption[];
+  capacity: CapacitySettings;
 }
 
 export interface Settings {
@@ -533,7 +584,8 @@ export interface ShopNotice {
 }
 
 /** Why an advisor kept a booking the capacity check would not offer online. */
-export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff";
+export type OverrideReason =
+  "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff" | "waiter" | "arrivals" | "slot";
 
 export interface OverrideRecord {
   id: string;

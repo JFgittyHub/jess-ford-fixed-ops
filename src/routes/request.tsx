@@ -4,7 +4,7 @@ import { DeskLocked } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
 import { advisorDayCapacity } from "@/lib/capacity";
 import { confirmedDemoStaffAccess } from "@/lib/demo";
-import { today } from "@/lib/format";
+import { clockTime, today } from "@/lib/format";
 import { advisorForWebRequest, lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
 import { useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
@@ -72,7 +72,7 @@ function RequestPage() {
     Math.max(0, advisorDayCapacity(shop.settings.scheduling, date) - 1),
   );
   const transport = transports.some((row) => row.id === transportId) ? transportId : transports[0]?.id ?? "";
-  const slots = visitSlots(shop, { serviceId: service, advisorId: advisor });
+  const slots = visitSlots(shop, { serviceId: service, advisorId: advisor, transportId: transport });
   const dates = [...new Set(slots.map((slot) => slot.date))];
   const day = dates.includes(date) ? date : dates[0] ?? "";
   const times = [...new Set(slots.filter((slot) => slot.date === day).map((slot) => slot.time))];
@@ -367,11 +367,11 @@ function RequestPage() {
           </Field>
           <div>
             <p className="mb-2 text-sm font-semibold">Time</p>
-            {times.length === 0 ? <p className="text-sm text-muted">No open times in the booking window for this advisor.</p> : (
+            {times.length === 0 ? <p className="text-sm text-muted">No online times are open. Call the shop.</p> : (
               <div className="tap-targets flex flex-wrap gap-2" role="group" aria-label="Open times">
                 {times.map((item) => (
                   <Button key={item} small type="button" tone={pickedTime === item ? "primary" : "ghost"} aria-pressed={pickedTime === item} onClick={() => setTime(item)}>
-                    {item}
+                    {clockTime(item)} PT
                   </Button>
                 ))}
               </div>

@@ -56,15 +56,17 @@ describe("round 16", () => {
     shop.getState().setWorkingAs("marcus");
     const before = JSON.stringify(shop.getState().settings.scheduling);
     shop.getState().updateDayHours(1, { closed: true });
-    assert.equal(shop.getState().addClosedDate("2026-12-24"), false);
+    assert.equal(shop.getState().addClosedDate("2026-12-24").ok, false);
     shop.getState().removeClosedDate("2026-12-25");
     shop.getState().updateBookingWindow({ daysAhead: 3, minLeadHours: 2 });
     shop.getState().addOnlineService({ name: "Nope", laborHours: 1 });
     shop.getState().addTransportOption("Nope");
     assert.equal(JSON.stringify(shop.getState().settings.scheduling), before);
     shop.getState().setWorkingAs("megan");
-    assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
-    assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Closed date" && row.who === "Megan Cho"), true);
+    assert.equal(shop.getState().addClosedDate("2026-12-24").ok, false);
+    shop.getState().setWorkingAs("derek");
+    assert.equal(shop.getState().addClosedDate("2026-12-24").ok, true);
+    assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Closed date" && row.who === "Derek Lang"), true);
   });
 
   it("leaves a blank closed header blank when a saved shop is loaded", () => {

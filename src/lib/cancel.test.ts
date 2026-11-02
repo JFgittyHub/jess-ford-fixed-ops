@@ -470,7 +470,7 @@ describe("cancel an appointment", () => {
 
   it("lets a technician be removed when only cancelled appointments remain", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    shop.getState().setWorkingAs("megan");
+    shop.getState().setWorkingAs("derek");
     assert.equal(shop.getState().addTech({
       number: "77",
       name: "Temp Lane",
