@@ -284,11 +284,12 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
   const available = board.recorded ? availableHours(board, pace) : null;
   const bar = available && pace.projected !== null ? Math.min(1, pace.projected / available) : board.recorded ? 0 : undefined;
   const shown = attention.slice(0, 4);
-  const elrStatus: Status = !board.recorded || board.service.elr <= 0 ? "empty" : board.service.elr >= ELR_STANDARD ? "good" : board.service.elr >= 115 ? "watch" : "bad";
+  const partial = Boolean(board.sampleSpan);
+  const elrStatus: Status = partial || !board.recorded || board.service.elr <= 0 ? "empty" : board.service.elr >= ELR_STANDARD ? "good" : board.service.elr >= 115 ? "watch" : "bad";
   const serviceGrossDetail = board.recorded && board.service.sales > 0 ? `${formatPct(board.service.gross / board.service.sales)} gross` : "Gross not in yet";
   const partsGrossDetail = partsGp === null || !board.recorded ? "Gross not in yet" : `${formatPct(partsGp)} gross`;
   const finished = pace.closed || !board.recorded;
-  const hoursDetail = finished ? `Goal ${formatHours(board.hoursGoal)}` : `Projected of ${available ? formatHours(available) : "—"} available`;
+  const hoursDetail = partial ? board.sampleSpan : finished ? `Goal ${formatHours(board.hoursGoal)}` : `Projected of ${available ? formatHours(available) : "—"} available`;
   const hoursLabel = finished ? "Sold hours" : "MTD sold hours";
   const laborLabel = finished ? "Effective labor rate" : "MTD effective labor rate";
   const serviceLabel = finished ? "Service sales" : "MTD service sales";
@@ -297,7 +298,7 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
   return (
     <div className="grid gap-3">
       <section className="grid grid-cols-2 gap-3 rounded-lg border-2 border-primary p-3 lg:grid-cols-4">
-        <Kpi label={hoursLabel} value={board.recorded ? formatHours(board.service.totalHours) : "—"} secondary={pace.closed || pace.projected === null ? undefined : formatHours(pace.projected)} secondaryLabel="Projected" status={pace.status} detail={hoursDetail} bar={bar} />
+        <Kpi label={hoursLabel} value={board.recorded ? formatHours(board.service.totalHours) : "—"} secondary={partial || pace.closed || pace.projected === null ? undefined : formatHours(pace.projected)} secondaryLabel="Projected" status={partial ? "empty" : pace.status} detail={hoursDetail} bar={partial ? undefined : bar} />
         <Kpi label={laborLabel} value={board.recorded && board.service.elr > 0 ? formatMoney(board.service.elr, 2) : "—"} status={elrStatus} detail={`Standard ${formatMoney(ELR_STANDARD, 2)}`} />
         <Kpi label={serviceLabel} value={board.recorded ? formatMoney(board.service.sales) : "—"} secondary={board.recorded ? formatMoney(board.service.gross) : "—"} secondaryLabel="Gross" status="empty" detail={serviceGrossDetail} standard={formatPct(SERVICE_GP_STANDARD, 0)} />
         <Kpi label={partsLabel} value={board.recorded ? formatMoney(board.parts.sales) : "—"} secondary={board.recorded ? formatMoney(board.parts.gross) : "—"} secondaryLabel="Gross" status="empty" detail={partsGrossDetail} standard={formatPct(PARTS_GP_STANDARD, 0)} />
@@ -308,7 +309,7 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
         <Kpi label="YTD service sales" value={ytd.recorded ? formatMoney(ytd.serviceSales) : "—"} secondary={ytd.recorded ? formatMoney(ytd.serviceGross) : "—"} secondaryLabel="Gross" status="empty" detail={ytd.recorded && ytd.serviceSales > 0 ? `${formatPct(ytd.serviceGross / ytd.serviceSales)} gross` : "Gross not in yet"} standard={formatPct(SERVICE_GP_STANDARD, 0)} />
         <Kpi label="YTD parts sales" value={ytd.recorded ? formatMoney(ytd.partsSales) : "—"} secondary={ytd.recorded ? formatMoney(ytd.partsGross) : "—"} secondaryLabel="Gross" status="empty" detail={ytd.recorded && ytd.partsSales > 0 ? `${formatPct(ytd.partsGross / ytd.partsSales)} gross` : "Gross not in yet"} standard={formatPct(PARTS_GP_STANDARD, 0)} />
       </section>
-      <section className="card p-0">
+      {partial ? null : <section className="card p-0">
         <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
           <h2 className="font-display text-3xl leading-none">Needs a look</h2>
           <p className="text-sm text-muted">{health.headline} · {health.good}/{health.scored || 0}</p>
@@ -323,7 +324,7 @@ function Board({ board, pace, ytd, service, parts, ford, health, attention, toda
             ))}
           </ul>
         )}
-      </section>
+      </section>}
       {breakdown ? <StoreBreakdown slices={breakdown} combined={board} /> : null}
       <section id="scorecard" className="grid gap-3">
         <div className="flex flex-wrap items-end justify-between gap-2">

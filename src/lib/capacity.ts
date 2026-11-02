@@ -114,7 +114,7 @@ export function evaluateCapacity(input: {
   const advisorCapacity = !day.closed && knownAdvisor ? day.advisorCap : 0;
   const techOverloaded = !knownTech || techUsed + adding > techCapacity + EPSILON;
   const advisorOverloaded = !knownAdvisor || advisorUsed + 1 > advisorCapacity;
-  const blocked = day.closed ? "The store is closed that day." : staffBlockMessage(knownTech, knownAdvisor);
+  const blocked = day.closed ? "The shop is closed that day." : staffBlockMessage(knownTech, knownAdvisor);
   const warning = blocked
     ? null
     : capacityWarning({
@@ -180,7 +180,7 @@ export function staffBlockMessage(knownTech: boolean, knownAdvisor: boolean): st
 
 export function overrideReason(result: CapacityResult): OverrideReason | null {
   if (result.blocked || result.open || !result.warning) return null;
-  if (result.warning.startsWith("The store is closed")) return "closed";
+  if (result.warning.startsWith("The shop is closed")) return "closed";
   if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return null;
   if (result.tech.overloaded && result.advisor.overloaded) return "both";
   if (result.tech.overloaded) return "tech-hours";
@@ -258,7 +258,7 @@ function capacityWarning(input: {
   techOverloaded: boolean;
   advisorOverloaded: boolean;
 }): string | null {
-  if (input.closed) return "The store is closed that day.";
+  if (input.closed) return "The shop is closed that day.";
   if (input.techOverloaded && input.advisorOverloaded) return "This would overload technician hours and advisor capacity.";
   if (input.techOverloaded) return "This would overload technician hours for that job.";
   if (input.advisorOverloaded) return "This would overload advisor capacity.";

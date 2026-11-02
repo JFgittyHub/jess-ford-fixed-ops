@@ -80,11 +80,22 @@ describe("round 19 page hits", () => {
           slotResize: Boolean(slotHit?.closest("[data-drag='resize']")),
           upperZ: upperStyle.zIndex,
           lowerZ: lowerStyle.zIndex,
-          upperOverflow: upperStyle.overflow,
+          upperOverflow: getComputedStyle(document.querySelector("[data-appt-id='upper'] [data-card-clip]") as Element).overflow,
           gripZ: getComputedStyle(document.querySelector("[data-appt-id='upper'] [data-drag='resize']") as Element).zIndex,
           concern: document.querySelector("[data-appt-id='upper'] [data-concern]")?.getBoundingClientRect() ?? null,
           concernText: document.querySelector("[data-appt-id='upper'] [data-concern]")?.textContent ?? "",
           summary: document.querySelector("[data-appt-id='upper'] [aria-label='Appointment summary']")?.getBoundingClientRect() ?? null,
+          summaryCorners: (() => {
+            const box = document.querySelector("[data-appt-id='upper'] [aria-label='Appointment summary']")?.getBoundingClientRect();
+            if (!box) return false;
+            const points = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.left + 1, box.bottom - 1], [box.right - 1, box.bottom - 1]];
+            return points.every(([x, y]) => document.elementFromPoint(x, y)?.closest("[aria-label='Appointment summary']"));
+          })(),
+          gripHit: (() => {
+            const grip = document.querySelector("[data-appt-id='upper'] [data-drag='resize']")?.getBoundingClientRect();
+            if (!grip) return "";
+            return document.elementFromPoint(grip.left + grip.width / 2, grip.top + grip.height / 2)?.closest("[data-drag]")?.getAttribute("data-drag") ?? "";
+          })(),
         };
       });
       assert.ok(hit.upper && hit.lower && hit.grip && hit.solo && hit.closing && hit.closingGrip);
@@ -105,6 +116,8 @@ describe("round 19 page hits", () => {
       assert.equal(hit.concernText, "upper");
       assert.ok(hit.concern && hit.grip && hit.concern.bottom <= hit.grip.top + 1);
       assert.ok(hit.summary && hit.summary.width >= 44 && hit.summary.height >= 44);
+      assert.equal(hit.summaryCorners, true);
+      assert.equal(hit.gripHit, "resize");
       assert.ok(hit.soloColumn);
       assert.ok(hit.solo.bottom + 16 <= hit.soloColumn.bottom);
     } finally {

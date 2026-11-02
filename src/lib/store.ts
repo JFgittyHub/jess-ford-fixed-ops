@@ -251,6 +251,10 @@ function realDay(iso: string) {
   return stamp.getUTCFullYear() === year && stamp.getUTCMonth() === month - 1 && stamp.getUTCDate() === day;
 }
 
+export function bookingDateMessage(iso: string, scheduling: { hours: { weekday: number; closed: boolean }[]; closedDates: string[] }) {
+  return appointmentDateError(iso, scheduling);
+}
+
 function appointmentDateError(iso: string, scheduling: { hours: { weekday: number; closed: boolean }[]; closedDates: string[] }) {
   if (!realDay(iso)) return "That date is not a real day.";
   if (iso < today()) return "That day is already past.";
@@ -276,10 +280,8 @@ function clockTimeError(time: string) {
 }
 
 function storedPhone(value: string) {
-  const cleaned = cleanFreeText(value).trim();
-  const key = phoneKey(cleaned);
-  if (key.length === 10) return key;
-  return cleaned.slice(0, 20);
+  const key = phoneKey(cleanFreeText(value).trim());
+  return key || "";
 }
 
 const HOUR_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -369,8 +371,8 @@ function appointmentEditRows(
   if (Array.isArray(patch.lines)) {
     const beforeLines = current.lines.map((line) => line.concern).filter(Boolean);
     const afterLines = patch.lines.map((line) => cleanFreeText(line.concern).trim().slice(0, 500)).filter(Boolean);
-    const kept = afterLines.length > 0 && afterLines.every((concern, index) => concern === beforeLines[index]);
-    if (afterLines.length > 0 && !kept) push("concern", beforeLines.join("; ") || "none", afterLines.join("; ") || "none");
+    const sameLines = afterLines.length === beforeLines.length && afterLines.every((concern, index) => concern === beforeLines[index]);
+    if (!sameLines) push("concern", beforeLines.join("; ") || "none", afterLines.join("; ") || "none");
   } else if (typeof patch.concern === "string") {
     const applied = cleanFreeText(patch.concern).trim().slice(0, 500);
     const lineText = current.lines.length === 1 ? current.lines[0]?.concern ?? "" : "";
@@ -2980,7 +2982,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const model = asText(cleanFreeText(input.model), NAME_MAX);
         if (!name || !model || typeof input.phone !== "string") return { customerId: "", vehicleId: "", error: "Add the customer name and model.", warning: null };
         const phone = storedPhone(input.phone);
-        if (input.phone.trim() && !phoneKey(input.phone)) return { customerId: "", vehicleId: "", error: "Enter a phone number.", warning: null };
+        if (input.phone.trim() && !phone) return { customerId: "", vehicleId: "", error: "Enter a phone number.", warning: null };
+        if ((input.mobile ?? "").trim() && !phoneKey(input.mobile ?? "")) return { customerId: "", vehicleId: "", error: "Enter a phone number.", warning: null };
+        const email = dedupeKey(input.email ?? "").trim().toLowerCase();
+        if (email.length > 120) return { customerId: "", vehicleId: "", error: "Keep the email to 120 characters.", warning: null };
         if (input.vin != null && typeof input.vin !== "string") return { customerId: "", vehicleId: "", error: "Enter a 17-character VIN.", warning: null };
         const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
         const vinError = vinScheduleError(vinText);
@@ -3007,8 +3012,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             id: customerId,
             name,
             phone,
-            mobile: input.mobile ? storedPhone(input.mobile).slice(0, 20) : "",
-            email: dedupeKey(input.email ?? "").trim().toLowerCase().slice(0, 120),
+            mobile: input.mobile?.trim() ? storedPhone(input.mobile) : "",
+            email,
             noShows: 0,
           }, ...shop.customers],
           vehicles: [
@@ -3341,19 +3346,17 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                   })).filter((line) => line.concern)
                 : [];
               const currentConcerns = row.lines.map((line) => line.concern).filter(Boolean);
-              const samePrefix = editedLines.length > 0 && editedLines.every((line, index) => line.concern === currentConcerns[index]);
+              const sameLines = Array.isArray(patch.lines) && editedLines.length === currentConcerns.length && editedLines.every((line, index) => line.concern === currentConcerns[index]);
               const sameConcern = concernOnly !== null && (
                 concernOnly === row.concern
                 || concernOnly === row.lines[0]?.concern
                 || concernOnly === concernFromLines(row.lines)
               );
-              const lines = samePrefix
-                ? row.lines
-                : editedLines.length > 0
-                  ? editedLines
-                  : concernOnly && !sameConcern
-                    ? [{ id: row.lines[0]?.id || uid("al"), code: row.lines[0]?.code || "A", concern: concernOnly }]
-                    : row.lines;
+              const lines = Array.isArray(patch.lines)
+                ? (sameLines ? row.lines : editedLines)
+                : concernOnly && !sameConcern
+                  ? [{ id: row.lines[0]?.id || uid("al"), code: row.lines[0]?.code || "A", concern: concernOnly }]
+                  : row.lines;
               const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index) }));
               const vehicleId = patch.vehicleId || row.vehicleId;
               const vehicleChanged = Boolean((patch.customerId && patch.customerId !== row.customerId) || (patch.vehicleId && patch.vehicleId !== row.vehicleId));
@@ -3372,7 +3375,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                 time,
                 date,
                 lines: kept,
-                concern: concernFromLines(kept) || row.concern,
+                concern: Array.isArray(patch.lines) ? concernFromLines(kept) : (concernFromLines(kept) || row.concern),
                 vin,
                 laborOpIds,
                 vehicleId,
@@ -3404,6 +3407,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const owned = state.vehicles.find((row) => row.id === input.vehicleId);
         if (!owned || owned.customerId !== input.customerId) return "";
         if (appointmentDateError(input.date || "", state.settings.scheduling)) return "";
+        if (input.time && clockTimeError(input.time)) return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
         if (Array.isArray(input.laborOpIds)) {
           if (new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
@@ -3487,6 +3491,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!existing || dateChanged) {
           const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
           if (dateError) return { ok: false, appointmentId: "", overrideId: null, error: dateError };
+        }
+        if (input.time && clockTimeError(input.time)) {
+          return { ok: false, appointmentId: "", overrideId: null, error: clockTimeError(input.time) };
+        }
+        if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) {
+          return { ok: false, appointmentId: "", overrideId: null, error: "That lane is not on this store." };
+        }
+        if (Array.isArray(input.laborOpIds)) {
+          if (new Set(input.laborOpIds).size !== input.laborOpIds.length) {
+            return { ok: false, appointmentId: "", overrideId: null, error: "That labor operation is listed twice." };
+          }
+          if (input.laborOpIds.some((opId) => !state.laborOps.some((op) => op.id === opId))) {
+            return { ok: false, appointmentId: "", overrideId: null, error: "That labor operation is not on this store." };
+          }
         }
         const appointmentId = existingId ?? uid("ap");
         const result = assessAppointment({

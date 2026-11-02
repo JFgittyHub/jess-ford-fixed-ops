@@ -111,8 +111,8 @@ describe("round 20 appointment writes", () => {
     assert.equal(logs(), before);
     const empty = shop.getState().updateAppointment(row.id, { lines: [{ id: "x", code: "A", concern: "  " }] });
     assert.equal(empty.ok, true, empty.error ?? "");
-    assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.lines[0]?.concern, row.lines[0]?.concern);
-    assert.equal(logs(), before);
+    assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.lines.length, 0);
+    assert.ok(logs() > before);
   });
 
   it("puts a visit back to scheduled in words and dates a removed closed day", () => {

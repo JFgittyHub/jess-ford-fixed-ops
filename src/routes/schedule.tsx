@@ -21,7 +21,7 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
-import { nextOpenShopDay, useShop } from "@/lib/store";
+import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import type { Appointment, CancelReason, TransportOption } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
@@ -167,6 +167,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   }
 
   function capacityFor(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }, ignoreId?: string) {
+    const dateError = bookingDateMessage(draft.date, shop.settings.scheduling);
+    if (dateError) return { blocked: dateError, warning: null };
     const result = assessAppointment({
       scheduling: shop.settings.scheduling,
       advisors: shop.advisors,
@@ -427,7 +429,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         )}
       </Modal>
 
-      <Modal open={booking} onClose={() => { if (bookingDirty) { setDiscardBooking(true); return; } setBooking(false); }} title="Book an appointment" description={`${dayLabel(date)} at ${clockTime(time)}.`}>
+      <Modal open={booking} onClose={() => { if (bookingDirty) { setDiscardBooking(true); return; } setBooking(false); }} title="Book an appointment" description={`${dayLabel(date)} · ${clockTime(time)}`}>
         {discardBooking ? (
           <div className="grid gap-3">
             <p role="alert">Discard this booking?</p>
@@ -459,7 +461,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         />
       </Modal>
 
-      <Modal open={editing !== null} onClose={() => setEditingId(null)} title="Appointment details" description={editing ? `${dayLabel(editing.date)} · ${editing.time}` : undefined}>
+      <Modal open={editing !== null} onClose={() => setEditingId(null)} title="Appointment details" description={editing ? `${dayLabel(editing.date)} · ${clockTime(editing.time)}` : undefined}>
         {editing ? (
           <>
             {editing.status === "cancelled" ? (
@@ -816,7 +818,7 @@ function AppointmentFields({
       {capacity.warning ? (
         <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{capacity.warning}</p>
       ) : null}
-      <Button tone="primary" type="submit">{submitLabel}</Button>
+      <Button tone="primary" type="submit" disabled={Boolean(capacity.blocked)}>{submitLabel}</Button>
     </form>
   );
 }

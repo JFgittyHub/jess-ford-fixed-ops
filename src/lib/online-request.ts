@@ -68,10 +68,6 @@ export function lookupOnlineCustomer(
   const trimmed = query.trim();
   if (!trimmed) return { kind: "new" };
   const matches = new Map<string, Customer>();
-  const nameKey = dedupeKey(trimmed).toLowerCase();
-  for (const customer of customers) {
-    if (nameKey && dedupeKey(customer.name).toLowerCase() === nameKey) matches.set(customer.id, customer);
-  }
   if (trimmed.includes("@")) {
     const email = emailKey(trimmed);
     for (const customer of customers) {
@@ -180,8 +176,12 @@ export function submitOnlineRequest(
   let customerId: string | null = null;
   let vehicleId: string | null = null;
   let customerName = textField(cleanFreeText(input.customerName), 80);
-  let phone = textField(cleanFreeText(input.phone), 20);
-  let email = textField(cleanFreeText(input.email), 120).toLowerCase();
+  const phoneRaw = cleanFreeText(input.phone ?? "").trim();
+  const emailRaw = cleanFreeText(input.email ?? "").trim();
+  if (phoneRaw && !phoneKey(phoneRaw)) return { ok: false, reason: "contact" };
+  if (emailRaw.length > 120) return { ok: false, reason: "contact" };
+  let phone = textField(phoneRaw, 20);
+  let email = textField(emailRaw, 120).toLowerCase();
   let year = Math.trunc(Number(input.year) || 0);
   let make = textField(cleanFreeText(input.make), 40);
   let model = textField(cleanFreeText(input.model), 40);
@@ -370,14 +370,17 @@ function isFormatOrIgnorable(code: number) {
   return /\p{Cf}|\p{Default_Ignorable_Code_Point}/u.test(text);
 }
 
+const UK_FLAGS = ["gbeng", "gbsct", "gbwls"];
+
 function flagTagKeep(codes: number[]) {
   const keep = codes.map(() => false);
   for (let index = 0; index < codes.length; index += 1) {
     if (codes[index] !== 0x1f3f4) continue;
-    let end = index + 1;
-    while (end < codes.length && (codes[end] ?? 0) >= 0xe0020 && (codes[end] ?? 0) <= 0xe007e) end += 1;
-    if (end > index + 1 && codes[end] === 0xe007f) {
-      for (let mark = index + 1; mark <= end; mark += 1) keep[mark] = true;
+    for (const name of UK_FLAGS) {
+      const tags = [...name].map((letter) => 0xe0000 + letter.charCodeAt(0));
+      if (codes[index + tags.length + 1] !== 0xe007f) continue;
+      if (tags.some((tag, offset) => codes[index + 1 + offset] !== tag)) continue;
+      for (let mark = 1; mark <= tags.length + 1; mark += 1) keep[index + mark] = true;
     }
   }
   return keep;
@@ -388,8 +391,15 @@ function keepJoiner(codes: number[], index: number) {
   const next = codes[index + 1] ?? 0;
   const prevBase = prev === VS16 || prev === VS15 || (prev >= 0x1f3fb && prev <= 0x1f3ff) ? (codes[index - 2] ?? 0) : prev;
   if (joiningScript(prev) && joiningScript(next)) return true;
-  if ((isEmojiBase(prev) || isEmojiBase(prevBase) || hasPresentation(prevBase)) && (isEmojiBase(next) || hasPresentation(next))) return true;
-  return false;
+  return (isEmojiBase(prev) || isEmojiBase(prevBase)) && isEmojiBase(next);
+}
+
+function keepVariation(codes: number[], index: number) {
+  const prev = codes[index - 1] ?? 0;
+  const next = codes[index + 1] ?? 0;
+  if ((prev >= 0x30 && prev <= 0x39) || prev === 0x23 || prev === 0x2a) return next === 0x20e3;
+  if (prev === 0xa9 || prev === 0xae || prev === 0x2122) return false;
+  return hasPresentation(prev) && !((prev >= 0x30 && prev <= 0x39) || prev === 0x23 || prev === 0x2a);
 }
 
 /** NFC, then drop format characters. Joiners stay for Arabic, Indic, and emoji. VS15 and VS16 stay after a presentation character. */
@@ -401,7 +411,7 @@ export function cleanFreeText(value: unknown): string {
   return chars.filter((_, index) => {
     const code = codes[index] ?? 0;
     if (code === ZWJ || code === ZWNJ) return keepJoiner(codes, index);
-    if (code === VS15 || code === VS16) return hasPresentation(codes[index - 1] ?? 0);
+    if (code === VS15 || code === VS16) return keepVariation(codes, index);
     if ((code >= 0xfe00 && code <= 0xfe0d) || (code >= 0xe0100 && code <= 0xe01ef)) return false;
     if (code >= 0xe0020 && code <= 0xe007f) return flags[index] === true;
     return !isFormatOrIgnorable(code);
@@ -467,9 +477,9 @@ function internationalKey(digits: string) {
     if (digits.length !== 11 || /^0+$/.test(digits.slice(1))) return "";
     return digits.slice(1);
   }
-  if (!code) return digits.length >= 8 ? `+${digits}` : "";
+  if (!code) return "";
   let national = digits.slice(code.length);
-  if (national.startsWith("0")) national = national.replace(/^0+/, "");
+  if (!["39", "378", "379"].includes(code) && national.startsWith("0")) national = national.replace(/^0+/, "");
   if (national.length < 4 || /^0+$/.test(national)) return "";
   const key = `${code}${national}`;
   if (key.length < 8 || key.length > 15) return "";

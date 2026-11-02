@@ -357,29 +357,33 @@ export function AppointmentCalendar({
                     data-appt
                     data-appt-id={row.id}
                     data-drag="move"
-                    className={`group absolute overflow-hidden rounded-md border border-[#c5d7ee] bg-[#e7f1fb] pl-1.5 pr-7 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
-                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
+                    className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
+                    style={{ position: "absolute", overflow: "visible", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
-                    <p className="pointer-events-none absolute truncate text-[11px] font-semibold leading-[10px]" style={{ left: 6, right: 46, top: 0, height: 8, margin: 0, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
-                    <p className="pointer-events-none absolute truncate text-[11px] leading-[10px]" data-concern style={{ left: 6, right: 46, top: 8, height: 10, margin: 0, overflow: "hidden" }}>{row.concern}</p>
-                    <button
-                      type="button"
-                      aria-label="Change length"
-                      data-drag="resize"
-                      className="absolute inset-x-1 bottom-0 cursor-ns-resize border-0 p-0"
-                      style={{ position: "absolute", left: 4, right: 32, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
-                      onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
-                    >
-                      <span className={`pointer-events-none mx-auto mt-1 block h-1 w-10 rounded-full ${selected ? "bg-primary" : "bg-[#5d87b0]"} group-hover:h-1.5`} />
-                    </button>
+                    <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
+                      <p className={`pointer-events-none absolute text-[11px] font-semibold ${row.minutes >= 60 ? "" : "truncate"}`} style={{ left: 6, right: 48, top: 0, height: row.minutes >= 60 ? 28 : 11, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden", whiteSpace: row.minutes >= 60 ? "normal" : "nowrap" }}>{clockTime(row.time)} {label(row)}</p>
+                      <p className="pointer-events-none absolute truncate text-[11px] leading-[10px]" data-concern style={{ left: 6, right: 48, top: row.minutes >= 60 ? 28 : 11, height: 8, margin: 0, overflow: "hidden" }}>{row.concern}</p>
+                      <button
+                        type="button"
+                        aria-label="Change length"
+                        data-drag="resize"
+                        className="absolute cursor-ns-resize border-0 p-0"
+                        style={{ position: "absolute", left: 4, right: 48, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
+                        onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
+                      >
+                        <span className={`pointer-events-none mx-auto mt-1 block h-1 w-10 rounded-full ${selected ? "bg-primary" : "bg-[#5d87b0]"} group-hover:h-1.5`} />
+                      </button>
+                    </div>
                     <button
                       type="button"
                       aria-label="Appointment summary"
-                      className="absolute top-0 right-0 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
+                      data-drag="move"
+                      className="absolute z-20 flex items-center justify-center border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
+                      style={{ top: -14, right: 0, width: 44, height: 44, margin: 0, zIndex: 30 }}
                       onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                       onMouseLeave={scheduleHide}
-                      onPointerDown={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move"); }}
                       onClick={() => onSelect(row.id)}
                     >
                       <span className="pointer-events-none text-[10px] leading-none">?</span>

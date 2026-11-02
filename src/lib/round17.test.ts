@@ -95,7 +95,8 @@ describe("round 17 clock and change log", () => {
     assert.equal(hours.before.includes("{"), false);
     assert.match(hours.after, /Mon closed/);
     assert.match(changeLogLine(hours), /Hours Mon: .+ → Mon closed · .+ PT$/);
-    const visit = draft(store.getState(), { date: bookableDay(1) });
+    const scheduling = store.getState().settings.scheduling;
+    const visit = draft(store.getState(), { date: bookableDay(0, { hours: scheduling.hours, closedDates: scheduling.closedDates }) });
     const id = store.getState().addAppointment(visit);
     const moved = store.getState().moveAppointment(id, { time: "12:30", techId: "elena" });
     assert.equal(moved.ok, true, moved.error ?? "");
