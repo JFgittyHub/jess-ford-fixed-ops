@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { bookableDay } from "./bookable-day.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -119,7 +120,7 @@ describe("appointment actions", () => {
 
 function draft(customerId: string, vehicleId: string, advisorId: string, techId: string, time: string): Omit<Appointment, "id" | "orderId" | "status"> {
   return {
-    date: "2026-12-02",
+    date: bookableDay(),
     time,
     minutes: 60,
     customerId,

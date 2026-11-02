@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Meter } from "@/components/ui";
-import { today } from "@/lib/format";
+import { lengthLabel, today } from "@/lib/format";
 import type { Appointment, TechBoard } from "@/lib/types";
 
 const START = 7 * 60;
@@ -9,11 +9,7 @@ const SNAP = 30;
 const SLOT = 32;
 const HANDLE = 10;
 
-export function lengthLabel(minutes: number) {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = minutes / 60;
-  return Number.isInteger(hours) ? `${hours} hr` : `${hours} hr`;
-}
+export { lengthLabel };
 
 export function cardBlockHeight(minutes: number) {
   return Math.max(SLOT - 2, (minutes / SNAP) * SLOT - 2);
@@ -365,10 +361,8 @@ export function AppointmentCalendar({
                     style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
-                    <div className="overflow-hidden" style={{ height: `calc(100% - ${HANDLE}px)`, paddingTop: 2 }}>
-                      <p className="truncate text-xs font-semibold leading-4">{clockTime(row.time)} {label(row)}</p>
-                      <p className="truncate text-xs leading-4">{row.concern}</p>
-                    </div>
+                    <p className="pointer-events-none absolute truncate text-[11px] font-semibold leading-[10px]" style={{ left: 6, right: 46, top: 0, height: 8, margin: 0, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
+                    <p className="pointer-events-none absolute truncate text-[11px] leading-[10px]" data-concern style={{ left: 6, right: 46, top: 8, height: 10, margin: 0, overflow: "hidden" }}>{row.concern}</p>
                     <button
                       type="button"
                       aria-label="Change length"
@@ -382,13 +376,13 @@ export function AppointmentCalendar({
                     <button
                       type="button"
                       aria-label="Appointment summary"
-                      className="absolute top-0.5 right-0.5 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
-                      style={{ top: 2, right: 2, height: 18, width: 18, minHeight: 0, minWidth: 0 }}
+                      className="absolute top-0 right-0 z-10 flex min-h-11 min-w-11 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
                       onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                       onMouseLeave={scheduleHide}
                       onPointerDown={(event) => event.stopPropagation()}
+                      onClick={() => onSelect(row.id)}
                     >
-                      ?
+                      <span className="pointer-events-none text-[10px] leading-none">?</span>
                     </button>
                   </article>
                 );

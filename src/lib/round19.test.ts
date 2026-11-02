@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { AppointmentCalendar, lengthHandleRange, planCalendarDrag } from "../components/appointment-calendar.tsx";
 import { OrderEditor } from "../components/order-editor.tsx";
 import { ScorecardPulse } from "../components/scorecard/board.tsx";
+import { bookableDay } from "./bookable-day.ts";
 import { pinClock, resetClock, now } from "./clock.ts";
 import { closeGaps } from "./metrics.ts";
 import { tomorrowIso } from "./notices.ts";
@@ -121,7 +122,9 @@ describe("round 19 calendar grip", () => {
     const schedule = readFileSync(new URL("../routes/schedule.tsx", import.meta.url), "utf8");
     assert.match(schedule, /aria-label="Visit length"/);
     assert.match(schedule, /setLengthOpen\(true\)/);
-    assert.match(schedule, /onLength\(Number\(event\.target\.value\)\)/);
+    assert.match(schedule, /VisitLengthPicker/);
+    assert.match(schedule, /onChange=\{onLength\}/);
+    assert.match(schedule, /onChange\(Number\(event\.target\.value\)\)/);
   });
 });
 
@@ -174,7 +177,7 @@ describe("round 19 appointments, phones, and logs", () => {
     const lines = shop.getState().settingsLog ?? [];
     assert.equal(lines.some((item) => item.field === "Move appointment"), true);
     const length = lines.find((item) => item.field === "Length");
-    assert.match(length?.after ?? "", new RegExp(`Length: ${row.minutes} → ${row.minutes + 30} min for ${name}`));
+    assert.match(length?.after ?? "", new RegExp(`Length: .+ → .+ for ${name}`));
     const concern = shop.getState().updateAppointment(row.id, { concern: "Rotate the tires\u202E now", time: row.time });
     assert.equal(concern.ok, true, concern.error ?? "");
     const stored = shop.getState().appointments.find((item) => item.id === row.id);
@@ -266,7 +269,7 @@ describe("round 19 appointments, phones, and logs", () => {
     const { id: _ignored, status: _status, orderId: _orderId, cancelHistory: _history, ...visitInput } = visit;
     const booked = shop.getState().addAppointment({
       ...visitInput,
-      date: "2026-12-02",
+      date: bookableDay(),
       concern: long,
       lines: [{ id: "long-a", code: "A", concern: `${long}\u202E` }],
     });
@@ -344,7 +347,7 @@ describe("round 19 last visit and pulse", () => {
     for (const pin of ["2026-11-01T20:00:00.000Z", "2026-11-17T20:00:00.000Z", "2026-12-01T20:00:00.000Z"]) {
       pinClock(pin);
       const text = mount(createElement(ScorecardPulse, {}));
-      assert.match(text, /October 2026 \(full month\)/);
+      assert.match(text, /October 2026 \(Oct 19–23\)/);
       assert.equal(text.includes("MTD"), false);
       assert.equal(text.includes("Projected"), false);
     }

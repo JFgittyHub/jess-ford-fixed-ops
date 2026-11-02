@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Calendar } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Ref } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours, lengthLabel } from "@/components/appointment-calendar";
 import { CancelForm, CancelledHistory, DeskCancelActions } from "@/components/cancel-appointment";
 import { NewOrder } from "@/components/new-order";
@@ -21,12 +21,30 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
-import { useShop } from "@/lib/store";
+import { nextOpenShopDay, useShop } from "@/lib/store";
 import type { Appointment, CancelReason, TransportOption } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
 
 const LENGTHS = [30, 60, 90, 120, 180, 240];
+
+export function VisitLengthPicker({
+  minutes,
+  lengths,
+  onChange,
+  inputRef,
+}: {
+  minutes: number;
+  lengths: number[];
+  onChange: (minutes: number) => void;
+  inputRef?: Ref<HTMLSelectElement>;
+}) {
+  return (
+    <select ref={inputRef} className="field min-h-11 w-full max-w-xs" aria-label="Visit length" value={minutes} onChange={(event) => onChange(Number(event.target.value))}>
+      {lengths.map((item) => <option key={item} value={item}>{lengthLabel(item)}</option>)}
+    </select>
+  );
+}
 
 function laborHours(row: Appointment, laborOps: { id: string; hours: number }[]) {
   const ids = Array.isArray(row.laborOpIds) ? row.laborOpIds : [];
@@ -231,7 +249,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           {actor === "technician" ? <p role="note" className="mt-2 text-sm font-semibold text-[#8a5a00]">Techs can view only.</p> : null}
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
-          <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(day); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
+          <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(nextOpenShopDay(day, shop.settings.scheduling)); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
           <Button small id="online-requests" onClick={() => setRequestsOpen(true)}>Online requests ({pendingCount})</Button>
           <Button small onClick={() => setTimesOpen(true)}>Online times</Button>
           <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
@@ -256,7 +274,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             setActionError(actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything.");
             return;
           }
-          setDate(day);
+          setDate(nextOpenShopDay(day, shop.settings.scheduling));
           patchSeed({ techId: nextTech });
           setTime(nextTime);
           setBooking(true);
@@ -589,9 +607,7 @@ function Selected({
         {lengthOpen ? (
           <label className="grid basis-full gap-1 text-sm">
             Visit length
-            <select ref={lengthPicker} className="field min-h-11 w-full max-w-xs" aria-label="Visit length" value={row.minutes} onChange={(event) => onLength(Number(event.target.value))}>
-              {lengths.map((minutes) => <option key={minutes} value={minutes}>{lengthLabel(minutes)}</option>)}
-            </select>
+            <VisitLengthPicker inputRef={lengthPicker} minutes={row.minutes} lengths={lengths} onChange={onLength} />
           </label>
         ) : null}
         <Button small onClick={onEdit}>Edit details</Button>
@@ -687,9 +703,7 @@ function AppointmentFields({
           </select>
         </Field>
         <Field label="Length">
-          <select className="field" value={minutes} onChange={(event) => setMinutes(Number(event.target.value))}>
-            {lengths.map((item) => <option key={item} value={item}>{lengthLabel(item)}</option>)}
-          </select>
+          <VisitLengthPicker minutes={minutes} lengths={lengths} onChange={setMinutes} />
         </Field>
         <Field label="Lane">
           <select className="field" value={lane} onChange={(event) => setLane(event.target.value)}>

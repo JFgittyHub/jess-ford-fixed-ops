@@ -82,6 +82,9 @@ describe("round 19 page hits", () => {
           lowerZ: lowerStyle.zIndex,
           upperOverflow: upperStyle.overflow,
           gripZ: getComputedStyle(document.querySelector("[data-appt-id='upper'] [data-drag='resize']") as Element).zIndex,
+          concern: document.querySelector("[data-appt-id='upper'] [data-concern]")?.getBoundingClientRect() ?? null,
+          concernText: document.querySelector("[data-appt-id='upper'] [data-concern]")?.textContent ?? "",
+          summary: document.querySelector("[data-appt-id='upper'] [aria-label='Appointment summary']")?.getBoundingClientRect() ?? null,
         };
       });
       assert.ok(hit.upper && hit.lower && hit.grip && hit.solo && hit.closing && hit.closingGrip);
@@ -98,6 +101,10 @@ describe("round 19 page hits", () => {
       assert.ok(Number(hit.upperZ) <= Number(hit.lowerZ));
       assert.equal(hit.upperOverflow, "hidden");
       assert.equal(hit.gripZ, "0");
+      assert.ok(hit.concern && hit.concern.height >= 8);
+      assert.equal(hit.concernText, "upper");
+      assert.ok(hit.concern && hit.grip && hit.concern.bottom <= hit.grip.top + 1);
+      assert.ok(hit.summary && hit.summary.width >= 44 && hit.summary.height >= 44);
       assert.ok(hit.soloColumn);
       assert.ok(hit.solo.bottom + 16 <= hit.soloColumn.bottom);
     } finally {

@@ -83,7 +83,7 @@ function OrdersPage() {
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Repair orders</p>
           <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">The board</h1>
           <p className="mt-2 max-w-xl text-muted">{openCount} open. {shop.orders.filter((order) => order.status === "closed").length} closed in the last 30 working days. These repair orders reflect Dealertrack. Scheduling stays on this desk.</p>
-          {shop.dataset === "sample" ? <p className="mt-2 text-sm text-muted">Sample data — regenerates daily.</p> : null}
+          {shop.dataset === "sample" ? <p className="mt-2 text-sm text-muted">Sample data.</p> : null}
           {!roWritesEnabled() ? <p className="mt-2 text-sm text-muted">Read-only — repair orders come from Dealertrack.</p> : null}
         </div>
       </div>

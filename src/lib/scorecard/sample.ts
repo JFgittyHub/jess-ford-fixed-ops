@@ -51,6 +51,7 @@ export const SAMPLE_MONTHS: Record<string, MonthBoard> = {
     service: { sales: 49820, gross: 35572, totalHours: sold(octoberTechs), hoursPerRo: 1.86, hoursPerMaintRo: 0.92, roOpenOver30: 2, arOver90: 0, servicePolicy: 420, shopSupplies: 861, fordCommitment: "Yellow", uptimeAssist: 0.68, grossProfitPct: 0.714, elr: 141.2, absorption: 1.02, warrantyDashboard: 0.63, cvp: "Above Group" },
     parts: { sales: 28640, gross: 10998, openInvoicesOver14: 1, inventory: 186400, agedOver3: 41200, agedOver6: 22800, agedOver9: 9400 },
     period1: octoberTechs, period2: [],
+    sampleSpan: "Oct 19–23",
   },
 };
 
@@ -96,6 +97,7 @@ export const PULLMAN_SAMPLE_MONTHS: Record<string, MonthBoard> = {
     service: { sales: 86400, gross: 62208, totalHours: sold(pullmanOctober), hoursPerRo: 1.74, hoursPerMaintRo: 0.88, roOpenOver30: 4, arOver90: 1200, servicePolicy: 680, shopSupplies: 1410, fordCommitment: "Yellow", uptimeAssist: 0.61, grossProfitPct: 0.72, elr: 136.5, absorption: 0.91, warrantyDashboard: 0.58, cvp: "At Group" },
     parts: { sales: 41200, gross: 15656, openInvoicesOver14: 3, inventory: 328400, agedOver3: 78400, agedOver6: 43600, agedOver9: 19200 },
     period1: pullmanOctober, period2: [],
+    sampleSpan: "Oct 19–23",
   },
 };
 

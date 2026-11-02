@@ -25,6 +25,12 @@ export function salesTax(beforeTax: number, rate: number) {
   return Math.round(Math.max(0, beforeTax) * (Math.max(0, Number(rate) || 0) / 100) * 100) / 100;
 }
 
+export function lengthLabel(minutes: number) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? `${hours} hr` : `${hours} hr`;
+}
+
 export function feeTotal(fees?: FeeLine[] | null, repair = 0) {
   if (!Array.isArray(fees)) return 0;
   return Math.round(fees.reduce((sum, line) => sum + feeCharge(line, repair), 0) * 100) / 100;

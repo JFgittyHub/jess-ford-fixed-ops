@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { bookableDay } from "./bookable-day.ts";
 import { lastVisitMileage } from "./mileage.ts";
 import { createSeed } from "./seed.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -328,7 +329,7 @@ describe("round 7", () => {
     const typed = fullVin({ prefix: "1FTEW1EP", year: 2020, plant: "A", serial: 999111 });
     assert.notEqual(typed, original);
     const id = shop.getState().addAppointment({
-      date: "2026-12-02",
+      date: bookableDay(),
       time: "09:00",
       minutes: 60,
       customerId: vehicle.customerId,

@@ -37,5 +37,9 @@ jobs:
         run: JF_PIN_CLOCK=2026-11-17T20:00:00.000Z npm test
       - name: Tests pinned to 29 Nov 2026
         run: JF_PIN_CLOCK=2026-11-29T20:00:00.000Z npm test
+      - name: Tests pinned to 3 Dec 2026
+        run: JF_PIN_CLOCK=2026-12-03T20:00:00.000Z npm test
+      - name: Tests pinned to 1 Feb 2027
+        run: JF_PIN_CLOCK=2027-02-01T20:00:00.000Z npm test
       - run: npm run test:shipped
       - run: npm run build

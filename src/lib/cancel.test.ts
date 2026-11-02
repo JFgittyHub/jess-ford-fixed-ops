@@ -8,6 +8,7 @@ import { CancelForm, CancelledHistory, DeskCancelActions } from "../components/c
 import { textingAdapter } from "./adapters/texting.ts";
 import { deskSeedFor } from "./booking.ts";
 import { appointmentLoads, assessAppointment, onlineSlots } from "./capacity.ts";
+import { bookableDay } from "./bookable-day.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import {
   CANCEL_NOTE_MAX,
@@ -32,7 +33,9 @@ import { SHOP_PERSIST_VERSION, createShopStore, migrateSavedShop, type ShopState
 import type { Appointment, CancelReason, OnlineRequest } from "./types.ts";
 
 const when = "2026-10-20T15:30:00.000Z";
-const day = "2027-01-06";
+function visitDay() {
+  return bookableDay();
+}
 
 describe("cancel an appointment", () => {
   after(() => resetClock());
@@ -135,7 +138,7 @@ describe("cancel an appointment", () => {
       techs: state.techs,
       appointments: shop.getState().appointments,
       laborOps: state.laborOps,
-      proposal: { date: day, time: "15:00", minutes: 60, advisorId: seed.advisorId, techId: seed.techId, laborOpIds: [] },
+      proposal: { date: visitDay(), time: "15:00", minutes: 60, advisorId: seed.advisorId, techId: seed.techId, laborOpIds: [] },
     });
     assert.equal(full.open, false);
     const hidden = onlineSlots({
@@ -144,10 +147,10 @@ describe("cancel an appointment", () => {
       techs: state.techs,
       loads: appointmentLoads(shop.getState().appointments, state.laborOps),
       serviceId: state.settings.scheduling.onlineMenu[0].id,
-      from: day,
-      through: day,
+      from: visitDay(),
+      through: visitDay(),
       techId: seed.techId,
-      now: new Date("2027-01-06T15:00:00Z"),
+      now: new Date(`${visitDay()}T15:00:00Z`),
     });
     assert.equal(hidden.length, 0);
 
@@ -156,7 +159,7 @@ describe("cancel an appointment", () => {
     const cancelled = after.appointments.find((row) => row.id === heavy.appointmentId);
     assert.equal(cancelled?.status, "cancelled");
     assert.equal(appointmentsOnBoard(after.appointments).some((row) => row.id === heavy.appointmentId), false);
-    assert.equal(cancelledOnDay(after.appointments, day).some((row) => row.id === heavy.appointmentId), true);
+    assert.equal(cancelledOnDay(after.appointments, visitDay()).some((row) => row.id === heavy.appointmentId), true);
     assert.equal(appointmentLoads(after.appointments, after.laborOps).find((row) => row.id === heavy.appointmentId)?.counts, false);
     const openAgain = assessAppointment({
       scheduling: after.settings.scheduling,
@@ -164,7 +167,7 @@ describe("cancel an appointment", () => {
       techs: after.techs,
       appointments: after.appointments,
       laborOps: after.laborOps,
-      proposal: { date: day, time: "15:00", minutes: 60, advisorId: seed.advisorId, techId: seed.techId, laborOpIds: [] },
+      proposal: { date: visitDay(), time: "15:00", minutes: 60, advisorId: seed.advisorId, techId: seed.techId, laborOpIds: [] },
     });
     assert.equal(openAgain.open, true);
     const slots = onlineSlots({
@@ -173,18 +176,18 @@ describe("cancel an appointment", () => {
       techs: after.techs,
       loads: appointmentLoads(after.appointments, after.laborOps),
       serviceId: after.settings.scheduling.onlineMenu[0].id,
-      from: day,
-      through: day,
+      from: visitDay(),
+      through: visitDay(),
       techId: seed.techId,
-      now: new Date("2027-01-06T15:00:00Z"),
+      now: new Date(`${visitDay()}T15:00:00Z`),
     });
     assert.equal(slots.length > 0, true);
 
     const tech = after.techs.find((row) => row.id === seed.techId);
     assert.ok(tech);
     const board = renderToString(createElement(AppointmentCalendar, {
-      appointments: appointmentsOnBoard(after.appointments.filter((row) => row.date === day)),
-      day,
+      appointments: appointmentsOnBoard(after.appointments.filter((row) => row.date === visitDay())),
+      day: visitDay(),
       techs: [{ id: tech.id, number: tech.number, name: tech.name, board: tech.board }],
       selectedId: null,
       onSelect: () => undefined,
@@ -198,7 +201,7 @@ describe("cancel an appointment", () => {
     }));
     assert.equal(board.includes("Fills the day"), false);
     const hiddenList = renderToString(createElement(CancelledHistory, {
-      rows: cancelledOnDay(after.appointments, day),
+      rows: cancelledOnDay(after.appointments, visitDay()),
       show: false,
       nameFor: () => "Helen Cho",
       allowReinstate: true,
@@ -206,7 +209,7 @@ describe("cancel an appointment", () => {
     }));
     assert.equal(hiddenList.includes("Fills the day"), false);
     const shownList = renderToString(createElement(CancelledHistory, {
-      rows: cancelledOnDay(after.appointments, day),
+      rows: cancelledOnDay(after.appointments, visitDay()),
       show: true,
       nameFor: () => "Helen Cho",
       allowReinstate: true,
@@ -442,7 +445,7 @@ describe("cancel an appointment", () => {
       techs: [{ id: "marcus", name: "Marcus Hale" }],
       appointments: [{
         id: "legacy",
-        date: day,
+        date: visitDay(),
         time: "09:00",
         minutes: 60,
         customerId: "c1",
@@ -610,7 +613,7 @@ function draft(
 ): Omit<Appointment, "id" | "orderId"> {
   const { concern, ...rest } = patch;
   return {
-    date: day,
+    date: visitDay(),
     time: "09:30",
     minutes: 60,
     customerId: seed.customerId,
@@ -633,7 +636,7 @@ function summary(name: string) {
     vehicle: "Truck",
     advisor: "Advisor",
     tech: "Tech",
-    when: day,
+    when: visitDay(),
     lane: "Drop-off",
     concern: "Visit",
     vin: "VIN",
@@ -652,7 +655,7 @@ function requestFor(appointmentId: string, id: string): OnlineRequest {
     serviceId: "gc-oil",
     serviceName: "Oil",
     laborHours: 0.5,
-    date: day,
+    date: visitDay(),
     time: "09:00",
     advisorId: "megan",
     advisorName: "Megan Cho",

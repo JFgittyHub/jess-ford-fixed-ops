@@ -68,10 +68,14 @@ export function lookupOnlineCustomer(
   const trimmed = query.trim();
   if (!trimmed) return { kind: "new" };
   const matches = new Map<string, Customer>();
+  const nameKey = dedupeKey(trimmed).toLowerCase();
+  for (const customer of customers) {
+    if (nameKey && dedupeKey(customer.name).toLowerCase() === nameKey) matches.set(customer.id, customer);
+  }
   if (trimmed.includes("@")) {
-    const email = trimmed.toLowerCase();
+    const email = emailKey(trimmed);
     for (const customer of customers) {
-      if (customer.email.trim().toLowerCase() === email) matches.set(customer.id, customer);
+      if (customer.email && emailKey(customer.email) === email) matches.set(customer.id, customer);
     }
   } else {
     if (phoneKey(trimmed)) {
@@ -297,10 +301,10 @@ function matchedCustomers(
   request: { phone?: string; email?: string; vin?: string },
 ): Customer[] {
   const found = new Map<string, Customer>();
-  const email = (request.email ?? "").trim().toLowerCase();
+  const email = emailKey(request.email ?? "");
   if (email.includes("@")) {
     for (const customer of customers) {
-      if (customer.email.trim().toLowerCase() === email) found.set(customer.id, customer);
+      if (customer.email && emailKey(customer.email) === email) found.set(customer.id, customer);
     }
   }
   const queryPhone = request.phone ?? "";
@@ -328,11 +332,15 @@ function textField(value: unknown, max: number): string {
 
 const ZWJ = 0x200d;
 const ZWNJ = 0x200c;
+const VS15 = 0xfe0e;
 const VS16 = 0xfe0f;
 
-function isLetterOrMark(code: number) {
-  if (code <= 0) return false;
-  return /\p{L}|\p{M}/u.test(String.fromCodePoint(code));
+function charOf(code: number) {
+  return code > 0 ? String.fromCodePoint(code) : "";
+}
+
+function joiningScript(code: number) {
+  return /\p{Script=Arabic}|\p{Script=Syriac}|\p{Script=Thaana}|\p{Script=Devanagari}|\p{Script=Bengali}|\p{Script=Gurmukhi}|\p{Script=Gujarati}|\p{Script=Oriya}|\p{Script=Tamil}|\p{Script=Telugu}|\p{Script=Kannada}|\p{Script=Malayalam}|\p{Script=Sinhala}|\p{Script=Myanmar}|\p{Script=Khmer}|\p{Script=Tibetan}/u.test(charOf(code));
 }
 
 function isEmojiBase(code: number) {
@@ -345,48 +353,58 @@ function isEmojiBase(code: number) {
   return false;
 }
 
-function keepVariationSelector(code: number) {
-  if (code >= 0xfe00 && code <= 0xfe0e) return true;
-  if (code >= 0xe0100 && code <= 0xe01ef) return true;
+function hasPresentation(code: number) {
+  if (isEmojiBase(code)) return true;
+  if ((code >= 0x30 && code <= 0x39) || code === 0x23 || code === 0x2a) return true;
+  if (code === 0xa9 || code === 0xae || code === 0x2122 || code === 0x2b50) return true;
+  if (code >= 0x2194 && code <= 0x2199) return true;
+  if (code >= 0x21a9 && code <= 0x21aa) return true;
+  if (code >= 0x2b05 && code <= 0x2b55) return true;
   return false;
 }
 
-function isInvisible(code: number) {
-  if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return true;
-  if (code === 0x2028 || code === 0x2029 || code === 0xad || code === 0x34f || code === 0x61c || code === 0x180e || code === 0xfeff) return true;
-  if (code === 0x3164 || code === 0x115f || code === 0x1160 || code === 0xffa0) return true;
-  if (code >= 0x0600 && code <= 0x0605) return true;
-  if (code === 0x06dd || code === 0x070f || code === 0x08e2) return true;
-  if (code >= 0x17b4 && code <= 0x17b5) return true;
-  if (code >= 0x180b && code <= 0x180f) return true;
-  if (code === 0x200b || code === 0x200e || code === 0x200f) return true;
-  if (code >= 0x202a && code <= 0x202e) return true;
-  if (code >= 0x2060 && code <= 0x206f) return true;
-  if (code >= 0xfff9 && code <= 0xfffb) return true;
-  if (code >= 0xe0000 && code <= 0xe007f) return true;
-  return false;
+function isFormatOrIgnorable(code: number) {
+  if (code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f) || code === 0x2028 || code === 0x2029) return true;
+  const text = charOf(code);
+  if (!text) return false;
+  return /\p{Cf}|\p{Default_Ignorable_Code_Point}/u.test(text);
+}
+
+function flagTagKeep(codes: number[]) {
+  const keep = codes.map(() => false);
+  for (let index = 0; index < codes.length; index += 1) {
+    if (codes[index] !== 0x1f3f4) continue;
+    let end = index + 1;
+    while (end < codes.length && (codes[end] ?? 0) >= 0xe0020 && (codes[end] ?? 0) <= 0xe007e) end += 1;
+    if (end > index + 1 && codes[end] === 0xe007f) {
+      for (let mark = index + 1; mark <= end; mark += 1) keep[mark] = true;
+    }
+  }
+  return keep;
 }
 
 function keepJoiner(codes: number[], index: number) {
   const prev = codes[index - 1] ?? 0;
   const next = codes[index + 1] ?? 0;
-  const prevBase = prev === VS16 || (prev >= 0x1f3fb && prev <= 0x1f3ff) ? (codes[index - 2] ?? 0) : prev;
-  if (isLetterOrMark(prev) && isLetterOrMark(next)) return true;
-  if ((isEmojiBase(prev) || isEmojiBase(prevBase)) && isEmojiBase(next)) return true;
+  const prevBase = prev === VS16 || prev === VS15 || (prev >= 0x1f3fb && prev <= 0x1f3ff) ? (codes[index - 2] ?? 0) : prev;
+  if (joiningScript(prev) && joiningScript(next)) return true;
+  if ((isEmojiBase(prev) || isEmojiBase(prevBase) || hasPresentation(prevBase)) && (isEmojiBase(next) || hasPresentation(next))) return true;
   return false;
 }
 
-/** NFC, then drop invisibles. ZWJ and ZWNJ stay between letters or inside emoji. VS16 stays after an emoji. Other variation selectors stay. */
+/** NFC, then drop format characters. Joiners stay for Arabic, Indic, and emoji. VS15 and VS16 stay after a presentation character. */
 export function cleanFreeText(value: unknown): string {
   if (typeof value !== "string") return "";
   const chars = [...value.normalize("NFC")];
   const codes = chars.map((char) => char.codePointAt(0) ?? 0);
+  const flags = flagTagKeep(codes);
   return chars.filter((_, index) => {
     const code = codes[index] ?? 0;
     if (code === ZWJ || code === ZWNJ) return keepJoiner(codes, index);
-    if (code === VS16) return isEmojiBase(codes[index - 1] ?? 0);
-    if (keepVariationSelector(code)) return true;
-    return !isInvisible(code);
+    if (code === VS15 || code === VS16) return hasPresentation(codes[index - 1] ?? 0);
+    if ((code >= 0xfe00 && code <= 0xfe0d) || (code >= 0xe0100 && code <= 0xe01ef)) return false;
+    if (code >= 0xe0020 && code <= 0xe007f) return flags[index] === true;
+    return !isFormatOrIgnorable(code);
   }).join("");
 }
 
@@ -416,31 +434,67 @@ export function advisorForWebRequest(
   return (open ?? ranked[0])?.id ?? "";
 }
 
-function foldPhoneText(value: string) {
-  return cleanFreeText(value).normalize("NFKC");
+function foldDecimalDigits(value: string) {
+  return [...value].map((char) => {
+    const folded = char.normalize("NFKC");
+    if (/^[0-9]$/.test(folded)) return folded;
+    if (!/^\p{Nd}$/u.test(char)) return char;
+    const code = char.codePointAt(0) ?? 0;
+    let zero = code;
+    while (zero > 0 && /^\p{Nd}$/u.test(String.fromCodePoint(zero - 1))) zero -= 1;
+    const offset = code - zero;
+    return offset <= 9 ? String(offset) : char;
+  }).join("");
+}
+
+/** ITU-T E.164 country calling codes (1–3 digits). NANP stays "1"; area codes are not listed. */
+const CALLING_CODES = new Set(
+  "1 7 20 27 30 31 32 33 34 36 39 40 41 43 44 45 46 47 48 49 51 52 53 54 55 56 57 58 60 61 62 63 64 65 66 81 82 84 86 90 91 92 93 94 95 98 211 212 213 216 218 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 260 261 262 263 264 265 266 267 268 269 290 291 297 298 299 350 351 352 353 354 355 356 357 358 359 370 371 372 373 374 375 376 377 378 380 381 382 383 385 386 387 389 420 421 423 500 501 502 503 504 505 506 507 508 509 590 591 592 593 594 595 596 597 598 599 670 672 673 674 675 676 677 678 679 680 681 682 683 685 686 687 688 689 690 691 692 850 852 853 855 856 880 886 960 961 962 963 964 965 966 967 968 970 971 972 973 974 975 976 977 992 993 994 995 996 998".split(" "),
+);
+
+function callingCode(digits: string) {
+  for (const length of [3, 2, 1]) {
+    const code = digits.slice(0, length);
+    if (CALLING_CODES.has(code)) return code;
+  }
+  return "";
+}
+
+function internationalKey(digits: string) {
+  if (!digits || /^0+$/.test(digits) || digits.length > 15) return "";
+  const code = callingCode(digits);
+  if (code === "1") {
+    if (digits.length !== 11 || /^0+$/.test(digits.slice(1))) return "";
+    return digits.slice(1);
+  }
+  if (!code) return digits.length >= 8 ? `+${digits}` : "";
+  let national = digits.slice(code.length);
+  if (national.startsWith("0")) national = national.replace(/^0+/, "");
+  if (national.length < 4 || /^0+$/.test(national)) return "";
+  const key = `${code}${national}`;
+  if (key.length < 8 || key.length > 15) return "";
+  return `+${key}`;
 }
 
 /** US numbers fold to 10 digits. A leading + keeps its own E.164 key, including the plus. */
 export function phoneKey(value: string): string {
-  const cleaned = foldPhoneText(value).trim();
+  const cleaned = foldDecimalDigits(dedupeKey(value)).trim();
   const withoutMarks = cleaned.replace(/(?:[#/]\s*\d+|(?:ext\.?|extension|x)\s*\d+)\s*$/i, "");
   const body = withoutMarks.trim();
   if (body.startsWith("+")) {
     if (/^\+\s*0/.test(body)) return "";
     const digits = body.replace(/\(0\)/g, "").replace(/\D/g, "");
-    if (!digits || digits.startsWith("0")) return "";
-    if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
-    if (digits.length >= 8 && digits.length <= 15) return `+${digits}`;
-    return "";
+    return internationalKey(digits);
   }
   const digits = body.replace(/\D/g, "");
-  if (digits.length === 11 && (digits.startsWith("1") || digits.startsWith("9"))) return digits.slice(1);
-  if (digits.length === 10) return digits;
+  if (digits.length > 15) return "";
+  if (digits.length === 11 && (digits.startsWith("1") || digits.startsWith("9"))) return /^0+$/.test(digits.slice(1)) ? "" : digits.slice(1);
+  if (digits.length === 10 && !/^0+$/.test(digits)) return digits;
   return "";
 }
 
 function emailKey(value: string): string {
-  const folded = value.trim().normalize("NFKD").replace(/\p{M}/gu, "");
+  const folded = dedupeKey(value).normalize("NFKD").replace(/\p{M}/gu, "");
   const lower = folded.toLowerCase().replace(/\.+$/, "");
   const at = lower.lastIndexOf("@");
   if (at < 1) return lower;

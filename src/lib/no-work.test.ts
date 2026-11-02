@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { NoWorkCloseForm } from "../components/order-editor.tsx";
+import { bookableDay } from "./bookable-day.ts";
 import { closedRoReinstateMessage } from "./cancel.ts";
 import { deskSeedFor } from "./booking.ts";
 import { digest, orderMoney } from "./metrics.ts";
@@ -11,7 +12,9 @@ import type { ShopStorage } from "./shop-storage.ts";
 import { SHOP_PERSIST_VERSION, createShopStore, migrateSavedShop, type ShopState } from "./store.ts";
 import type { Appointment, RepairOrder } from "./types.ts";
 
-const day = "2027-01-06";
+function visitDay() {
+  return bookableDay();
+}
 
 describe("no-work close", () => {
   it("closes an open or booked repair order at $0 and keeps the number", () => {
@@ -227,7 +230,7 @@ function order(shop: ReturnType<typeof createShopStore>, id: string): RepairOrde
 function draft(state: ShopState, concern: string): Omit<Appointment, "id" | "orderId"> {
   const seed = deskSeedFor(state);
   return {
-    date: day,
+    date: visitDay(),
     time: "09:30",
     minutes: 60,
     customerId: seed.customerId,

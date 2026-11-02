@@ -4,9 +4,9 @@ import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLa
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
-import { cleanFreeText, makeOnlineCode, phoneKey, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
+import { cleanFreeText, dedupeKey, makeOnlineCode, phoneKey, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { appointmentMinutes as laborAppointmentMinutes, decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
-import { clockTime, formatVisit, money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
+import { addDays, clockTime, formatVisit, lengthLabel, money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
 import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
@@ -260,10 +260,26 @@ function appointmentDateError(iso: string, scheduling: { hours: { weekday: numbe
   return "";
 }
 
+/** The first day from `from` that can take a booking, including today when it is open. */
+export function nextOpenShopDay(from: string, scheduling: { hours: { weekday: number; closed: boolean }[]; closedDates: string[] }) {
+  let cursor = realDay(from) && from >= today() ? from : today();
+  for (let guard = 0; guard < 21; guard += 1) {
+    if (!appointmentDateError(cursor, scheduling)) return cursor;
+    cursor = addDays(cursor, 1);
+  }
+  return cursor;
+}
+
+function clockTimeError(time: string) {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return "That time is not on the clock.";
+  return "";
+}
+
 function storedPhone(value: string) {
   const cleaned = cleanFreeText(value).trim();
   const key = phoneKey(cleaned);
-  return key.length === 10 ? key : cleaned;
+  if (key.length === 10) return key;
+  return cleaned.slice(0, 20);
 }
 
 const HOUR_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -328,7 +344,7 @@ function appointmentEditRows(
   if (typeof patch.minutes === "number") {
     const nextMinutes = appointmentMinutes(patch.minutes, current.minutes);
     if (nextMinutes !== current.minutes) {
-      rows.push(settingsChange(who, "Length", "", `Length: ${current.minutes} → ${nextMinutes} min for ${customerName}`));
+      rows.push(settingsChange(who, "Length", "", `Length: ${lengthLabel(current.minutes)} → ${lengthLabel(nextMinutes)} for ${customerName}`));
     }
   }
   if (patch.lane && patch.lane !== current.lane) {
@@ -351,9 +367,10 @@ function appointmentEditRows(
   if (patch.customerId) push("customer", nameOf(current.customerId, state.customers), nameOf(patch.customerId, state.customers));
   if (typeof patch.vin === "string") push("VIN", current.vin || "none", normalizeVin(patch.vin) || "none");
   if (Array.isArray(patch.lines)) {
-    const before = current.lines.map((line) => line.concern).filter(Boolean).join("; ") || "none";
+    const beforeLines = current.lines.map((line) => line.concern).filter(Boolean);
     const afterLines = patch.lines.map((line) => cleanFreeText(line.concern).trim().slice(0, 500)).filter(Boolean);
-    if (afterLines.length > 0) push("concern", before, afterLines.join("; "));
+    const kept = afterLines.length > 0 && afterLines.every((concern, index) => concern === beforeLines[index]);
+    if (afterLines.length > 0 && !kept) push("concern", beforeLines.join("; ") || "none", afterLines.join("; ") || "none");
   } else if (typeof patch.concern === "string") {
     const applied = cleanFreeText(patch.concern).trim().slice(0, 500);
     const lineText = current.lines.length === 1 ? current.lines[0]?.concern ?? "" : "";
@@ -2963,7 +2980,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const model = asText(cleanFreeText(input.model), NAME_MAX);
         if (!name || !model || typeof input.phone !== "string") return { customerId: "", vehicleId: "", error: "Add the customer name and model.", warning: null };
         const phone = storedPhone(input.phone);
-        if (phone && phoneKey(phone).length !== 10) return { customerId: "", vehicleId: "", error: "Enter a 10-digit phone number.", warning: null };
+        if (input.phone.trim() && !phoneKey(input.phone)) return { customerId: "", vehicleId: "", error: "Enter a phone number.", warning: null };
         if (input.vin != null && typeof input.vin !== "string") return { customerId: "", vehicleId: "", error: "Enter a 17-character VIN.", warning: null };
         const vinText = typeof input.vin === "string" ? normalizeVin(input.vin) : "";
         const vinError = vinScheduleError(vinText);
@@ -2986,13 +3003,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const customerId = uid("c");
         const vehicleId = uid("v");
         set((shop) => ({
-          customers: [{ id: customerId, name, phone, mobile: input.mobile ? storedPhone(input.mobile) : "", email: cleanFreeText(input.email ?? "").trim().toLowerCase(), noShows: 0 }, ...shop.customers],
+          customers: [{
+            id: customerId,
+            name,
+            phone,
+            mobile: input.mobile ? storedPhone(input.mobile).slice(0, 20) : "",
+            email: dedupeKey(input.email ?? "").trim().toLowerCase().slice(0, 120),
+            noShows: 0,
+          }, ...shop.customers],
           vehicles: [
             {
               id: vehicleId,
               customerId,
               year: input.year,
-              make: input.make === undefined ? "Ford" : (cleanFreeText(input.make).trim() || "Ford"),
+              make: input.make === undefined ? "Ford" : (cleanFreeText(input.make).trim().slice(0, 40) || "Ford"),
               model,
               vin,
               ownership: [firstOwnership(customerId, now().toISOString(), namedActor(shop))],
@@ -3171,8 +3195,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }),
       setAppointmentStatus: (id, status) => {
         const state = get();
+        const knownStatus = new Set(["scheduled", "arrived", "in_shop", "no_show", "cancelled"]);
+        if (!knownStatus.has(status)) return { ok: false, error: "That status is not on this desk." };
         const current = state.appointments.find((row) => row.id === id);
-        if (!current || current.status === status) return { ok: true, error: null };
+        if (!current) return { ok: false, error: "That appointment is not on this store." };
+        if (current.status === status) return { ok: true, error: null };
         if (current.status === "cancelled" || status === "cancelled") return { ok: false, error: "This appointment is cancelled." };
         const who = namedActor(state);
         if (!who || !rosterEditor(state)) return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
@@ -3205,6 +3232,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === current.advisorId),
         );
         if (staffError) return { ok: false, error: staffError };
+        if (patch.time && clockTimeError(patch.time)) return { ok: false, error: clockTimeError(patch.time) };
         const minutes = appointmentMinutes(patch.minutes, current.minutes);
         const time = snapHalfHour(patch.time && /^\d{2}:\d{2}$/.test(patch.time) ? patch.time : current.time);
         const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
@@ -3213,7 +3241,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const moved = current.date !== date || current.time !== time || current.techId !== techId;
         const resized = current.minutes !== minutes;
         const moveSentence = `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techName(current.techId)} to ${visitLabel(date, time)} with ${techName(techId)}`;
-        const lengthSentence = `Length: ${current.minutes} → ${minutes} min for ${customerName}`;
+        const lengthSentence = `Length: ${lengthLabel(current.minutes)} → ${lengthLabel(minutes)} for ${customerName}`;
         const logged = [
           ...(moved ? [settingsChange(who, "Move appointment", "", moveSentence)] : []),
           ...(resized ? [settingsChange(who, "Length", "", lengthSentence)] : []),
@@ -3250,6 +3278,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             return { ok: false, error: "That labor operation is not on this store." };
           }
         }
+        if (patch.time && clockTimeError(patch.time)) return { ok: false, error: clockTimeError(patch.time) };
         if (patch.date && patch.date !== current.date) {
           const dateError = appointmentDateError(patch.date, state.settings.scheduling);
           if (dateError) return { ok: false, error: dateError };
@@ -3311,16 +3340,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                     concern: cleanFreeText(line.concern).trim().slice(0, 500),
                   })).filter((line) => line.concern)
                 : [];
+              const currentConcerns = row.lines.map((line) => line.concern).filter(Boolean);
+              const samePrefix = editedLines.length > 0 && editedLines.every((line, index) => line.concern === currentConcerns[index]);
               const sameConcern = concernOnly !== null && (
                 concernOnly === row.concern
                 || concernOnly === row.lines[0]?.concern
                 || concernOnly === concernFromLines(row.lines)
               );
-              const lines = editedLines.length > 0
-                ? editedLines
-                : concernOnly && !sameConcern
-                  ? [{ id: row.lines[0]?.id || uid("al"), code: row.lines[0]?.code || "A", concern: concernOnly }]
-                  : row.lines;
+              const lines = samePrefix
+                ? row.lines
+                : editedLines.length > 0
+                  ? editedLines
+                  : concernOnly && !sameConcern
+                    ? [{ id: row.lines[0]?.id || uid("al"), code: row.lines[0]?.code || "A", concern: concernOnly }]
+                    : row.lines;
               const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index) }));
               const vehicleId = patch.vehicleId || row.vehicleId;
               const vehicleChanged = Boolean((patch.customerId && patch.customerId !== row.customerId) || (patch.vehicleId && patch.vehicleId !== row.vehicleId));
@@ -3370,7 +3403,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!input.customerId || !state.customers.some((row) => row.id === input.customerId)) return "";
         const owned = state.vehicles.find((row) => row.id === input.vehicleId);
         if (!owned || owned.customerId !== input.customerId) return "";
-        if (input.date && appointmentDateError(input.date, state.settings.scheduling)) return "";
+        if (appointmentDateError(input.date || "", state.settings.scheduling)) return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
         if (Array.isArray(input.laborOpIds)) {
           if (new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
@@ -3380,7 +3413,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const who = namedActor(state);
         if (!who || !rosterEditor(state)) return "";
         if (input.vin != null && typeof input.vin !== "string") return "";
-        const vin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
+        const typedVin = normalizeVin(typeof input.vin === "string" ? input.vin : "");
+        const takenByOther = Boolean(typedVin) && state.vehicles.some((row) => sameVin(row.vin, typedVin) && row.customerId !== input.customerId);
+        const vin = takenByOther ? normalizeVin(owned.vin) : typedVin;
         if (vin && vinScheduleError(vin)) return "";
         set((state) => {
           const raw = input.lines?.length ? input.lines : [{ id: "", code: "A", concern: input.concern }];
@@ -3448,6 +3483,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (vehicleError) return { ok: false, appointmentId: "", overrideId: null, error: vehicleError };
         const concernError = bookingConcernError(input.lines, input.concern);
         if (concernError) return { ok: false, appointmentId: "", overrideId: null, error: concernError };
+        const dateChanged = !existing || existing.date !== input.date;
+        if (!existing || dateChanged) {
+          const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
+          if (dateError) return { ok: false, appointmentId: "", overrideId: null, error: dateError };
+        }
         const appointmentId = existingId ?? uid("ap");
         const result = assessAppointment({
           scheduling: state.settings.scheduling,

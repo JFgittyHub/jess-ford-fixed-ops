@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { bookableDay } from "./bookable-day.ts";
 import { RO_CREATION_ENABLED, RO_WRITES_ENABLED, roCreationEnabled, roWritesEnabled } from "./ro-flags.ts";
 import { LOCKED_SECTIONS, SECTION_LOCK_ENABLED, isLockedPath, sectionLockEnabled } from "./section-lock.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -269,7 +270,7 @@ describe("shipped flags", () => {
       assert.ok(vehicle && other && otherVehicle);
       const before = JSON.stringify(order);
       const saved = shop.getState().saveAdvisorAppointment({
-        date: "2026-10-30",
+        date: bookableDay(),
         time: "09:00",
         minutes: 60,
         customerId: other.id,

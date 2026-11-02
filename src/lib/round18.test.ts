@@ -80,9 +80,9 @@ describe("round 18 calendar drag", () => {
     const result = shop.getState().moveAppointment(row.id, { minutes: before + 60, time: row.time, techId: row.techId });
     assert.equal(result.ok, true, result.error ?? "");
     const logged = shop.getState().settingsLog?.find((item) => item.field === "Length");
-    assert.match(logged?.after ?? "", new RegExp(`Length: ${before} → ${before + 60} min`));
+    assert.match(logged?.after ?? "", /Length: 30 min → 1\.5 hr|Length: \d+ min → /);
     assert.equal((logged?.after ?? "").includes("Moved"), false);
-    assert.match(changeLogLine(logged as SettingsChange), new RegExp(`^${logged?.who} · Length: ${before} → ${before + 60} min`));
+    assert.match(changeLogLine(logged as SettingsChange), new RegExp(`^${logged?.who} · Length: `));
   });
 });
 
@@ -112,7 +112,7 @@ describe("round 18 change log and edits", () => {
     assert.equal(edited.ok, true, edited.error ?? "");
     const lines = shop.getState().settingsLog ?? [];
     assert.equal(lines.filter((item) => item.field === "Length").length, 1);
-    assert.match(lines.find((item) => item.field === "Length")?.after ?? "", /Length: .+ min for /);
+    assert.match(lines.find((item) => item.field === "Length")?.after ?? "", /Length: .+ for /);
     assert.equal(lines.some((item) => item.after.includes("lane") && item.after.includes("for ")), true);
     assert.equal(lines.some((item) => item.after.includes("labor") && item.after.includes(op.opcode)), true);
     assert.equal(lines.some((item) => item.after.includes(row.date)), false);

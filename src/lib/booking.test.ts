@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { AppointmentCalendar } from "../components/appointment-calendar.tsx";
+import { bookableDay } from "./bookable-day.ts";
 import { advisorBookingNote, assessAppointment, overrideReason } from "./capacity.ts";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore } from "./booking.ts";
 import { appointmentsOnBoard } from "./cancel.ts";
@@ -10,7 +11,9 @@ import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
 
-const day = "2027-01-06";
+function visitDay() {
+  return bookableDay();
+}
 
 describe("booking after a store switch", () => {
   it("saves on the store you switched to and shows on that board, in demo mode", () => {
@@ -52,7 +55,7 @@ describe("booking after a store switch", () => {
     assert.equal(name, "Marisol Vega");
     const board = renderToString(createElement(AppointmentCalendar, {
       appointments: appointmentsOnBoard(shop.getState().appointments),
-      day,
+      day: visitDay(),
       techs: [{ id: tech.id, number: tech.number, name: tech.name, board: tech.board }],
       selectedId: null,
       onSelect: () => undefined,
@@ -70,8 +73,8 @@ describe("booking after a store switch", () => {
     shop.getState().switchStore("grand-coulee");
     assert.equal(shop.getState().appointments.some((item) => item.concern.includes("Switch store brake inspection")), false);
     const couleeBoard = renderToString(createElement(AppointmentCalendar, {
-      appointments: appointmentsOnBoard(shop.getState().appointments.filter((item) => item.date === day)),
-      day,
+      appointments: appointmentsOnBoard(shop.getState().appointments.filter((item) => item.date === visitDay())),
+      day: visitDay(),
       techs: shop.getState().techs.filter((item) => item.board !== "none").map((item) => ({ id: item.id, number: item.number, name: item.name, board: item.board })),
       selectedId: null,
       onSelect: () => undefined,
@@ -127,7 +130,7 @@ describe("booking after a store switch", () => {
       techs: pullman.techs,
       appointments: pullman.appointments,
       laborOps: pullman.laborOps,
-      proposal: { date: day, time: "09:00", minutes: 60, advisorId: couleeAdvisor, techId: couleeTech, laborOpIds: [] },
+      proposal: { date: visitDay(), time: "09:00", minutes: 60, advisorId: couleeAdvisor, techId: couleeTech, laborOpIds: [] },
     });
     assert.equal(judged.open, false);
     assert.equal(judged.warning, null);
@@ -160,7 +163,7 @@ function draft(
 ): Omit<Appointment, "id" | "orderId"> {
   const { lines, concern, ...rest } = patch;
   return {
-    date: day,
+    date: visitDay(),
     time: "09:00",
     minutes: 60,
     customerId: seed.customerId,
@@ -183,7 +186,7 @@ function summary(name: string) {
     vehicle: "Truck",
     advisor: "Advisor",
     tech: "Tech",
-    when: day,
+    when: visitDay(),
     lane: "Drop-off",
     concern: "Switch store brake inspection",
     vin: "VIN",

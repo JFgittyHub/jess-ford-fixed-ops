@@ -6,6 +6,7 @@ import { advisorDayCapacity } from "./capacity.ts";
 import { now, pinClock, resetClock } from "./clock.ts";
 import { closedHeaderCopy, formatVisit, localStamp } from "./format.ts";
 import { lastVisitMileage } from "./mileage.ts";
+import { bookableDay } from "./bookable-day.ts";
 import { advisorForWebRequest, submitOnlineRequest } from "./online-request.ts";
 import { mergeVinDuplicates, vehicleHistoryEntries } from "./ownership.ts";
 import { normalizeDeskPath } from "./section-lock.ts";
@@ -37,7 +38,7 @@ function draft(state: Desk, patch: Partial<Appointment> = {}): Omit<Appointment,
   const customer = state.customers[0];
   const vehicle = state.vehicles.find((row) => row.customerId === customer.id) ?? state.vehicles[0];
   return {
-    date: "2026-12-02",
+    date: bookableDay(),
     time: "09:00",
     minutes: 60,
     customerId: customer.id,
@@ -94,7 +95,7 @@ describe("round 17 clock and change log", () => {
     assert.equal(hours.before.includes("{"), false);
     assert.match(hours.after, /Mon closed/);
     assert.match(changeLogLine(hours), /Hours Mon: .+ → Mon closed · .+ PT$/);
-    const visit = draft(store.getState());
+    const visit = draft(store.getState(), { date: bookableDay(1) });
     const id = store.getState().addAppointment(visit);
     const moved = store.getState().moveAppointment(id, { time: "12:30", techId: "elena" });
     assert.equal(moved.ok, true, moved.error ?? "");

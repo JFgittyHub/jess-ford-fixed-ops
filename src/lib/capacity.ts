@@ -114,11 +114,11 @@ export function evaluateCapacity(input: {
   const advisorCapacity = !day.closed && knownAdvisor ? day.advisorCap : 0;
   const techOverloaded = !knownTech || techUsed + adding > techCapacity + EPSILON;
   const advisorOverloaded = !knownAdvisor || advisorUsed + 1 > advisorCapacity;
-  const blocked = staffBlockMessage(knownTech, knownAdvisor);
+  const blocked = day.closed ? "The store is closed that day." : staffBlockMessage(knownTech, knownAdvisor);
   const warning = blocked
     ? null
     : capacityWarning({
-        closed: day.closed,
+        closed: false,
         techOverloaded,
         advisorOverloaded,
       });

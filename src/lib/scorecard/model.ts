@@ -54,6 +54,8 @@ export type MonthBoard = {
   parts: PartsFigures;
   period1: Tech[];
   period2: Tech[];
+  /** A sample that covers only part of the month, such as Oct 19–23. */
+  sampleSpan?: string;
 };
 
 export type ViewId = StoreId | "group";
@@ -321,6 +323,9 @@ export function paceFor(board: MonthBoard, today = shopTodayDate()): Pace {
   const blank: Pace = { status: "empty", elapsed: 0, total, remaining: total, projected: null, dailyNeeded: null, runRate: null, closed: false, future };
   if (!board.recorded || future) return blank;
   if (board.month < todayKey) {
+    if (board.sampleSpan) {
+      return { status: "empty", elapsed: total, total, remaining: 0, projected: null, dailyNeeded: null, runRate: null, closed: true, future: false };
+    }
     const ratio = goal > 0 ? hours / goal : 0;
     return { status: ratio >= 1 ? "good" : ratio >= 0.95 ? "watch" : "bad", elapsed: total, total, remaining: 0, projected: hours, dailyNeeded: null, runRate: null, closed: true, future: false };
   }

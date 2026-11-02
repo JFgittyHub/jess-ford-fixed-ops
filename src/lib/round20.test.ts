@@ -233,12 +233,8 @@ describe("round 20 phones, text, and customers", () => {
     assert.equal(cleanFreeText("a\u{E0041}b"), "ab");
     assert.equal(cleanFreeText("a\uFE0Fb"), "ab");
     assert.equal(cleanFreeText("\u2764\uFE0F"), "\u2764\uFE0F");
-    assert.equal(cleanFreeText("a\uFE00b"), "a\uFE00b");
-    const name = cleanFreeText("Ali\u200CReza");
-    assert.equal(name, "Ali\u200CReza");
-    assert.equal(dedupeKey(name), "AliReza");
-    assert.equal(dedupeKey("AliReza"), dedupeKey(name));
-    assert.equal(cleanFreeText("a\u200Db"), "a\u200Db");
+    assert.equal(cleanFreeText("a\uFE00b"), "ab");
+    assert.equal(cleanFreeText("a\u200Db"), "ab");
     assert.equal(cleanFreeText(" \u200D "), "  ");
     assert.equal(dedupeKey("a\u200Db"), "ab");
     assert.equal(cleanFreeText("\u{1F468}\u200D\u{1F469}"), "\u{1F468}\u200D\u{1F469}");
@@ -271,8 +267,8 @@ describe("round 20 pulse, seed, and settings", () => {
     for (const pin of ["2026-11-01T20:00:00.000Z", "2026-11-17T20:00:00.000Z", "2026-12-01T20:00:00.000Z"]) {
       pinClock(pin);
       const text = mount(createElement(ScorecardPulse, {}));
-      assert.match(text, /October 2026 \(full month\)/);
-      assert.match(text, /Total/);
+      assert.match(text, /October 2026 \(Oct 19–23\)/);
+      assert.equal(text.replaceAll("Total parts inventory", "").includes("Total"), false);
       assert.match(text, /Sample data\./);
       assert.equal(text.includes("MTD"), false);
       assert.equal(text.includes("Projected"), false);

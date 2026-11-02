@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { bookableDay } from "./bookable-day.ts";
 import { lastVisitMileage, preparedReason } from "./mileage.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { customerCopyIdentity, vehicleHistoryEntries } from "./ownership.ts";
@@ -122,7 +123,7 @@ describe("round 12", () => {
     assert.ok(helen && other && helenVehicle && otherVehicle);
     const before = helenVehicle.vin;
     const blocked = shop.getState().saveAdvisorAppointment({
-      date: "2026-12-02", time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
+      date: bookableDay(), time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
       advisorId: "megan", techId: "marcus", concern: "Oil", lines: [{ id: "a", code: "A", concern: "Oil" }],
       vin: before, laborOpIds: [], lane: "drop", status: "scheduled",
     }, undefined, true, "Sold the truck to the new owner");
@@ -133,7 +134,7 @@ describe("round 12", () => {
         : row),
     });
     const draft = {
-      date: "2026-12-02", time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
+      date: bookableDay(), time: "09:00", minutes: 60, customerId: other.id, vehicleId: otherVehicle.id,
       advisorId: "megan", techId: "marcus", concern: "Oil", lines: [{ id: "a", code: "A", concern: "Oil" }],
       vin: before.toLowerCase(), laborOpIds: [] as string[], lane: "drop", status: "scheduled" as const,
     };

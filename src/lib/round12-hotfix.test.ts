@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { bookableDay } from "./bookable-day.ts";
 import { CUSTOMER_MILEAGE_OVERRIDE, mileageInOverrideText } from "./mileage.ts";
 import { vehicleHistoryEntries } from "./ownership.ts";
 import { RO_CREATE_REFUSAL, RO_WRITE_REFUSAL } from "./ro-flags.ts";
@@ -25,7 +26,7 @@ function visit(shop: ReturnType<typeof createShopStore>, vin: string): Omit<Appo
   const customer = state.customers[0];
   const vehicle = state.vehicles.find((row) => row.customerId === customer.id) ?? state.vehicles[0];
   return {
-    date: "2026-12-02",
+    date: bookableDay(),
     time: "09:00",
     minutes: 60,
     customerId: customer.id,

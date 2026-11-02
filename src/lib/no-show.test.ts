@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { NoShowMark } from "../components/no-show-mark.tsx";
 import { noShowSuffix } from "./no-show-label.ts";
+import { bookableDay } from "./bookable-day.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -72,7 +73,7 @@ describe("No-show", () => {
 
 function draft(customerId: string, vehicleId: string, advisorId: string, time = "09:00"): Omit<Appointment, "id" | "orderId" | "status"> {
   return {
-    date: "2026-12-02",
+    date: bookableDay(),
     time,
     minutes: 60,
     customerId,

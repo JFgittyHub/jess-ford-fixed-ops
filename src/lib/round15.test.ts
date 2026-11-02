@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { displayRecordedWhen } from "./cancel.ts";
-import { closedHeaderCopy } from "./format.ts";
+import { bookableDay } from "./bookable-day.ts";
+import { closedHeaderCopy, formatVisit } from "./format.ts";
 import { migrateSavedShop, createShopStore } from "./store.ts";
 import { submitOnlineRequest } from "./online-request.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -116,8 +117,9 @@ describe("round 15", () => {
     assert.equal(shop.getState().setAppointmentStatus(row.id, "no_show").ok, true);
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.status, "no_show");
     assert.equal(shop.getState().settingsLog?.some((item) => item.field === "No-show" && item.after.includes("Marked no-show")), true);
+    const day = bookableDay();
     const id = shop.getState().addAppointment({
-      date: "2026-12-02",
+      date: day,
       time: "10:00",
       minutes: 60,
       customerId: row.customerId,
@@ -131,7 +133,7 @@ describe("round 15", () => {
       lane: "drop",
     });
     assert.ok(id);
-    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Appointment" && item.after.includes("Dec 2")), true);
+    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Appointment" && item.after.includes(formatVisit(day, "10:00"))), true);
   });
 
   it("refuses a VIN transfer while a repair order is not closed, including a locked one", () => {

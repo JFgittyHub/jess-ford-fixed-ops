@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { DeskCancelActions } from "../components/cancel-appointment.tsx";
+import { bookableDay } from "./bookable-day.ts";
 import { bookedRoCancelMessage } from "./cancel.ts";
 import { deskSeedFor } from "./booking.ts";
 import { roStatusLabel, STATUS_LABEL } from "./format.ts";
@@ -14,7 +15,9 @@ import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore, migrateSavedShop, type ShopState } from "./store.ts";
 import type { Appointment, RepairOrder } from "./types.ts";
 
-const day = "2027-01-06";
+function visitDay() {
+  return bookableDay();
+}
 
 describe("round 4 close rules", () => {
   it("rejects a closed status from updateOrder and does not fall back to the first advisor", () => {
@@ -273,7 +276,7 @@ function order(shop: ReturnType<typeof createShopStore>, id: string): RepairOrde
 function draft(state: ShopState, concern: string, time = "09:30"): Omit<Appointment, "id" | "orderId"> {
   const seed = deskSeedFor(state);
   return {
-    date: day,
+    date: visitDay(),
     time,
     minutes: 60,
     customerId: seed.customerId,
