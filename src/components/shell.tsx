@@ -16,6 +16,7 @@ import {
   Timer,
   Activity,
   BadgeDollarSign,
+  Gauge,
   Package,
   Receipt,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const STORES: { id: StoreId; label: string }[] = [
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
   { to: "/schedule", label: "Appointments", icon: CalendarClock },
+  { to: "/capacity", label: "Capacity", icon: Gauge },
   { to: "/overrides", label: "Overrides", icon: NotebookPen },
   { to: "/orders", label: "Repair orders", icon: ClipboardList },
   { to: "/estimates", label: "Repair estimates", icon: FileText },

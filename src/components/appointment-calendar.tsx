@@ -56,7 +56,6 @@ export function planCalendarDrag(input: {
   const nextIndex = clamp(index + techShift, 0, Math.max(0, input.techIds.length - 1));
   return { time: fromMinutes(start), minutes, techId: input.techIds[nextIndex] ?? input.techId };
 }
-export const TECH_DAY_GOAL = 8;
 
 type Draft = { id: string; time: string; minutes: number; techId: string };
 
@@ -208,6 +207,7 @@ export function AppointmentCalendar({
   label,
   summary,
   hoursFor,
+  loadFor,
 }: {
   appointments: Appointment[];
   day: string;
@@ -222,6 +222,8 @@ export function AppointmentCalendar({
   label: (appt: Appointment) => string;
   summary: (appt: Appointment) => ApptSummary;
   hoursFor: (appt: Appointment) => number;
+  /** Used and available hours from the shop capacity settings, including pending requests. */
+  loadFor?: (techId: string) => { used: number; available: number; note?: string };
 }) {
   const techIds = techs.map((tech) => tech.id);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -309,15 +311,19 @@ export function AppointmentCalendar({
         ))}
         <div className="border-b border-line" />
         {techs.map((tech) => {
-          const hours = shown
+          const booked = shown
             .filter((row) => row.date === day && row.techId === tech.id)
             .reduce((sum, row) => sum + hoursFor(row), 0);
+          const load = loadFor?.(tech.id);
+          const hours = load ? load.used : booked;
+          const available = load ? load.available : hours;
           return (
           <div key={tech.id} className="border-b border-l border-line px-2 py-2" style={{ background: BOARD_SHADE[tech.board].head }}>
             <p className="truncate text-sm font-semibold">{tech.name}</p>
             <p className="text-xs tabular-nums text-muted">#{tech.number}</p>
-            <p className="mt-1 text-sm font-semibold tabular-nums">{flagHours(hours)} / {TECH_DAY_GOAL} hrs</p>
-            <Meter value={hours} max={TECH_DAY_GOAL} />
+            <p className="mt-1 text-sm font-semibold tabular-nums">{load ? `${flagHours(hours)} / ${flagHours(available)} hrs` : `${flagHours(hours)} hrs`}</p>
+            {load?.note ? <p className="text-xs text-[#8a5a00]">{load.note}</p> : null}
+            <Meter value={hours} max={Math.max(available, 0.1)} bad={Boolean(load && hours > available + 0.001)} />
           </div>
           );
         })}

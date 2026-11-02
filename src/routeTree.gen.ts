@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdvisorsRouteImport } from './routes/advisors'
+import { Route as CapacityRouteImport } from './routes/capacity'
 import { Route as CustomersRouteImport } from './routes/customers'
 import { Route as DispatchRouteImport } from './routes/dispatch'
 import { Route as EstimatesRouteImport } from './routes/estimates'
@@ -36,6 +37,11 @@ const IndexRoute = IndexRouteImport.update({
 const AdvisorsRoute = AdvisorsRouteImport.update({
   id: '/advisors',
   path: '/advisors',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CapacityRoute = CapacityRouteImport.update({
+  id: '/capacity',
+  path: '/capacity',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CustomersRoute = CustomersRouteImport.update({
@@ -122,6 +128,7 @@ const TechBoardRoute = TechBoardRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/advisors': typeof AdvisorsRoute
+  '/capacity': typeof CapacityRoute
   '/customers': typeof CustomersRoute
   '/dispatch': typeof DispatchRoute
   '/estimates': typeof EstimatesRoute
@@ -142,6 +149,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/advisors': typeof AdvisorsRoute
+  '/capacity': typeof CapacityRoute
   '/customers': typeof CustomersRoute
   '/dispatch': typeof DispatchRoute
   '/estimates': typeof EstimatesRoute
@@ -163,6 +171,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/advisors': typeof AdvisorsRoute
+  '/capacity': typeof CapacityRoute
   '/customers': typeof CustomersRoute
   '/dispatch': typeof DispatchRoute
   '/estimates': typeof EstimatesRoute
@@ -185,6 +194,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/advisors'
+    | '/capacity'
     | '/customers'
     | '/dispatch'
     | '/estimates'
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/advisors'
+    | '/capacity'
     | '/customers'
     | '/dispatch'
     | '/estimates'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/advisors'
+    | '/capacity'
     | '/customers'
     | '/dispatch'
     | '/estimates'
@@ -246,6 +258,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdvisorsRoute: typeof AdvisorsRoute
+  CapacityRoute: typeof CapacityRoute
   CustomersRoute: typeof CustomersRoute
   DispatchRoute: typeof DispatchRoute
   EstimatesRoute: typeof EstimatesRoute
@@ -278,6 +291,13 @@ declare module '@tanstack/react-router' {
       path: '/advisors'
       fullPath: '/advisors'
       preLoaderRoute: typeof AdvisorsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/capacity': {
+      id: '/capacity'
+      path: '/capacity'
+      fullPath: '/capacity'
+      preLoaderRoute: typeof CapacityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/customers': {
@@ -398,6 +418,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdvisorsRoute: AdvisorsRoute,
+  CapacityRoute: CapacityRoute,
   CustomersRoute: CustomersRoute,
   DispatchRoute: DispatchRoute,
   EstimatesRoute: EstimatesRoute,

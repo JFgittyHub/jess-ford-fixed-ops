@@ -121,6 +121,7 @@ export function requestHolds(requests: OnlineRequest[] | undefined) {
     techId: row.techId,
     laborHours: row.laborHours,
     status: row.status,
+    lane: row.transportId,
   }));
 }
 
@@ -144,7 +145,7 @@ export function matchRequestCustomer(
   return { customerId: customer.id, vehicleId: vehicle?.id ?? null };
 }
 
-export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId?: string; date?: string; now?: Date }) {
+export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId?: string; date?: string; now?: Date; transportId?: string }) {
   return onlineSlots({
     scheduling: shop.settings.scheduling,
     advisors: shop.advisors,
@@ -156,6 +157,7 @@ export function visitSlots(shop: SlotShop, input: { serviceId: string; advisorId
     from: input.date,
     through: input.date,
     now: input.now,
+    transportId: input.transportId,
   });
 }
 
@@ -240,7 +242,7 @@ export function submitOnlineRequest(
   if (pending.filter((row) => row.date === input.date).length >= storeCap) return { ok: false, reason: "limit", limit: storeCap, scope: "day" };
   if (deviceId && pending.filter((row) => row.deviceId === deviceId).length >= DEVICE_CAP) return { ok: false, reason: "limit", limit: DEVICE_CAP, scope: "device" };
 
-  const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at) }).find((row) => row.time === input.time);
+  const slot = visitSlots(shop, { serviceId: service.id, advisorId: advisor.id, date: input.date, now: new Date(at), transportId: transport.id }).find((row) => row.time === input.time);
   if (!slot) return { ok: false, reason: "full" };
   const tech = shop.techs.find((row) => row.id === slot.techId);
   return {

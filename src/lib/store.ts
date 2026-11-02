@@ -4,7 +4,7 @@ import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLa
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
-import { cleanFreeText, dedupeKey, makeOnlineCode, phoneKey, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
+import { cleanFreeText, dedupeKey, makeOnlineCode, phoneKey, requestHolds, submitOnlineRequest, type OnlineRequestInput } from "./online-request";
 import { appointmentMinutes as laborAppointmentMinutes, decisionNotice, planApproval, reminderMethod, reminderNotice, tomorrowIso } from "./notices";
 import { addDays, clockTime, formatVisit, lengthLabel, money2, snapHalfHour, bayFromStatus, DEFAULT_FEES, DEFAULT_TAX_RATE, localStamp, today } from "./format";
 import { concernFromJobs, concernFromLines, jobLine, lineLetter, nextLineCode, type JobLine } from "./jobs";
@@ -12,7 +12,7 @@ import { blankWa, normalizeWa, type ExtraAuth, type WaRecord } from "./wa";
 import { blankSheet, demoSheet, type MpiPoint } from "./mpi";
 import { defaultPayTypes } from "./pay";
 import { laborCatalog, createEmptyShop, createSeed, ADVISOR_NUMBERS, TECH_NUMBERS } from "./seed";
-import { addClosedDate, addOnlineService, addTransportOption, laneLabel, normalizeLane, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService } from "./scheduling";
+import { addClosedDate, addOnlineService, addTransportOption, applyCapacityLimits, applyTechWeekHours, applyTimeOffAdd, applyTimeOffRemove, laneLabel, normalizeLane, normalizeScheduling, patchBookingWindow, patchDayHours, removeClosedDate, removeOnlineService, removeTransportOption, renameTransportOption, updateOnlineService, WEEKDAY_LABELS, type CapacityLimitPatch } from "./scheduling";
 import { fullVin, isFullVin, normalizeVin, vinCheckWarning, vinEntryError, vinScheduleError } from "./vin";
 import { isDemoMode } from "./demo";
 import { browserLocalStorage, SHOP_STORAGE_KEY, shopPersistStorage, type ShopStorage } from "./shop-storage";
@@ -62,6 +62,13 @@ interface ShopActions {
   switchStore: (id: StoreId) => void;
   updateSettings: (patch: Partial<ShopData["settings"]>) => void;
   updateDayHours: (weekday: WeekdayIndex, patch: Partial<Pick<DayHours, "closed" | "open" | "close">>) => void;
+  /** Service manager only. Null hours means this weekday uses the shop's open hours. */
+  updateTechCapacityHours: (techId: string, weekday: WeekdayIndex, hours: number | null) => { ok: boolean; error: string | null };
+  /** Service manager only. Leave start and end empty for the whole date. */
+  addTechTimeOff: (input: { techId: string; date: string; start?: string; end?: string }) => { ok: boolean; error: string | null };
+  removeTechTimeOff: (id: string) => { ok: boolean; error: string | null };
+  /** Service manager only. Null clears an hourly, waiter, or arrival cap. */
+  updateCapacityLimits: (patch: CapacityLimitPatch) => { ok: boolean; error: string | null };
   addClosedDate: (iso: string) => boolean;
   removeClosedDate: (iso: string) => void;
   updateBookingWindow: (patch: Partial<BookingWindow>) => void;
@@ -683,6 +690,12 @@ function rosterEditor(state: ShopData) {
 function rosterEditorError(state: ShopData): string | null {
   if (!namedActor(state)) return "Choose who is working.";
   if (!rosterEditor(state)) return "Only an advisor or service manager can change this.";
+  return null;
+}
+
+function capacityEditorError(state: ShopData): string | null {
+  if (!namedActor(state)) return "Choose who is working.";
+  if (deskActor(state) !== "service-manager") return "Only a service manager can change capacity.";
   return null;
 }
 
@@ -1653,6 +1666,104 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             settingsLog: [...(state.settingsLog ?? []), settingsChange(who, `Hours ${HOUR_DAYS[weekday] ?? weekday}`, before, after)],
           };
         }),
+      updateTechCapacityHours: (techId, weekday, hours) => {
+        let error: string | null = null;
+        set((state) => {
+          const refused = capacityEditorError(state);
+          const who = serviceManager(state);
+          if (refused || !who) {
+            error = refused ?? "Only a service manager can change capacity.";
+            return state;
+          }
+          if (!state.techs.some((tech) => tech.id === techId)) {
+            error = "That technician isn't on this store.";
+            return state;
+          }
+          const applied = applyTechWeekHours(state.settings.scheduling, techId, weekday, hours);
+          if (!applied) {
+            error = "Those hours are not valid.";
+            return state;
+          }
+          if (applied.before === applied.after) return state;
+          const name = state.techs.find((tech) => tech.id === techId)?.name ?? "Technician";
+          return {
+            settings: { ...state.settings, scheduling: applied.next },
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, `Capacity tech hours · ${name} · ${WEEKDAY_LABELS[weekday]}`, applied.before, applied.after)],
+          };
+        });
+        return { ok: error === null, error };
+      },
+      addTechTimeOff: (input) => {
+        let error: string | null = null;
+        set((state) => {
+          const refused = capacityEditorError(state);
+          const who = serviceManager(state);
+          if (refused || !who) {
+            error = refused ?? "Only a service manager can change capacity.";
+            return state;
+          }
+          if (!state.techs.some((tech) => tech.id === input.techId)) {
+            error = "That technician isn't on this store.";
+            return state;
+          }
+          const applied = applyTimeOffAdd(state.settings.scheduling, input, uid("off"));
+          if (!applied) {
+            error = "That time off is not valid.";
+            return state;
+          }
+          const name = state.techs.find((tech) => tech.id === input.techId)?.name ?? "Technician";
+          return {
+            settings: { ...state.settings, scheduling: applied.next },
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, `Capacity time off · ${name}`, "", applied.label)],
+          };
+        });
+        return { ok: error === null, error };
+      },
+      removeTechTimeOff: (id) => {
+        let error: string | null = null;
+        set((state) => {
+          const refused = capacityEditorError(state);
+          const who = serviceManager(state);
+          if (refused || !who) {
+            error = refused ?? "Only a service manager can change capacity.";
+            return state;
+          }
+          const row = (state.settings.scheduling.capacity?.timeOff ?? []).find((item) => item.id === id);
+          const applied = applyTimeOffRemove(state.settings.scheduling, id);
+          if (!applied || !row) {
+            error = "That time off is not on this store.";
+            return state;
+          }
+          const name = state.techs.find((tech) => tech.id === row.techId)?.name ?? "Technician";
+          return {
+            settings: { ...state.settings, scheduling: applied.next },
+            settingsLog: [...(state.settingsLog ?? []), settingsChange(who, `Capacity time off · ${name}`, applied.label, "removed")],
+          };
+        });
+        return { ok: error === null, error };
+      },
+      updateCapacityLimits: (patch) => {
+        let error: string | null = null;
+        set((state) => {
+          const refused = capacityEditorError(state);
+          const who = serviceManager(state);
+          if (refused || !who) {
+            error = refused ?? "Only a service manager can change capacity.";
+            return state;
+          }
+          const applied = applyCapacityLimits(state.settings.scheduling, patch);
+          if (!applied) {
+            error = "That capacity number is not valid.";
+            return state;
+          }
+          if (applied.changes.length === 0) return state;
+          return {
+            settings: { ...state.settings, scheduling: applied.next },
+            settingsLog: [...(state.settingsLog ?? []), ...applied.changes.map((change) => settingsChange(who, change.field, change.before, change.after))],
+          };
+        });
+        return { ok: error === null, error };
+      },
       addClosedDate: (iso) => {
         let added = false;
         set((state) => {
@@ -3570,6 +3681,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           techs: state.techs,
           appointments: state.appointments,
           laborOps: state.laborOps,
+          holds: requestHolds(state.onlineRequests),
           proposal: {
             date: input.date,
             time: input.time,
@@ -3577,6 +3689,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: input.advisorId,
             techId: input.techId,
             laborOpIds: input.laborOpIds ?? [],
+            lane: input.lane,
             ignoreId: existingId,
           },
         });
@@ -3681,6 +3794,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           techs: state.techs,
           appointments: state.appointments,
           laborOps: state.laborOps,
+          holds: requestHolds(state.onlineRequests),
           proposal: {
             date: current.date,
             time: current.time,
@@ -3688,6 +3802,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: current.advisorId,
             techId: current.techId,
             laborOpIds: current.laborOpIds ?? [],
+            lane: current.lane,
             ignoreId: current.id,
           },
         });
@@ -3766,6 +3881,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           techs: state.techs,
           appointments: state.appointments,
           laborOps: state.laborOps,
+          holds: requestHolds(state.onlineRequests).filter((row) => row.id !== id),
           proposal: {
             date: request.date,
             time: request.time,
@@ -3773,6 +3889,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: request.advisorId,
             techId: request.techId,
             laborOpIds: [],
+            lane: request.transportId,
           },
         });
         if (capacity.blocked) return { ok: false, reason: "full", error: capacity.blocked };

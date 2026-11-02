@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { deskActor } from "@/lib/cancel";
 import { WEEKDAY_LABELS } from "@/lib/scheduling";
@@ -31,7 +32,7 @@ export function SchedulingSettingsForm() {
       <div>
         <h2 className="font-display text-2xl leading-none">Scheduling</h2>
         <p className="mt-1 text-sm normal-case tracking-normal text-muted">
-          Hours, closed days, the online booking window, the service menu, and transport options belong to this store only. The menu has no prices and no free-text concern.
+          Hours, closed days, the online booking window, the service menu, and transport options belong to this store only. The menu has no prices and no free-text concern. Technician hours, time off, advisor limits, waiter and arrival caps, and the online share are on <Link to="/capacity" className="underline">Capacity</Link>.
         </p>
         {actor === "customer" || canEdit ? null : <p role="status" className="mt-2 text-sm text-[#8a3b2a]">{refused}</p>}
       </div>

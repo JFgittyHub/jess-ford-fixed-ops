@@ -72,7 +72,7 @@ function RequestPage() {
     Math.max(0, advisorDayCapacity(shop.settings.scheduling, date) - 1),
   );
   const transport = transports.some((row) => row.id === transportId) ? transportId : transports[0]?.id ?? "";
-  const slots = visitSlots(shop, { serviceId: service, advisorId: advisor });
+  const slots = visitSlots(shop, { serviceId: service, advisorId: advisor, transportId: transport });
   const dates = [...new Set(slots.map((slot) => slot.date))];
   const day = dates.includes(date) ? date : dates[0] ?? "";
   const times = [...new Set(slots.filter((slot) => slot.date === day).map((slot) => slot.time))];

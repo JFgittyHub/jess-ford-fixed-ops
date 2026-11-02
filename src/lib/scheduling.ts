@@ -1,7 +1,7 @@
 import { money2 } from "./format";
 import { cleanFreeText } from "./online-request";
 import { HOURS_MAX, NAME_MAX, inRange } from "./range";
-import type { BookingWindow, DayHours, OnlineService, SchedulingSettings, StoreId, TransportOption, WeekdayIndex } from "./types";
+import type { BookingWindow, CapacitySettings, DayHours, OnlineService, SchedulingSettings, StoreId, TechTimeOff, TechWeekHours, TransportOption, WeekdayIndex } from "./types";
 
 export const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
 
@@ -46,15 +46,7 @@ function transports(): TransportOption[] {
 export function defaultScheduling(store: StoreId = "grand-coulee"): SchedulingSettings {
   if (store === "pullman") {
     return {
-      hours: [
-        day(0, "08:00", "17:00", true),
-        day(1, "07:00", "18:00"),
-        day(2, "07:00", "18:00"),
-        day(3, "07:00", "18:00"),
-        day(4, "07:00", "18:00"),
-        day(5, "07:00", "18:00"),
-        day(6, "08:00", "16:00"),
-      ],
+      hours: [day(0, "08:00", "17:00", true), day(1, "07:00", "18:00"), day(2, "07:00", "18:00"), day(3, "07:00", "18:00"), day(4, "07:00", "18:00"), day(5, "07:00", "18:00"), day(6, "08:00", "16:00")],
       closedDates: ["2026-11-27", "2026-12-24"],
       bookingWindow: { daysAhead: 14, minLeadHours: 0 },
       onlineMenu: menu([
@@ -63,18 +55,11 @@ export function defaultScheduling(store: StoreId = "grand-coulee"): SchedulingSe
         ["pl-cabin", "Cabin filter", 0.4],
       ]),
       transportOptions: transports(),
+      capacity: defaultCapacity(),
     };
   }
   return {
-    hours: [
-      day(0, "08:00", "17:00", true),
-      day(1, "07:30", "17:30"),
-      day(2, "07:30", "17:30"),
-      day(3, "07:30", "17:30"),
-      day(4, "07:30", "17:30"),
-      day(5, "07:30", "17:30"),
-      day(6, "08:00", "13:00"),
-    ],
+    hours: [day(0, "08:00", "17:00", true), day(1, "07:30", "17:30"), day(2, "07:30", "17:30"), day(3, "07:30", "17:30"), day(4, "07:30", "17:30"), day(5, "07:30", "17:30"), day(6, "08:00", "13:00")],
     closedDates: ["2026-11-26", "2026-12-25"],
     bookingWindow: { daysAhead: 21, minLeadHours: 0 },
     onlineMenu: menu([
@@ -83,6 +68,19 @@ export function defaultScheduling(store: StoreId = "grand-coulee"): SchedulingSe
       ["gc-brakes", "Brake inspection", 0.4],
     ]),
     transportOptions: transports(),
+    capacity: defaultCapacity(),
+  };
+}
+
+/** Limits that match the old fixed rule until a service manager sets something else. */
+export function defaultCapacity(): CapacitySettings {
+  return {
+    techHours: [],
+    timeOff: [],
+    maxAdvisorAppointmentsPerHour: null,
+    maxWaiterPerSlot: null,
+    maxArrivalsPerSlot: null,
+    onlineSharePercent: 100,
   };
 }
 
@@ -102,9 +100,7 @@ export function normalizeScheduling(value: unknown, store: StoreId = "grand-coul
         close: typeof row?.close === "string" && TIME.test(row.close) ? row.close : base.close,
       };
     }),
-    closedDates: Array.isArray(raw.closedDates)
-      ? [...new Set(raw.closedDates.filter((iso): iso is string => typeof iso === "string" && ISO_DATE.test(iso)))].sort()
-      : [...fallback.closedDates],
+    closedDates: Array.isArray(raw.closedDates) ? [...new Set(raw.closedDates.filter((iso): iso is string => typeof iso === "string" && ISO_DATE.test(iso)))].sort() : [...fallback.closedDates],
     bookingWindow: normalizeWindow(raw.bookingWindow, fallback.bookingWindow),
     onlineMenu: Array.isArray(raw.onlineMenu)
       ? raw.onlineMenu.flatMap((item, index) => {
@@ -113,6 +109,21 @@ export function normalizeScheduling(value: unknown, store: StoreId = "grand-coul
         })
       : fallback.onlineMenu.map((item) => ({ ...item })),
     transportOptions: transportList(raw.transportOptions, fallback.transportOptions),
+    capacity: normalizeCapacity(raw.capacity),
+  };
+}
+
+export function normalizeCapacity(value: unknown): CapacitySettings {
+  const fallback = defaultCapacity();
+  if (!value || typeof value !== "object") return fallback;
+  const raw = value as Partial<CapacitySettings>;
+  return {
+    techHours: cleanTechHours(raw.techHours),
+    timeOff: cleanTimeOff(raw.timeOff),
+    maxAdvisorAppointmentsPerHour: cleanCap(raw.maxAdvisorAppointmentsPerHour),
+    maxWaiterPerSlot: cleanCap(raw.maxWaiterPerSlot),
+    maxArrivalsPerSlot: cleanCap(raw.maxArrivalsPerSlot),
+    onlineSharePercent: cleanShare(raw.onlineSharePercent),
   };
 }
 
@@ -187,7 +198,10 @@ export function removeClosedDate(current: SchedulingSettings, iso: string): Sche
 }
 
 export function patchBookingWindow(current: SchedulingSettings, patch: Partial<BookingWindow>): SchedulingSettings {
-  return { ...current, bookingWindow: normalizeWindow({ ...current.bookingWindow, ...patch }, current.bookingWindow) };
+  return {
+    ...current,
+    bookingWindow: normalizeWindow({ ...current.bookingWindow, ...patch }, current.bookingWindow),
+  };
 }
 
 export function addOnlineService(current: SchedulingSettings, input: { name: string; laborHours: number }, id: string): SchedulingSettings | null {
@@ -239,4 +253,216 @@ export function removeTransportOption(current: SchedulingSettings, id: string): 
   if (current.transportOptions.length <= 1) return null;
   if (!current.transportOptions.some((row) => row.id === id)) return null;
   return { ...current, transportOptions: current.transportOptions.filter((row) => row.id !== id) };
+}
+
+const CAP_MAX = 500;
+
+export type CapacityLimitPatch = {
+  maxAdvisorAppointmentsPerHour?: number | null;
+  maxWaiterPerSlot?: number | null;
+  maxArrivalsPerSlot?: number | null;
+  onlineSharePercent?: number;
+};
+
+export function capacityLimitLabel(value: number | null) {
+  return value == null ? "no limit" : String(value);
+}
+
+export function applyCapacityLimits(
+  current: SchedulingSettings,
+  patch: CapacityLimitPatch,
+): {
+  next: SchedulingSettings;
+  changes: { field: string; before: string; after: string }[];
+} | null {
+  const capacity = current.capacity ?? defaultCapacity();
+  let maxAdvisorAppointmentsPerHour = capacity.maxAdvisorAppointmentsPerHour;
+  let maxWaiterPerSlot = capacity.maxWaiterPerSlot;
+  let maxArrivalsPerSlot = capacity.maxArrivalsPerSlot;
+  let onlineSharePercent = capacity.onlineSharePercent;
+  const changes: { field: string; before: string; after: string }[] = [];
+  if (patch.maxAdvisorAppointmentsPerHour !== undefined) {
+    const next = strictCap(patch.maxAdvisorAppointmentsPerHour);
+    if (next === undefined) return null;
+    if (next !== maxAdvisorAppointmentsPerHour) {
+      changes.push({
+        field: "Capacity advisor per hour",
+        before: capacityLimitLabel(maxAdvisorAppointmentsPerHour),
+        after: capacityLimitLabel(next),
+      });
+    }
+    maxAdvisorAppointmentsPerHour = next;
+  }
+  if (patch.maxWaiterPerSlot !== undefined) {
+    const next = strictCap(patch.maxWaiterPerSlot);
+    if (next === undefined) return null;
+    if (next !== maxWaiterPerSlot) {
+      changes.push({
+        field: "Capacity waiters per slot",
+        before: capacityLimitLabel(maxWaiterPerSlot),
+        after: capacityLimitLabel(next),
+      });
+    }
+    maxWaiterPerSlot = next;
+  }
+  if (patch.maxArrivalsPerSlot !== undefined) {
+    const next = strictCap(patch.maxArrivalsPerSlot);
+    if (next === undefined) return null;
+    if (next !== maxArrivalsPerSlot) {
+      changes.push({
+        field: "Capacity arrivals per slot",
+        before: capacityLimitLabel(maxArrivalsPerSlot),
+        after: capacityLimitLabel(next),
+      });
+    }
+    maxArrivalsPerSlot = next;
+  }
+  if (patch.onlineSharePercent !== undefined) {
+    if (!Number.isInteger(patch.onlineSharePercent) || patch.onlineSharePercent < 0 || patch.onlineSharePercent > 100) return null;
+    if (patch.onlineSharePercent !== onlineSharePercent) {
+      changes.push({
+        field: "Capacity online share",
+        before: `${onlineSharePercent}%`,
+        after: `${patch.onlineSharePercent}%`,
+      });
+    }
+    onlineSharePercent = patch.onlineSharePercent;
+  }
+  return {
+    next: {
+      ...current,
+      capacity: {
+        ...capacity,
+        maxAdvisorAppointmentsPerHour,
+        maxWaiterPerSlot,
+        maxArrivalsPerSlot,
+        onlineSharePercent,
+      },
+    },
+    changes,
+  };
+}
+
+export function applyTechWeekHours(current: SchedulingSettings, techId: string, weekday: WeekdayIndex, hours: number | null): { next: SchedulingSettings; before: string; after: string } | null {
+  if (!techId || weekday < 0 || weekday > 6) return null;
+  const capacity = current.capacity ?? defaultCapacity();
+  const existing = capacity.techHours.find((row) => row.techId === techId);
+  const previous = existing?.hours[weekday] ?? null;
+  let nextHours: number | null;
+  if (hours == null) nextHours = null;
+  else if (typeof hours !== "number" || !Number.isFinite(hours) || hours < 0 || hours > HOURS_MAX) return null;
+  else nextHours = Math.round(hours * 100) / 100;
+  if (previous === nextHours) {
+    return { next: current, before: hourLabel(previous), after: hourLabel(nextHours) };
+  }
+  const week = existing ? [...existing.hours] : [null, null, null, null, null, null, null];
+  week[weekday] = nextHours;
+  const techHours = week.every((value) => value == null) ? capacity.techHours.filter((row) => row.techId !== techId) : [...capacity.techHours.filter((row) => row.techId !== techId), { techId, hours: week as TechWeekHours["hours"] }];
+  return {
+    next: { ...current, capacity: { ...capacity, techHours } },
+    before: hourLabel(previous),
+    after: hourLabel(nextHours),
+  };
+}
+
+export function applyTimeOffAdd(current: SchedulingSettings, input: { techId: string; date: string; start?: string; end?: string }, id: string): { next: SchedulingSettings; label: string } | null {
+  const row = oneTimeOff({ ...input, id, start: input.start ?? "", end: input.end ?? "" });
+  if (!row) return null;
+  const capacity = current.capacity ?? defaultCapacity();
+  if (capacity.timeOff.some((item) => item.techId === row.techId && item.date === row.date && item.start === row.start && item.end === row.end)) return null;
+  return {
+    next: { ...current, capacity: { ...capacity, timeOff: [...capacity.timeOff, row] } },
+    label: timeOffLabel(row),
+  };
+}
+
+export function applyTimeOffRemove(current: SchedulingSettings, id: string): { next: SchedulingSettings; label: string } | null {
+  const capacity = current.capacity ?? defaultCapacity();
+  const row = capacity.timeOff.find((item) => item.id === id);
+  if (!row) return null;
+  return {
+    next: {
+      ...current,
+      capacity: { ...capacity, timeOff: capacity.timeOff.filter((item) => item.id !== id) },
+    },
+    label: timeOffLabel(row),
+  };
+}
+
+export function timeOffLabel(row: Pick<TechTimeOff, "date" | "start" | "end">) {
+  if (!row.start && !row.end) return `${row.date} off`;
+  return `${row.date} ${row.start}–${row.end}`;
+}
+
+function hourLabel(value: number | null) {
+  return value == null ? "shop open hours" : String(value);
+}
+
+function cleanTechHours(value: unknown): TechWeekHours[] {
+  if (!Array.isArray(value)) return [];
+  const byTech = new Map<string, (number | null)[]>();
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Partial<TechWeekHours>;
+    const techId = typeof row.techId === "string" ? row.techId.trim() : "";
+    if (!techId || !Array.isArray(row.hours)) continue;
+    const hours = ([0, 1, 2, 3, 4, 5, 6] as const).map((index) => cleanHours(row.hours?.[index]));
+    byTech.set(techId, hours);
+  }
+  return [...byTech.entries()].filter(([, hours]) => hours.some((value) => value != null)).map(([techId, hours]) => ({ techId, hours: hours as TechWeekHours["hours"] }));
+}
+
+function cleanTimeOff(value: unknown): TechTimeOff[] {
+  if (!Array.isArray(value)) return [];
+  const rows: TechTimeOff[] = [];
+  const ids = new Set<string>();
+  const keys = new Set<string>();
+  for (const item of value) {
+    const row = oneTimeOff(item);
+    if (!row || ids.has(row.id)) continue;
+    const key = `${row.techId}|${row.date}|${row.start}|${row.end}`;
+    if (keys.has(key)) continue;
+    ids.add(row.id);
+    keys.add(key);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function oneTimeOff(value: unknown): TechTimeOff | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Partial<TechTimeOff>;
+  const techId = typeof row.techId === "string" ? row.techId.trim() : "";
+  const date = typeof row.date === "string" ? row.date.trim() : "";
+  const id = typeof row.id === "string" ? row.id.trim() : "";
+  if (!techId || !id || !ISO_DATE.test(date)) return null;
+  const start = typeof row.start === "string" ? row.start : "";
+  const end = typeof row.end === "string" ? row.end : "";
+  if (start === "" && end === "") return { id, techId, date, start: "", end: "" };
+  if (!TIME.test(start) || !TIME.test(end) || end <= start) return null;
+  return { id, techId, date, start, end };
+}
+
+function cleanHours(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > HOURS_MAX) return null;
+  return Math.round(value * 100) / 100;
+}
+
+function cleanCap(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > CAP_MAX) return null;
+  return value;
+}
+
+/** Undefined means the value is not a valid cap. Null is a valid "no limit". */
+function strictCap(value: number | null): number | null | undefined {
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > CAP_MAX) return undefined;
+  return value;
+}
+
+function cleanShare(value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) return 100;
+  return value;
 }
