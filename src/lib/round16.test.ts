@@ -43,9 +43,9 @@ describe("round 16", () => {
     const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     shop.getState().setWorkingAs("marcus");
-    assert.equal(shop.getState().moveAppointment(row.id, { time: "12:00" }).ok, false);
+    assert.equal(shop.getState().moveAppointment(row.id, { time: "08:30" }).ok, false);
     shop.getState().setWorkingAs("megan");
-    assert.equal(shop.getState().moveAppointment(row.id, { time: "12:00", techId: "elena" }).ok, true);
+    assert.equal(shop.getState().moveAppointment(row.id, { time: "08:30", techId: "elena" }).ok, true);
     const logged = shop.getState().settingsLog?.find((item) => item.field === "Move appointment");
     assert.match(logged?.after ?? "", /Elena/);
     assert.match(logged?.after ?? "", /PT/);
