@@ -8,8 +8,9 @@
 import { spawnSync } from "node:child_process";
 
 const tests = [
-  "src/lib/round22.test.ts",
+  "src/lib/round24.test.ts",
   "src/lib/round23.test.ts",
+  "src/lib/round22.test.ts",
   "src/lib/round21.test.ts",
   "src/lib/round20.test.ts",
 ];
@@ -30,5 +31,5 @@ console.log("");
 console.log("Mutant corpus: not in this repository (verifier keeps it outside the app).");
 console.log("Last measured cumulative kill rate, at ff58124: 90.1% (236/262).");
 console.log("Round 22 new-mutant rate reported by the verifier: 20/48.");
-console.log("This script reruns the behavioral tests for those cases. It does not invent a new percentage.");
+console.log("Round 24 adds behavioral tests. This script does not invent a new percentage.");
 process.exit(run.status ?? 1);

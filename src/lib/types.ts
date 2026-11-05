@@ -166,6 +166,8 @@ export interface Vehicle {
   make: string;
   model: string;
   vin: string;
+  /** Plate captured when the vehicle is added from Book. Optional on older records. */
+  plate?: string;
   /**
    * Append-only owner timeline. A transfer closes the open span and adds the next one.
    * Spans are not edited after they are written.
@@ -533,7 +535,7 @@ export interface ShopNotice {
 }
 
 /** Why an advisor kept a booking the capacity check would not offer online. */
-export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff";
+export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff" | "past-close";
 
 export interface OverrideRecord {
   id: string;

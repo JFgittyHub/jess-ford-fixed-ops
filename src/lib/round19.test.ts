@@ -194,6 +194,7 @@ describe("round 19 appointments, phones, and logs", () => {
     assert.equal(shop.getState().updateAppointment(back.id, { status: "scheduled" }).ok, true);
     const putBack = shop.getState().settingsLog?.find((item) => item.field === "Put back");
     assert.match(putBack?.after ?? "", /Put back to scheduled/);
+    shop.getState().setWorkingAs("derek");
     assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
     const closedDate = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "Thu, Dec 24");
     assert.ok(closedDate);

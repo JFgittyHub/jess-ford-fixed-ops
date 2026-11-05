@@ -141,8 +141,10 @@ describe("round 20 appointment writes", () => {
     assert.ok(other && otherVehicle);
     const refused = shop.getState().updateAppointment(missed.id, { customerId: other.id, vehicleId: otherVehicle.id });
     assert.match(refused.error ?? "", /no-show stays/);
+    shop.getState().setWorkingAs("derek");
     assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
     assert.equal(shop.getState().removeClosedDate("2026-12-24"), undefined);
+    shop.getState().setWorkingAs("megan");
     const removed = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "removed");
     assert.equal(removed?.before, "Thu, Dec 24");
   });

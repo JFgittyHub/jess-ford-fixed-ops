@@ -200,6 +200,8 @@ export function overrideReasonLabel(reason: OverrideReason): string {
       return "Store closed";
     case "unknown-staff":
       return "Staff not on this store";
+    case "past-close":
+      return "Runs past closing";
   }
 }
 
@@ -316,6 +318,10 @@ function instant(iso: string, minutes: number): number {
   return Date.UTC(year, month - 1, day) + minutes * 60_000;
 }
 
+export function shopMinutes(date: Date = now()): { date: string; minutes: number } {
+  return shopNow(date);
+}
+
 function shopNow(date: Date): { date: string; minutes: number } {
   const map: Record<string, string> = {};
   for (const part of new Intl.DateTimeFormat("en-US", {
@@ -351,9 +357,66 @@ export function visitTimeError(scheduling: SchedulingSettings, iso: string, time
   return null;
 }
 
-/** Lengths are 30-minute steps. A bad length is refused, not replaced with 60. */
+export const PAST_CLOSE_MESSAGE = "That visit runs past closing. A service manager can approve it.";
+export const PAST_TODAY_MESSAGE = "That start time has already passed today.";
+
+/** True when the visit starts on the grid and finishes after that day's close. */
+export function visitRunsPastClose(scheduling: SchedulingSettings, iso: string, time: string, minutes: number): boolean {
+  if (visitTimeError(scheduling, iso, time)) return false;
+  if (typeof minutes !== "number" || !Number.isInteger(minutes)) return false;
+  const day = shopDay(scheduling, iso);
+  const openLength = day.closeMinutes - day.openMinutes;
+  if (openLength <= 0 || minutes >= openLength) return false;
+  const [hour, minute] = time.split(":").map(Number);
+  const end = hour * 60 + minute + minutes;
+  return end > day.closeMinutes;
+}
+
+/** Start times on the open grid whose visit ends by close. */
+export function fittingStartTimes(scheduling: SchedulingSettings, iso: string, minutes: number, starts: string[]): string[] {
+  return starts.filter((time) => !visitTimeError(scheduling, iso, time) && !visitRunsPastClose(scheduling, iso, time, minutes));
+}
+
+/**
+ * The next 30-minute start that fits a visit. Today uses the next slot after now.
+ * A later day uses that day's first open slot. If today has nothing left, the next open day.
+ */
+export function nextOpenVisit(scheduling: SchedulingSettings, selected: string, nowDate: Date, minutes = 60): { date: string; time: string } {
+  const clock = shopNow(nowDate);
+  const first = (iso: string, earliest: number) => {
+    const day = shopDay(scheduling, iso);
+    if (day.closed || day.closeMinutes <= day.openMinutes) return "";
+    let cursor = Math.max(day.openMinutes, Math.ceil(earliest / 30) * 30);
+    const length = Math.max(30, minutes);
+    while (cursor < day.closeMinutes) {
+      if (cursor + length <= day.closeMinutes) return formatTime(cursor);
+      cursor += 30;
+    }
+    return "";
+  };
+  const later = selected > clock.date ? selected : "";
+  if (later) {
+    let day = later;
+    for (let guard = 0; guard < 21; guard += 1) {
+      const time = first(day, 0);
+      if (time) return { date: day, time };
+      day = addDays(day, 1);
+    }
+  }
+  const todayTime = first(clock.date, clock.minutes + 1);
+  if (todayTime) return { date: clock.date, time: todayTime };
+  let day = addDays(clock.date, 1);
+  for (let guard = 0; guard < 21; guard += 1) {
+    const time = first(day, 0);
+    if (time) return { date: day, time };
+    day = addDays(day, 1);
+  }
+  return { date: clock.date, time: formatTime(shopDay(scheduling, clock.date).openMinutes || 8 * 60) };
+}
+
+/** Lengths are 30-minute steps. 24 hours does not fit a visit, so 1440 is refused. */
 export function visitLengthError(minutes: unknown): string | null {
-  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes > 1440 || minutes % 30 !== 0) {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440 || minutes % 30 !== 0) {
     return "That length is not on this desk.";
   }
   return null;

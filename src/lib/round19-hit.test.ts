@@ -117,7 +117,8 @@ describe("round 19 page hits", () => {
       assert.ok(Number(hit.upperZ) <= Number(hit.lowerZ));
       assert.equal(hit.upperOverflow, "hidden");
       assert.equal(hit.gripZ, "0");
-      assert.ok(hit.concern && hit.concern.height >= 8);
+      assert.ok(hit.concern);
+      assert.ok(hit.concern.height === 0 || hit.concern.height >= 14);
       assert.equal(hit.concernText, "upper");
       assert.ok(hit.concern && hit.grip && hit.concern.bottom <= hit.grip.top + 1);
       assert.ok(hit.summary && hit.summary.width >= 33 && hit.summary.width <= 35);

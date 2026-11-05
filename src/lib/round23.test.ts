@@ -149,6 +149,8 @@ describe("round 23 past visit form and summary drag", () => {
     assert.match(markup, /type="date" disabled=""/);
     assert.match(markup, /<select disabled="" class="field min-h-11[^"]*" aria-label="Visit length"/);
     assert.match(markup, /Status<select class="field"><option value="scheduled"/);
+    assert.match(markup, /<option value="arrived">Showed<\/option>/);
+    assert.match(markup, /<option value="no_show">No-show<\/option>/);
   });
 
   it("moves a card from the summary mark without opening details", () => {

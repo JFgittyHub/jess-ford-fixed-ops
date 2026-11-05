@@ -10,7 +10,8 @@ import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, onlineSlots } from "@/lib/capacity";
+import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, PAST_TODAY_MESSAGE, shopMinutes } from "@/lib/capacity";
+import { filterDeskCustomers, tenDigitPhone } from "@/lib/desk-customers";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
@@ -22,7 +23,8 @@ import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
-import type { Appointment, CancelReason, TransportOption } from "@/lib/types";
+import { now } from "@/lib/clock";
+import type { Appointment, CancelReason, SchedulingSettings, TransportOption } from "@/lib/types";
 
 export const Route = createFileRoute("/schedule")({ component: SchedulePage });
 
@@ -86,6 +88,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [day, setDay] = useState(today());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [booking, setBooking] = useState(false);
+  const [bookingKey, setBookingKey] = useState(0);
   const [bookingDirty, setBookingDirty] = useState(false);
   const [discardBooking, setDiscardBooking] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(() => openRequests || wantsOnlineRequests(locationHash));
@@ -253,7 +256,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           {actor === "technician" ? <p role="note" className="mt-2 text-sm font-semibold text-[#8a5a00]">Techs can view only.</p> : null}
         </div>
         <div className="desk-actions flex flex-wrap items-center gap-2">
-          <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; setDate(nextOpenShopDay(day, shop.settings.scheduling)); setTime("15:00"); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
+          <Button small tone="primary" disabled={actor !== "advisor" && actor !== "service-manager"} onClick={() => { if (actor !== "advisor" && actor !== "service-manager") return; const next = nextOpenVisit(shop.settings.scheduling, nextOpenShopDay(day, shop.settings.scheduling), now(), 60); setDate(next.date); setTime(next.time); setBookingKey((key) => key + 1); setBookingDirty(false); setDiscardBooking(false); setBooking(true); }}>Book appointment</Button>
           <Button small id="online-requests" onClick={() => setRequestsOpen(true)}>Online requests ({pendingCount})</Button>
           <Button small onClick={() => setTimesOpen(true)}>Online times</Button>
           <Button className="min-h-11" tone={showCancelled ? "primary" : "ghost"} aria-pressed={showCancelled} onClick={() => setShowCancelled((value) => !value)}>Show cancelled</Button>
@@ -431,7 +434,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         )}
       </Modal>
 
-      <Modal open={booking} onClose={() => { if (bookingDirty) { setDiscardBooking(true); return; } setBooking(false); }} title="Book an appointment" description={`${dayLabel(date)} · ${clockTime(time)}`}>
+      <Modal open={booking} onClose={() => { if (bookingDirty) { setDiscardBooking(true); return; } setBooking(false); }} title={`Book an appointment · ${shop.settings.storeName}`} description={`${dayLabel(date)} · ${clockTime(time)}`}>
         {discardBooking ? (
           <div className="grid gap-3">
             <p role="alert">Discard this booking?</p>
@@ -442,7 +445,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           </div>
         ) : null}
         <AppointmentFields
-          key={`${shop.activeStoreId}-${date}-${time}-${techId}`}
+          key={`book-${bookingKey}`}
           onDirty={() => setBookingDirty(true)}
           customers={shop.customers.filter((customer) => !customer.formerRecord)}
           vehicles={shop.vehicles.filter((vehicle) => !vehicle.transferredTo)}
@@ -451,6 +454,15 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           laborOps={shop.laborOps}
           transports={transports}
           submitLabel="Book it"
+          manager={actor === "service-manager"}
+          scheduling={shop.settings.scheduling}
+          onCreate={(value, confirmTransfer, transferReason) => {
+            const result = shop.saveNewCustomerAppointment(value, confirmTransfer, transferReason);
+            if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
+            if (!result.ok) return result.error;
+            setBooking(false);
+            return null;
+          }}
           capacityFor={(draft) => capacityFor(draft)}
           onVisitChange={(next) => { setDate(next.date); setTime(next.time); }}
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
@@ -464,7 +476,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         />
       </Modal>
 
-      <Modal open={editing !== null} onClose={() => setEditingId(null)} title="Appointment details" description={editing ? `${dayLabel(editing.date)} · ${clockTime(editing.time)}` : undefined}>
+      <Modal open={editing !== null} onClose={() => setEditingId(null)} title={`Appointment details · ${shop.settings.storeName}`} description={editing ? `${dayLabel(editing.date)} · ${clockTime(editing.time)}` : undefined}>
         {editing ? (
           <>
             {editing.status === "cancelled" ? (
@@ -486,6 +498,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 transports={transports}
                 submitLabel="Save changes"
                 showStatus
+                manager={actor === "service-manager"}
+                scheduling={shop.settings.scheduling}
                 capacityFor={(draft) => capacityFor(draft, editing.id)}
                 initial={editing}
                 onSubmit={(value, confirmTransfer, transferReason) => {
@@ -498,6 +512,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
               />
             )}
             <div className="mt-3">
+              {editing.date < today() ? null : (
               <DeskCancelActions
                 actor={actor}
                 status={editing.status}
@@ -507,6 +522,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 onCancel={() => askCancel(editing.id)}
                 onReinstate={() => reinstate(editing.id)}
               />
+              )}
             </div>
           </>
         ) : null}
@@ -604,10 +620,10 @@ function Selected({
         <Pill tone={row.status === "no_show" ? "bad" : row.status === "in_shop" ? "good" : undefined}>
           {appointmentStatusLabel(row.status)}
         </Pill>
-        {row.status === "scheduled" ? <Button small onClick={() => onStatus("arrived")}>Arrived</Button> : null}
-        {row.status === "scheduled" ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
-        {row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
-        <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />
+        {row.status === "scheduled" ? <Button small onClick={() => onStatus("arrived")}>{row.date < today() ? "Showed" : "Arrived"}</Button> : null}
+        {row.status === "scheduled" || (row.date < today() && row.status === "arrived") ? <Button small onClick={() => onStatus("no_show")}>No-show</Button> : null}
+        {row.date < today() ? null : row.status === "no_show" ? <Button small onClick={() => onStatus("scheduled")}>Put back</Button> : null}
+        {row.date < today() ? null : <DeskCancelActions actor={actor} status={row.status} surface="card" blockedReason={cancelBlock} onOpenOrder={onOpenOrder} onCancel={onCancel} onReinstate={onReinstate} />}
         {row.date < today() ? null : <Button small onClick={() => { setLengthOpen(true); queueMicrotask(() => lengthPicker.current?.focus()); }}>Change length</Button>}
         {lengthOpen ? (
           <label className="grid basis-full gap-1 text-sm">
@@ -632,13 +648,16 @@ export function AppointmentFields({
   transports,
   submitLabel,
   showStatus,
+  manager = false,
+  scheduling,
   capacityFor,
   onSubmit,
+  onCreate,
   onDirty,
   onVisitChange,
 }: {
   initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">;
-  customers: { id: string; name: string; noShows?: number }[];
+  customers: { id: string; name: string; phone?: string; noShows?: number }[];
   vehicles: { id: string; customerId: string; year: number; model: string; vin: string }[];
   advisors: { id: string; number: string; name: string }[];
   techs: { id: string; number: string; name: string }[];
@@ -646,8 +665,11 @@ export function AppointmentFields({
   transports: TransportOption[];
   submitLabel: string;
   showStatus?: boolean;
+  manager?: boolean;
+  scheduling?: SchedulingSettings;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
 }) {
@@ -666,14 +688,32 @@ export function AppointmentFields({
   const [formError, setFormError] = useState<string | null>(null);
   const [transferWarning, setTransferWarning] = useState("");
   const [transferReason, setTransferReason] = useState("");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [customerCursor, setCustomerCursor] = useState(0);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [newYear, setNewYear] = useState("");
+  const [newMake, setNewMake] = useState("Ford");
+  const [newModel, setNewModel] = useState("");
+  const [newVin, setNewVin] = useState("");
+  const [newPlate, setNewPlate] = useState("");
   const transferRef = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
   const pastVisit = initial.date < today();
-  const capacity = capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
-  const alertText = transferWarning ? null : (formError || (owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
+  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
+  const gridStarts = scheduling && !manager ? fittingStartTimes(scheduling, date, minutes, STARTS) : STARTS;
+  const starts = gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts];
+  const clock = shopMinutes(now());
+  const pastToday = !pastVisit && date === clock.date && time < `${String(Math.floor(clock.minutes / 60)).padStart(2, "0")}:${String(clock.minutes % 60).padStart(2, "0")}`;
+  const matches = filterDeskCustomers(customers, vehicles, customerQuery);
+  const chosen = customers.find((customer) => customer.id === customerId);
+  const alertText = transferWarning ? null : (formError || (!creating && owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
   return (
     <form
@@ -682,16 +722,46 @@ export function AppointmentFields({
       className="grid gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        const block = bookingFormBlock({ vehicleId: resolvedVehicle, lines });
-        if (block) {
-          setFormError(block);
-          return;
-        }
         if (capacity.blocked) {
           setFormError(capacity.blocked);
           return;
         }
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
+        if (creating && onCreate) {
+          const result = onCreate({
+            name: newName,
+            phone: newPhone,
+            email: newEmail,
+            year: Number(newYear),
+            make: newMake,
+            model: newModel,
+            vin: newVin,
+            plate: newPlate,
+            date,
+            time,
+            minutes,
+            advisorId,
+            techId,
+            lane,
+            lines: kept,
+            concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "),
+            laborOpIds,
+          }, transferRef.current, transferReason);
+          transferRef.current = false;
+          if (result && typeof result === "object" && result.needsTransfer) {
+            setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
+            setFormError(result.error ?? null);
+            return;
+          }
+          setTransferWarning("");
+          setFormError(typeof result === "string" ? result : result?.error ?? null);
+          return;
+        }
+        const block = bookingFormBlock({ vehicleId: resolvedVehicle, lines });
+        if (block) {
+          setFormError(block);
+          return;
+        }
         const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason);
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsTransfer) {
@@ -706,8 +776,8 @@ export function AppointmentFields({
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Day"><input className="field" type="date" disabled={pastVisit} value={date} onChange={(event) => { setDate(event.target.value); onVisitChange?.({ date: event.target.value, time }); }} /></Field>
         <Field label="Starts">
-          <select className="field" disabled={pastVisit} value={STARTS.includes(time) ? time : snapHalfHour(time)} onChange={(event) => { setTime(event.target.value); onVisitChange?.({ date, time: event.target.value }); }}>
-            {STARTS.map((item) => <option key={item} value={item}>{clockTime(item)}</option>)}
+          <select className="field" disabled={pastVisit} value={starts.includes(time) ? time : snapHalfHour(time)} onChange={(event) => { setTime(event.target.value); onVisitChange?.({ date, time: event.target.value }); }}>
+            {starts.map((item) => <option key={item} value={item}>{clockTime(item)}</option>)}
           </select>
         </Field>
         <Field label="Length">
@@ -720,28 +790,94 @@ export function AppointmentFields({
         </Field>
       </div>
       <Field label="Customer">
-        <select className="field" disabled={pastVisit} value={customerId} onChange={(event) => {
-          const next = event.target.value;
-          setCustomerId(next);
-          const first = vehicles.find((vehicle) => vehicle.customerId === next);
-          setVehicleId(first?.id ?? "");
-          setVin(first?.vin ?? "");
-          setFormError(null);
-        }}>
-          {customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows ?? 0)}</option>)}
-        </select>
+        <div className="grid gap-2">
+          <input
+            className="field"
+            role="combobox"
+            aria-expanded={customerOpen}
+            aria-controls="customer-matches"
+            aria-autocomplete="list"
+            disabled={pastVisit}
+            placeholder="Name, phone, or last 8 of the VIN"
+            value={creating ? newName : customerOpen ? customerQuery : (chosen?.name ?? customerQuery)}
+            onFocus={() => { if (!pastVisit) { setCustomerOpen(true); setCustomerQuery(chosen?.name ?? ""); } }}
+            onChange={(event) => { setCreating(false); setCustomerQuery(event.target.value); setCustomerOpen(true); setCustomerCursor(0); }}
+            onKeyDown={(event) => {
+              if (!customerOpen) return;
+              if (event.key === "ArrowDown") { event.preventDefault(); setCustomerCursor((index) => Math.min(index + 1, matches.length)); }
+              if (event.key === "ArrowUp") { event.preventDefault(); setCustomerCursor((index) => Math.max(index - 1, 0)); }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                if (customerCursor >= matches.length || matches.length === 0) {
+                  setCreating(true);
+                  setNewName(customerQuery);
+                  setCustomerOpen(false);
+                  return;
+                }
+                const next = matches[customerCursor];
+                if (!next) return;
+                setCustomerId(next.id);
+                const first = vehicles.find((vehicle) => vehicle.customerId === next.id);
+                setVehicleId(first?.id ?? "");
+                setVin(first?.vin ?? "");
+                setCustomerOpen(false);
+                setCustomerQuery("");
+              }
+            }}
+          />
+          {customerOpen && !pastVisit ? (
+            <ul id="customer-matches" role="listbox" className="max-h-40 overflow-auto rounded-md border border-line bg-surface">
+              {matches.map((customer, index) => (
+                <li key={customer.id} role="option" aria-selected={customer.id === customerId}>
+                  <button type="button" className={`block w-full px-3 py-2 text-left text-sm ${index === customerCursor ? "bg-[#e7f1fb]" : ""}`} onMouseDown={(event) => {
+                    event.preventDefault();
+                    setCustomerId(customer.id);
+                    const first = vehicles.find((vehicle) => vehicle.customerId === customer.id);
+                    setVehicleId(first?.id ?? "");
+                    setVin(first?.vin ?? "");
+                    setCreating(false);
+                    setCustomerOpen(false);
+                    setCustomerQuery("");
+                  }}>{customer.name}{noShowSuffix(customer.noShows ?? 0)}</button>
+                </li>
+              ))}
+              <li>
+                {onCreate ? <button type="button" className="block w-full px-3 py-2 text-left text-sm font-semibold" onMouseDown={(event) => { event.preventDefault(); setCreating(true); setNewName(customerQuery); setCustomerOpen(false); }}>
+                  {matches.length === 0 ? "No match. Add as new customer" : "New customer"}
+                </button> : matches.length === 0 ? <p className="px-3 py-2 text-sm text-muted">No match.</p> : null}
+              </li>
+            </ul>
+          ) : null}
+          {!pastVisit && !creating && onCreate ? <Button type="button" small onClick={() => { setCreating(true); setNewName(""); }}>New customer</Button> : null}
+        </div>
       </Field>
-      <Field label="Vehicle">
+      {creating ? (
+        <div className="grid gap-3 rounded-md border border-line p-3" data-new-customer>
+          <Field label="Name"><input className="field" value={newName} onChange={(event) => setNewName(event.target.value)} /></Field>
+          <Field label="Phone"><input className="field" inputMode="numeric" value={newPhone} onChange={(event) => setNewPhone(event.target.value)} aria-describedby="phone-hint" /></Field>
+          <p id="phone-hint" className="text-sm text-muted">10 digits. No extension.</p>
+          <Field label="Email"><input className="field" value={newEmail} onChange={(event) => setNewEmail(event.target.value)} /></Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Year"><input className="field" value={newYear} onChange={(event) => setNewYear(event.target.value)} /></Field>
+            <Field label="Make"><input className="field" value={newMake} onChange={(event) => setNewMake(event.target.value)} /></Field>
+            <Field label="Model"><input className="field" value={newModel} onChange={(event) => setNewModel(event.target.value)} /></Field>
+            <Field label="Plate"><input className="field" value={newPlate} onChange={(event) => setNewPlate(event.target.value)} /></Field>
+          </div>
+          <Field label="VIN"><input className="field font-mono uppercase" value={newVin} onChange={(event) => setNewVin(normalizeVin(event.target.value).slice(0, 17))} /></Field>
+          {newPhone && !tenDigitPhone(newPhone) ? <p role="alert" className="text-sm text-[#8a3b2a]">Enter a 10-digit phone number.</p> : null}
+        </div>
+      ) : null}
+      {creating ? null : <Field label="Vehicle">
         <select className="field" disabled={pastVisit} value={resolvedVehicle} onChange={(event) => {
           setVehicleId(event.target.value);
           setVin(vehicles.find((vehicle) => vehicle.id === event.target.value)?.vin ?? "");
         }}>
           {owned.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.year} Ford {vehicle.model}</option>)}
         </select>
-      </Field>
-      <Field label="VIN">
+      </Field>}
+      {creating ? null : <Field label="VIN">
         <input className="field font-mono uppercase" disabled={pastVisit} value={vin} spellCheck={false} onChange={(event) => { setVin(normalizeVin(event.target.value).slice(0, 17)); setTransferWarning(""); }} />
-      </Field>
+      </Field>}
       {transferWarning ? (
         <div className="grid gap-2">
           <p role="alert" className="text-sm text-[#8a3b2a]">{transferWarning}</p>
@@ -798,7 +934,7 @@ export function AppointmentFields({
           <div key={line.id} className="grid gap-2">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold">Line {lineLetter(index)}</p>
-              {lines.length > 1 ? (
+              {lines.length > 1 && !pastVisit ? (
                 <Button small type="button" onClick={() => setLines((rows) => rows.filter((row) => row.id !== line.id))}>Remove</Button>
               ) : null}
             </div>
@@ -814,14 +950,25 @@ export function AppointmentFields({
       {showStatus ? (
         <Field label="Status">
           <select className="field" value={status} onChange={(event) => setStatus(event.target.value as Appointment["status"])}>
-            <option value="scheduled">Scheduled</option>
-            <option value="arrived">Arrived</option>
-            <option value="in_shop">In shop</option>
-            <option value="no_show">No-show</option>
+            {pastVisit ? (
+              <>
+                {status !== "arrived" && status !== "no_show" ? <option value={status}>{appointmentStatusLabel(status)}</option> : null}
+                <option value="arrived">Showed</option>
+                <option value="no_show">No-show</option>
+              </>
+            ) : (
+              <>
+                <option value="scheduled">Scheduled</option>
+                <option value="arrived">Arrived</option>
+                <option value="in_shop">In shop</option>
+                <option value="no_show">No-show</option>
+              </>
+            )}
           </select>
         </Field>
       ) : null}
       {alertText ? <p role="alert" className="text-sm text-[#8a3b2a]">{alertText}</p> : null}
+      {pastToday ? <p role="status" className="text-sm text-[#8a5a00]">{PAST_TODAY_MESSAGE}</p> : null}
       {capacity.warning ? (
         <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{capacity.warning}</p>
       ) : null}

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitTimeError, type CapacityResult } from "./capacity";
+import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_MESSAGE, type CapacityResult } from "./capacity";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
@@ -20,10 +20,11 @@ import { formatVisitDate, lastVisitHint, lastVisitMileage, mileageFloorMessage, 
 import { earliestVisitStart, firstOwnership, mergeVinDuplicates, transferOwnership, transferReason } from "./ownership";
 import { RO_CREATE_REFUSAL, RO_WRITE_REFUSAL, roCreationEnabled, roWritesEnabled } from "./ro-flags";
 import { sectionLockEnabled } from "./section-lock";
+import { tenDigitPhone } from "./desk-customers";
 import { inRange, MONEY_MAX, HOURS_MAX, QTY_MAX, asText, phoneDigits, NAME_MAX, TEXT_MAX, REASON_MAX } from "./range";
 import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWithNoWork, diagnosisOnRecord, linkLaborAndParts, mileageOverrideAllows, noWorkCloseError, unbookRepairOrder } from "./ro";
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
-import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RequestAction, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ServiceManager, SettingsChange, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
+import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideReason, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RequestAction, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ServiceManager, SettingsChange, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
 
 export interface NewOrderInput {
   customerId: string;
@@ -57,6 +58,8 @@ export interface NewCustomerInput {
 interface ShopActions {
   focusOrderId: string | null;
   activeStoreId: StoreId;
+  /** Demo user's store. Booking is refused when this is not the open store. */
+  userStoreId: StoreId;
   stores: Record<StoreId, ShopData>;
   setFocus: (id: string | null) => void;
   switchStore: (id: StoreId) => void;
@@ -138,6 +141,7 @@ interface ShopActions {
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
   saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean };
+  saveNewCustomerAppointment: (input: NewCustomerInput & Omit<Appointment, "id" | "orderId" | "customerId" | "vehicleId" | "vin" | "status"> & { plate: string }, confirmTransfer?: boolean, transferReason?: string) => { ok: boolean; appointmentId: string; customerId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean };
   cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }, confirmArrived?: boolean) => { ok: boolean; error: string | null; arrivedConfirm: string | null };
   reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
   setWorkingAs: (id: string) => void;
@@ -275,6 +279,26 @@ export function nextOpenShopDay(from: string, scheduling: { hours: { weekday: nu
 }
 
 const PAST_ONLY = "That visit is in the past. You can change the status only.";
+const PAST_STATUS_ONLY = "On a past day you can mark showed or no-show only.";
+const PAST_CANCEL = "A past visit can't be cancelled.";
+const PAST_PUT_BACK = "A past visit can't be put back.";
+const OWN_STORE = "Book on your own store. Each store keeps its own schedule.";
+
+let appointmentCommitProbe: (() => void) | null = null;
+
+/** Test hook. Throws inside the appointment commit so a VIN claim rolls back. */
+export function setAppointmentCommitProbe(probe: (() => void) | null) {
+  appointmentCommitProbe = probe;
+}
+
+function pastStatusAllowed(status: string) {
+  return status === "arrived" || status === "no_show";
+}
+
+function ownStoreError(state: { userStoreId?: StoreId; activeStoreId?: StoreId }) {
+  if (state.userStoreId && state.activeStoreId && state.userStoreId !== state.activeStoreId) return OWN_STORE;
+  return null;
+}
 
 function pastFieldChangeError(current: Appointment, patch: Partial<Appointment>): string | null {
   if (current.date >= today()) return null;
@@ -393,10 +417,14 @@ function appointmentEditRows(
   if (patch.customerId) push("customer", nameOf(current.customerId, state.customers), nameOf(patch.customerId, state.customers));
   if (typeof patch.vin === "string") push("VIN", current.vin || "none", normalizeVin(patch.vin) || "none");
   if (Array.isArray(patch.lines)) {
-    const beforeLines = current.lines.map((line) => line.concern).filter(Boolean);
-    const afterLines = patch.lines.map((line) => cleanFreeText(line.concern).trim().slice(0, 500)).filter(Boolean);
-    const sameLines = afterLines.length === beforeLines.length && afterLines.every((concern, index) => concern === beforeLines[index]);
-    if (!sameLines) push("concern", beforeLines.join("; ") || "none", afterLines.join("; ") || "none");
+    const beforeText = concernFromLines(current.lines);
+    const afterLines = patch.lines
+      .map((line, index) => ({ code: line.code || lineLetter(index), concern: cleanFreeText(line.concern).trim().slice(0, 500) }))
+      .filter((line) => line.concern);
+    const concernText = typeof patch.concern === "string" ? cleanFreeText(patch.concern).trim() : "";
+    const afterText = afterLines.length > 0 ? concernFromLines(afterLines) : concernText;
+    const unchanged = afterText === beforeText || afterText === current.concern || (afterLines.length === 0 && (concernText === beforeText || concernText === current.concern));
+    if (!unchanged) push("concern", beforeText || current.concern || "none", afterText || "none");
   } else if (typeof patch.concern === "string") {
     const applied = cleanFreeText(patch.concern).trim().slice(0, 500);
     const lineText = current.lines.length === 1 ? current.lines[0]?.concern ?? "" : "";
@@ -1477,20 +1505,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             if (patch === state) return state;
             const next = (replace ? { ...patch } : { ...state, ...patch }) as ShopState;
             const activeStoreId = next.activeStoreId === "pullman" || next.activeStoreId === "grand-coulee" ? next.activeStoreId : state.activeStoreId;
+            const userStoreId = next.userStoreId === "pullman" || next.userStoreId === "grand-coulee" ? next.userStoreId : state.userStoreId;
             return {
               ...next,
               activeStoreId,
+              userStoreId,
               stores: { ...(next.stores ?? state.stores), [activeStoreId]: pickShop(next) },
             };
           });
         };
-        const logOverride = (
-          result: CapacityResult,
+        const logReasonOverride = (
+          reason: OverrideReason,
           appointmentId: string,
           fallback: { customerId: string; date: string; time: string; techId: string; advisorId: string },
         ): string | null => {
-          const reason = overrideReason(result);
-          if (!reason) return null;
           const saved = get();
           const actor = namedActor(saved);
           if (!actor) return null;
@@ -1517,9 +1545,19 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }));
           return overrideId;
         };
+        const logOverride = (
+          result: CapacityResult,
+          appointmentId: string,
+          fallback: { customerId: string; date: string; time: string; techId: string; advisorId: string },
+        ): string | null => {
+          const reason = overrideReason(result);
+          if (!reason) return null;
+          return logReasonOverride(reason, appointmentId, fallback);
+        };
         return {
         ...active,
         activeStoreId: desk.activeStoreId,
+        userStoreId: desk.activeStoreId,
         stores: desk.stores,
       focusOrderId: null,
       switchStore: (id) => {
@@ -1528,7 +1566,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (state.activeStoreId === id) return state;
           const next = state.stores[id];
           if (!next) return state;
-          return { ...next, roleLog: next.roleLog ?? [], ownershipLog: next.ownershipLog ?? [], settingsLog: next.settingsLog ?? [], requestLog: next.requestLog ?? [], activeStoreId: id, stores: state.stores, focusOrderId: null };
+          return { ...next, roleLog: next.roleLog ?? [], ownershipLog: next.ownershipLog ?? [], settingsLog: next.settingsLog ?? [], requestLog: next.requestLog ?? [], activeStoreId: id, userStoreId: id, stores: state.stores, focusOrderId: null };
         });
       },
       setFocus: (id) => set({ focusOrderId: id }),
@@ -1641,7 +1679,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       updateDayHours: (weekday, patch) =>
         set((state) => {
           const who = namedActor(state);
-          if (!who || rosterEditorError(state)) return state;
+          if (!who || deskActor(state) !== "service-manager") return state;
           const next = patchDayHours(state.settings.scheduling, weekday, patch);
           const beforeRow = state.settings.scheduling.hours.find((row) => row.weekday === weekday);
           const afterRow = next.hours.find((row) => row.weekday === weekday);
@@ -1657,7 +1695,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         let added = false;
         set((state) => {
           const who = namedActor(state);
-          if (!who || rosterEditorError(state)) return state;
+          if (!who || deskActor(state) !== "service-manager") return state;
           const next = addClosedDate(state.settings.scheduling, iso);
           if (next === state.settings.scheduling) return state;
           added = true;
@@ -1671,7 +1709,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       removeClosedDate: (iso) =>
         set((state) => {
           const who = namedActor(state);
-          if (!who || rosterEditorError(state)) return state;
+          if (!who || deskActor(state) !== "service-manager") return state;
           const next = removeClosedDate(state.settings.scheduling, iso);
           if (next === state.settings.scheduling) return state;
           return {
@@ -2271,7 +2309,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           };
         }),
       updateWa: (orderId, patch) =>
-        !roWritesEnabled() ? undefined : set((state) => ({
+        sectionLockEnabled() || !roWritesEnabled() ? undefined : set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
             if (lockedOrder(order) || order.authorizationLocked) return order;
             const wa = normalizeWa(order.wa);
@@ -2504,7 +2542,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return { customers, vehicles, orders: mapOrder(state.orders, orderId, () => next) };
         }),
       addLabor: (orderId, line) =>
-        !roWritesEnabled() ? undefined : set((state) => ({
+        sectionLockEnabled() || !roWritesEnabled() ? undefined : set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
             if (lockedOrder(order)) return order;
             const jobId = jobForLine(order, line.jobId);
@@ -2670,7 +2708,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         return { ok: true, error: null };
       },
       addPartLine: (orderId, line) =>
-        !roWritesEnabled() ? undefined : set((state) => ({
+        sectionLockEnabled() || !roWritesEnabled() ? undefined : set((state) => ({
           orders: mapOrder(state.orders, orderId, (order) => {
             if (lockedOrder(order)) return order;
             const jobId = jobForLine(order, line.jobId);
@@ -2919,7 +2957,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           };
         }),
       createOrder: (input) => {
-        if (!roCreationEnabled()) return "";
+        if (sectionLockEnabled() || !roCreationEnabled()) return "";
         const state = get();
         if (repairOrderWriterError(state)) return "";
         const vehicle = state.vehicles.find((row) => row.id === input.vehicleId);
@@ -3228,7 +3266,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!knownStatus.has(status)) return { ok: false, error: "That status is not on this desk." };
         const current = state.appointments.find((row) => row.id === id);
         if (!current) return { ok: false, error: "That appointment is not on this store." };
+        if (ownStoreError(state)) return { ok: false, error: ownStoreError(state) };
         if (current.status === status) return { ok: true, error: null };
+        if (current.date < today() && !pastStatusAllowed(status)) return { ok: false, error: PAST_STATUS_ONLY };
         if (current.status === "cancelled" || status === "cancelled") return { ok: false, error: "This appointment is cancelled." };
         const who = namedActor(state);
         if (!who || !rosterEditor(state)) return { ok: false, error: rosterEditorError(state) ?? "Choose who is working." };
@@ -3261,6 +3301,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === current.advisorId),
         );
         if (staffError) return { ok: false, error: staffError };
+        if (ownStoreError(state)) return { ok: false, error: ownStoreError(state) };
         if (current.date < today()) return { ok: false, error: PAST_ONLY };
         if (patch.time !== undefined) {
           const timeError = visitTimeError(state.settings.scheduling, patch.date || current.date, patch.time);
@@ -3270,6 +3311,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const minutes = patch.minutes === undefined ? current.minutes : patch.minutes;
         const time = patch.time === undefined ? current.time : patch.time;
         const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
+        const pastClose = visitRunsPastClose(state.settings.scheduling, date, time, minutes);
+        if (pastClose && deskActor(state) !== "service-manager") return { ok: false, error: PAST_CLOSE_MESSAGE };
         const techName = (tech: string) => state.techs.find((row) => row.id === tech)?.name ?? "No technician";
         const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
         const moved = current.date !== date || current.time !== time || current.techId !== techId;
@@ -3287,6 +3330,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           }),
           settingsLog: logged.length === 0 ? next.settingsLog : [...(next.settingsLog ?? []), ...logged],
         }));
+        if (pastClose) logReasonOverride("past-close", id, current);
         return { ok: true, error: null };
       },
       updateAppointment: (id, patch) => {
@@ -3343,6 +3387,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const knownStatus = new Set(["scheduled", "arrived", "in_shop", "no_show"]);
         if (patch.status && !knownStatus.has(patch.status)) return { ok: false, error: "That status is not on this desk." };
+        if (current.date < today() && patch.status && patch.status !== current.status && !pastStatusAllowed(patch.status)) {
+          return { ok: false, error: PAST_STATUS_ONLY };
+        }
+        if (ownStoreError(state)) return { ok: false, error: ownStoreError(state) };
+        const scheduleChanged = (patch.date !== undefined && patch.date !== current.date)
+          || (patch.time !== undefined && patch.time !== current.time)
+          || (typeof patch.minutes === "number" && patch.minutes !== current.minutes);
+        if (scheduleChanged && current.date >= today() && visitRunsPastClose(state.settings.scheduling, patch.date || current.date, patch.time || current.time, patch.minutes ?? current.minutes) && deskActor(state) !== "service-manager") {
+          return { ok: false, error: PAST_CLOSE_MESSAGE };
+        }
         const nextCustomerId = patch.customerId || current.customerId;
         const nextVehicleId = patch.vehicleId || current.vehicleId;
         if ((patch.customerId && patch.customerId !== current.customerId) || (patch.vehicleId && patch.vehicleId !== current.vehicleId)) {
@@ -3446,8 +3500,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const owned = state.vehicles.find((row) => row.id === input.vehicleId);
         if (!owned || owned.customerId !== input.customerId) return "";
         if (appointmentDateError(input.date || "", state.settings.scheduling)) return "";
+        if (ownStoreError(state)) return "";
         if (visitTimeError(state.settings.scheduling, input.date || "", input.time || "")) return "";
         if (input.minutes !== undefined && visitLengthError(input.minutes)) return "";
+        if (visitRunsPastClose(state.settings.scheduling, input.date || "", input.time || "", input.minutes ?? 60) && deskActor(state) !== "service-manager") return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
         if (Array.isArray(input.laborOpIds)) {
           if (new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
@@ -3508,6 +3564,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
       },
       saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText) => {
         const state = get();
+        if (ownStoreError(state)) return { ok: false, appointmentId: "", overrideId: null, error: ownStoreError(state) };
         if (!namedActor(state) || !rosterEditor(state)) {
           return { ok: false, appointmentId: "", overrideId: null, error: rosterEditorError(state) ?? "Choose who is working." };
         }
@@ -3527,6 +3584,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (vehicleError) return { ok: false, appointmentId: "", overrideId: null, error: vehicleError };
         const concernError = bookingConcernError(input.lines, input.concern);
         if (concernError) return { ok: false, appointmentId: "", overrideId: null, error: concernError };
+        if (Array.isArray(input.lines) && input.lines.length > 0 && !input.lines.some((line) => line.concern.trim())) {
+          return { ok: false, appointmentId: "", overrideId: null, error: "Add a concern." };
+        }
         if (visitLengthError(input.minutes)) {
           return { ok: false, appointmentId: "", overrideId: null, error: visitLengthError(input.minutes) ?? "That length is not on this desk." };
         }
@@ -3537,6 +3597,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (input.status === "cancelled") return { ok: false, appointmentId: existing.id, overrideId: null, error: "Cancel an appointment from the cancel button." };
           if (input.status && !["scheduled", "arrived", "in_shop", "no_show"].includes(input.status)) {
             return { ok: false, appointmentId: existing.id, overrideId: null, error: "That status is not on this desk." };
+          }
+          if (existing.date < today() && input.status && input.status !== existing.status && !pastStatusAllowed(input.status)) {
+            return { ok: false, appointmentId: existing.id, overrideId: null, error: PAST_STATUS_ONLY };
           }
           if (existing.status === "no_show" && input.customerId !== existing.customerId) {
             return { ok: false, appointmentId: existing.id, overrideId: null, error: "A no-show stays with the customer who missed the visit." };
@@ -3581,8 +3644,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (result?.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
+        const pastClose = !pastStatusOnly && visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
+        if (pastClose && deskActor(state) !== "service-manager") {
+          return { ok: false, appointmentId: "", overrideId: null, error: PAST_CLOSE_MESSAGE };
+        }
         const vinText = normalizeVin(input.vin || "");
         let vehicleId = input.vehicleId;
+        let claimState: ShopData | null = null;
         if (!pastStatusOnly && vinText) {
           const vinError = vinScheduleError(vinText);
           if (vinError) return { ok: false, appointmentId: "", overrideId: null, error: vinError };
@@ -3590,32 +3658,144 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (!selected || !sameVin(selected.vin, vinText) || !currentVehicle(selected)) {
             const claim = applyVinClaim(state, { vin: vinText, customerId: input.customerId, confirm: confirmTransfer, reason: transferReasonText, year: selected?.year, make: selected?.make, model: selected?.model });
             if (!claim.ok) return { ok: false, appointmentId: "", overrideId: null, error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
-            set(claim.state);
+            claimState = claim.state;
             vehicleId = claim.vehicleId;
           }
         }
-        if (existingId) {
-          const edited = get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId });
-          if (!edited.ok) return { ok: false, appointmentId: existingId, overrideId: null, error: edited.error };
+        const snapshot = {
+          vehicles: state.vehicles,
+          orders: state.orders,
+          ownershipLog: state.ownershipLog ?? [],
+          appointments: state.appointments,
+          customers: state.customers,
+          settingsLog: state.settingsLog ?? [],
+        };
+        try {
+          if (claimState) set(claimState);
+          appointmentCommitProbe?.();
+          if (existingId) {
+            const edited = get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId });
+            if (!edited.ok) throw new Error(edited.error ?? "That appointment could not be saved.");
+          } else {
+            const added = get().addAppointment({
+              date: input.date,
+              time: input.time,
+              minutes: input.minutes,
+              customerId: input.customerId,
+              vehicleId,
+              advisorId: input.advisorId,
+              concern: input.concern,
+              lines: input.lines,
+              vin: vinText || input.vin,
+              laborOpIds: input.laborOpIds,
+              techId: input.techId,
+              lane: input.lane,
+            }, appointmentId);
+            if (!added) throw new Error("That appointment could not be saved.");
+          }
+        } catch (error) {
+          set(snapshot);
+          const message = error instanceof Error && error.message && !error.message.startsWith("probe:") ? error.message : "That appointment could not be saved.";
+          return { ok: false, appointmentId: existingId ?? "", overrideId: null, error: message };
+        }
+        const overrideId = result ? logOverride(result, appointmentId, input) : null;
+        const closeOverride = pastClose ? logReasonOverride("past-close", appointmentId, input) : null;
+        return { ok: true, appointmentId, overrideId: closeOverride ?? overrideId, error: null };
+      },
+      saveNewCustomerAppointment: (input, confirmTransfer, transferReasonText) => {
+        const state = get();
+        const fail = (error: string, extra?: { needsTransfer?: boolean; warning?: string | null }) => ({
+          ok: false as const, appointmentId: "", customerId: "", overrideId: null, error, warning: extra?.warning ?? null, needsTransfer: extra?.needsTransfer,
+        });
+        if (ownStoreError(state)) return fail(ownStoreError(state) ?? OWN_STORE);
+        if (!namedActor(state) || !rosterEditor(state)) return fail(rosterEditorError(state) ?? "Choose who is working.");
+        const name = asText(cleanFreeText(input.name), NAME_MAX);
+        const make = asText(cleanFreeText(input.make), NAME_MAX);
+        const model = asText(cleanFreeText(input.model), NAME_MAX);
+        const plate = asText(cleanFreeText(input.plate ?? ""), 16);
+        const phone = tenDigitPhone(input.phone ?? "");
+        const email = dedupeKey(input.email ?? "").trim().toLowerCase();
+        const year = Math.trunc(Number(input.year) || 0);
+        const vinText = normalizeVin(typeof input.vin === "string" ? input.vin : "");
+        if (!phone) return fail("Enter a 10-digit phone number.");
+        if (email.length > 120) return fail("Keep the email to 120 characters.");
+        if (!name || !make || !model || !plate || year < 1980 || year > 2035) return fail("Add the name, phone, year, make, model, VIN, and plate.");
+        const vinError = vinScheduleError(vinText);
+        if (vinError) return fail(vinError);
+        if (Array.isArray(input.lines) && !input.lines.some((line) => line.concern.trim()) && !input.concern?.trim()) return fail("Add a concern.");
+        const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
+        if (dateError) return fail(dateError);
+        const timeError = visitTimeError(state.settings.scheduling, input.date || "", input.time || "");
+        if (timeError) return fail(timeError);
+        const lengthError = visitLengthError(input.minutes);
+        if (lengthError) return fail(lengthError);
+        if (visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes) && deskActor(state) !== "service-manager") return fail(PAST_CLOSE_MESSAGE);
+        const staffError = staffBlockMessage(state.techs.some((tech) => tech.id === input.techId), state.advisors.some((advisor) => advisor.id === input.advisorId));
+        if (staffError) return fail(staffError);
+        if (!state.settings.scheduling.transportOptions.some((row) => row.id === input.lane)) return fail("That lane is not on this store.");
+        const ownerVehicle = state.vehicles.find((row) => currentVehicle(row) && sameVin(row.vin, vinText));
+        if (ownerVehicle && !confirmTransfer) {
+          const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
+          return { ok: false, appointmentId: "", customerId: "", overrideId: null, error: null, warning: `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?`, needsTransfer: true };
+        }
+        const customerId = uid("c");
+        const who = namedActor(state);
+        const customer = { id: customerId, name: name ?? "", phone, mobile: phone, email, noShows: 0 };
+        let draft: ShopData = { ...state, customers: [customer, ...state.customers] };
+        let vehicleId = uid("v");
+        if (ownerVehicle) {
+          const claim = applyVinClaim(draft, { vin: vinText, customerId, confirm: true, reason: transferReasonText, year, make: make ?? "", model: model ?? "" });
+          if (!claim.ok) return fail(claim.error ?? "That VIN could not be transferred.", { needsTransfer: claim.needsTransfer, warning: claim.warning });
+          draft = claim.state;
+          vehicleId = claim.vehicleId;
         } else {
+          draft = {
+            ...draft,
+            vehicles: [{
+              id: vehicleId,
+              customerId,
+              year,
+              make: make ?? "Ford",
+              model: model ?? "",
+              vin: vinText,
+              plate: plate ?? "",
+              ownership: [firstOwnership(customerId, now().toISOString(), who)],
+            }, ...draft.vehicles],
+          };
+        }
+        const snapshot = {
+          customers: state.customers,
+          vehicles: state.vehicles,
+          orders: state.orders,
+          ownershipLog: state.ownershipLog ?? [],
+          appointments: state.appointments,
+          settingsLog: state.settingsLog ?? [],
+        };
+        const appointmentId = uid("ap");
+        try {
+          set(draft);
+          appointmentCommitProbe?.();
           const added = get().addAppointment({
             date: input.date,
             time: input.time,
             minutes: input.minutes,
-            customerId: input.customerId,
+            customerId,
             vehicleId,
             advisorId: input.advisorId,
             concern: input.concern,
-            lines: input.lines,
-            vin: vinText || input.vin,
-            laborOpIds: input.laborOpIds,
+            lines: input.lines?.length ? input.lines : [{ id: uid("al"), code: "A", concern: input.concern }],
+            vin: vinText,
+            laborOpIds: input.laborOpIds ?? [],
             techId: input.techId,
             lane: input.lane,
           }, appointmentId);
-          if (!added) return { ok: false, appointmentId: "", overrideId: null, error: "That appointment could not be saved." };
+          if (!added) throw new Error("That appointment could not be saved.");
+        } catch (error) {
+          set(snapshot);
+          const message = error instanceof Error && error.message && !error.message.startsWith("probe:") ? error.message : "That appointment could not be saved.";
+          return fail(message);
         }
-        const overrideId = result ? logOverride(result, appointmentId, input) : null;
-        return { ok: true, appointmentId, overrideId, error: null };
+        return { ok: true, appointmentId, customerId, overrideId: null, error: null };
       },
       cancelAppointment: (id, input, confirmArrived = false) => {
         const state = get();
@@ -3624,6 +3804,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const current = state.appointments.find((row) => row.id === id);
         if (!current) return { ok: false, error: "That appointment is not on this store.", arrivedConfirm: null };
+        if (current.date < today()) return { ok: false, error: PAST_CANCEL, arrivedConfirm: null };
+        if (ownStoreError(state)) return { ok: false, error: ownStoreError(state), arrivedConfirm: null };
         if (current.status === "cancelled") return { ok: false, error: "This appointment is already cancelled.", arrivedConfirm: null };
         const linked = current.orderId ? state.orders.find((order) => order.id === current.orderId) : undefined;
         const orderBlock = repairOrderCancelBlock(current.orderId, linked);
@@ -3666,6 +3848,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const current = state.appointments.find((row) => row.id === id);
         if (!current) return { ok: false, overrideId: null, error: "That appointment is not on this store.", warning: null };
+        if (current.date < today()) return { ok: false, overrideId: null, error: PAST_PUT_BACK, warning: null };
+        if (ownStoreError(state)) return { ok: false, overrideId: null, error: ownStoreError(state), warning: null };
         if (current.status !== "cancelled") return { ok: false, overrideId: null, error: "This appointment is not cancelled.", warning: null };
         const linked = current.orderId ? state.orders.find((order) => order.id === current.orderId) : undefined;
         const closedBlock = repairOrderReinstateBlock(linked);

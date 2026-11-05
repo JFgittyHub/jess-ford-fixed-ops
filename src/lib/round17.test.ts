@@ -89,7 +89,9 @@ describe("round 17 clock and change log", () => {
 
   it("writes hours as a weekday and clock time, and a move as one sentence", () => {
     const store = shop();
+    store.getState().setWorkingAs("derek");
     store.getState().updateDayHours(1, { closed: true });
+    store.getState().setWorkingAs("megan");
     const hours = store.getState().settingsLog?.find((row) => row.field === "Hours Mon");
     assert.ok(hours);
     assert.equal(hours.before.includes("{"), false);

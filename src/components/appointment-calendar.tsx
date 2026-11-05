@@ -13,8 +13,14 @@ const SUMMARY_MARK = 34;
 
 function summaryMarkBox(block: number) {
   const width = SUMMARY_MARK;
-  const height = Math.min(SUMMARY_MARK, block);
+  const height = Math.min(SUMMARY_MARK, Math.max(1, block - 1));
   return { width, height, top: Math.max(0, block - height), right: 0, bottom: 0 };
+}
+
+function laneTag(lane: string) {
+  if (lane === "waiter") return "Waiter";
+  if (lane === "drop") return "Drop-off";
+  return "";
 }
 
 export { lengthLabel };
@@ -256,7 +262,7 @@ export function AppointmentCalendar({
     setDraft(next);
   }
 
-  function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize") {
+  function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize", quiet?: "summary") {
     event.preventDefault();
     event.stopPropagation();
     const origin = { x: event.clientX, y: event.clientY, time: appt.time, minutes: appt.minutes, techId: appt.techId };
@@ -289,6 +295,7 @@ export function AppointmentCalendar({
       const next = draftRef.current;
       commitDraft(null);
       if (moved && next) onMove(appt.id, { time: next.time, minutes: next.minutes, techId: next.techId });
+      else if (quiet === "summary") showHover(appt.id, (event.currentTarget as HTMLElement).getBoundingClientRect());
       else onSelect(appt.id);
     }
 
@@ -362,10 +369,12 @@ export function AppointmentCalendar({
                 const titleBand = 11;
                 const mark = summaryMarkBox(block);
                 const gutter = mark.width + 2;
-                const concernHeight = Math.max(8, block - HANDLE - titleBand - 1);
-                const concernLines = Math.max(1, Math.floor(concernHeight / 14));
+                const concernRoom = block - HANDLE - titleBand - 1;
+                const concernLines = concernRoom >= 14 ? Math.floor(concernRoom / 14) : 0;
+                const concernHeight = concernLines * 14;
                 const titleRight = mark.top < titleBand ? gutter : 6;
                 const concernRight = titleBand + concernHeight > mark.top ? gutter : 6;
+                const tag = laneTag(row.lane);
                 return (
                   <article
                     key={row.id}
@@ -377,7 +386,7 @@ export function AppointmentCalendar({
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
-                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
+                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}{tag ? ` · ${tag}` : ""}</p>
                       <p
                         className="pointer-events-none absolute text-[11px]"
                         data-concern
@@ -414,7 +423,14 @@ export function AppointmentCalendar({
                         style={{ position: "absolute", right: 0, bottom: 0, width: mark.width, height: mark.height, margin: 0, zIndex: 2 }}
                         onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                         onMouseLeave={scheduleHide}
-                        onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move"); }}
+                        onClick={(event) => { event.stopPropagation(); showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          showHover(row.id, event.currentTarget.getBoundingClientRect());
+                        }}
+                        onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move", "summary"); }}
                       >
                         <span className="pointer-events-none text-[8px] leading-none">?</span>
                       </button>

@@ -59,10 +59,12 @@ describe("round 14", () => {
     shop.getState().updateDayHours(0, { closed: true });
     assert.equal(JSON.stringify(shop.getState().settings.scheduling.hours), hours);
     shop.getState().setWorkingAs("megan");
+    assert.equal(shop.getState().addClosedDate("2026-12-24"), false);
+    shop.getState().setWorkingAs("derek");
     assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
     const row = shop.getState().settingsLog?.find((item) => item.field === "Closed date" && item.after === "Thu, Dec 24");
     assert.ok(row);
-    assert.equal(row.who, "Megan Cho");
+    assert.equal(row.who, "Derek Lang");
     assert.ok(row.at);
   });
 

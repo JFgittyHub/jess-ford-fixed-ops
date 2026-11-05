@@ -73,6 +73,7 @@ describe("two stores", () => {
     assert.equal(shop.getState().settings.storeName, "Jess Ford Pullman");
 
     shop.getState().updateBookingWindow({ daysAhead: 9, minLeadHours: 6 });
+    shop.getState().setWorkingAs(shop.getState().serviceManagers[0]?.id ?? "derek");
     shop.getState().updateDayHours(6, { close: "12:00" });
     assert.equal(shop.getState().addClosedDate("2026-12-31"), true);
     assert.equal(shop.getState().addOnlineService({ name: "Battery test", laborHours: 0.3 }), true);

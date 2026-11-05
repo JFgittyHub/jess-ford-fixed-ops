@@ -63,8 +63,10 @@ describe("round 16", () => {
     shop.getState().addTransportOption("Nope");
     assert.equal(JSON.stringify(shop.getState().settings.scheduling), before);
     shop.getState().setWorkingAs("megan");
+    assert.equal(shop.getState().addClosedDate("2026-12-24"), false);
+    shop.getState().setWorkingAs("derek");
     assert.equal(shop.getState().addClosedDate("2026-12-24"), true);
-    assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Closed date" && row.who === "Megan Cho"), true);
+    assert.equal(shop.getState().settingsLog?.some((row) => row.field === "Closed date" && row.who === "Derek Lang"), true);
   });
 
   it("leaves a blank closed header blank when a saved shop is loaded", () => {

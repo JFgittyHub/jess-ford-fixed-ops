@@ -247,7 +247,8 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 </label>
               ) : null}
               {!staffId ? <p role="status" className="text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
-              <div role="group" aria-label="Active store" className="flex gap-1">
+              <div role="group" aria-label="Viewing as" className="flex items-center gap-1">
+                <span className="text-sm text-muted">Viewing as</span>
                 {STORES.map((store) => (
                   <Button
                     key={store.id}

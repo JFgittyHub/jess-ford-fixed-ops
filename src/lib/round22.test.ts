@@ -30,8 +30,9 @@ describe("round 22 dates and lookup", () => {
     assert.equal(todayIso(), "2026-11-07");
     assert.equal(weekday(bookableDay()), 6);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    shop.getState().setWorkingAs("megan");
+    shop.getState().setWorkingAs("derek");
     shop.getState().updateDayHours(1, { closed: true });
+    shop.getState().setWorkingAs("megan");
     const rules = shop.getState().settings.scheduling;
     const day = bookableDay(0, { hours: rules.hours, closedDates: rules.closedDates });
     assert.notEqual(weekday(day), 1);
@@ -181,7 +182,9 @@ describe("round 22 lines, transfers, and phones", () => {
     }, row.id);
     assert.equal(edited.ok, false);
     assert.match(edited.error ?? "", /status/);
+    shop.getState().setWorkingAs("derek");
     shop.getState().updateDayHours(1, { closed: true });
+    shop.getState().setWorkingAs("megan");
     let monday = todayIso();
     for (let guard = 0; guard < 14 && weekday(monday) !== 1; guard += 1) monday = addDays(monday, 1);
     assert.equal(shop.getState().addAppointment({ ...row, date: monday, time: "09:00", lane: "drop", laborOpIds: [], vin: "" }), "");
