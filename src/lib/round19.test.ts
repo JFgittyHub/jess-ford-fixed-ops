@@ -188,7 +188,7 @@ describe("round 19 appointments, phones, and logs", () => {
     assert.match(concernLog[0]?.after ?? "", /Rotate the tires now/);
     assert.equal((concernLog[0]?.after ?? "").includes("\u202E"), false);
     assert.equal(shop.getState().settingsLog?.some((item) => item.after.includes("time ") && item.after.includes("Rotate")), false);
-    const back = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const back = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(back);
     assert.equal(shop.getState().updateAppointment(back.id, { status: "no_show" }).ok, true);
     assert.equal(shop.getState().updateAppointment(back.id, { status: "scheduled" }).ok, true);
@@ -260,7 +260,7 @@ describe("round 19 appointments, phones, and logs", () => {
       assert.equal(saved.request.deviceId, "desk-1");
       assert.equal(phoneKey(saved.request.phone), "+525095550300");
     }
-    const visit = shop.getState().appointments.find((item) => item.status === "scheduled" && !item.orderId);
+    const visit = shop.getState().appointments.find((item) => item.status === "scheduled" && !item.orderId && item.date >= todayIso());
     assert.ok(visit);
     const cancelled = shop.getState().cancelAppointment(visit.id, { reason: "other", note: "Customer called\u0001 ahead" });
     assert.equal(cancelled.ok, true, cancelled.error ?? "");

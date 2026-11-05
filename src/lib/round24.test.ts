@@ -136,8 +136,10 @@ describe("round 24 past days, close, and stores", () => {
 
   it("refuses a visit that runs past close unless a service manager approves it", () => {
     const store = shop();
-    const input = bookInput(store.getState(), { time: "12:30", minutes: 120, vin: "" });
-    assert.equal(visitRunsPastClose(store.getState().settings.scheduling, input.date, "12:30", 120), true);
+    let saturday = todayIso();
+    for (let guard = 0; guard < 10 && new Date(`${saturday}T12:00:00.000Z`).getUTCDay() !== 6; guard += 1) saturday = addDays(saturday, 1);
+    const input = bookInput(store.getState(), { date: saturday, time: "12:30", minutes: 120, vin: "" });
+    assert.equal(visitRunsPastClose(store.getState().settings.scheduling, saturday, "12:30", 120), true);
     const advisor = store.getState().saveAdvisorAppointment(input);
     assert.match(advisor.error ?? "", /past closing/);
     store.getState().setWorkingAs("derek");

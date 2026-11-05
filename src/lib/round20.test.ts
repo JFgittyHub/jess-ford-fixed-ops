@@ -121,7 +121,7 @@ describe("round 20 appointment writes", () => {
   it("puts a visit back to scheduled in words and dates a removed closed day", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const row = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     assert.equal(shop.getState().updateAppointment(row.id, { status: "arrived" }).ok, true);
     assert.equal(shop.getState().updateAppointment(row.id, { status: "scheduled" }).ok, true);

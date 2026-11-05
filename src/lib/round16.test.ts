@@ -19,7 +19,7 @@ function memoryStorage(): ShopStorage {
 describe("round 16", () => {
   it("logs arrived, in shop, no-show, and put back for an advisor only", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const row = shop.getState().appointments.find((item) => item.status === "scheduled");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     assert.equal(shop.getState().setAppointmentStatus(row.id, "arrived").ok, false);
     shop.getState().setWorkingAs("marcus");
