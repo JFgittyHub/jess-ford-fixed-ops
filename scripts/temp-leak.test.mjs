@@ -1,17 +1,36 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-const PREFIXES = ["brand-check-", "auth-invariant-", "grok-og-", "auth-schema-", "app-env-", "write-atomic-"];
+const SUITES = [
+  "scripts/brand-check.test.mjs",
+  "scripts/write-atomic.test.mjs",
+  "scripts/with-app-env.test.mjs",
+  "scripts/check-auth-invariant.test.mjs",
+  "scripts/migration-plan.test.mjs",
+  "scripts/grok-pwa-plugin.test.mjs",
+];
 
-test("script suites leave no temp directories in /tmp", () => {
-  const before = new Set(readdirSync("/tmp").filter((name) => PREFIXES.some((prefix) => name.startsWith(prefix))));
-  const run = spawnSync(process.execPath, ["--test", "scripts/brand-check.test.mjs", "scripts/write-atomic.test.mjs", "scripts/with-app-env.test.mjs", "scripts/check-auth-invariant.test.mjs", "scripts/migration-plan.test.mjs", "scripts/grok-pwa-plugin.test.mjs"], {
-    cwd: new URL("..", import.meta.url),
-    encoding: "utf8",
-  });
-  assert.equal(run.status, 0, run.stderr || run.stdout);
-  const after = readdirSync("/tmp").filter((name) => PREFIXES.some((prefix) => name.startsWith(prefix)) && !before.has(name));
-  assert.deepEqual(after, []);
+test("script suites leave no temp directories", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "temp-leak-probe-"));
+  try {
+    const env = { ...process.env, TMPDIR: scratch, TEMP: scratch, TMP: scratch };
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("NODE_CHANNEL") || key === "NODE_TEST_CONTEXT") delete env[key];
+    }
+    const run = spawnSync(process.execPath, ["--test", ...SUITES], {
+      cwd: dirname(dirname(fileURLToPath(import.meta.url))),
+      env,
+      encoding: "utf8",
+    });
+    assert.equal(run.status, 0, run.stderr || run.stdout);
+    assert.match(run.stdout, /# pass [1-9]/);
+    assert.deepEqual(readdirSync(scratch), []);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
 });
