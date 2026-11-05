@@ -111,10 +111,10 @@ describe("round 15", () => {
     shop.getState().setWorkingAs("marcus");
     const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
-    assert.equal(shop.getState().moveAppointment(row.id, { time: "12:30" }).ok, false);
+    assert.equal(shop.getState().moveAppointment(row.id, { time: "10:00" }).ok, false);
     shop.getState().setWorkingAs("megan");
-    assert.equal(shop.getState().moveAppointment(row.id, { time: "12:30" }).ok, true);
-    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Move appointment" && item.who === "Megan Cho" && item.after.includes("12:30")), true);
+    assert.equal(shop.getState().moveAppointment(row.id, { time: "10:00" }).ok, true);
+    assert.equal(shop.getState().settingsLog?.some((item) => item.field === "Move appointment" && item.who === "Megan Cho" && item.after.includes("10:00")), true);
     assert.equal(shop.getState().setAppointmentStatus(row.id, "no_show").ok, true);
     assert.equal(shop.getState().appointments.find((item) => item.id === row.id)?.status, "no_show");
     assert.equal(shop.getState().settingsLog?.some((item) => item.field === "No-show" && item.after.includes("Marked no-show")), true);

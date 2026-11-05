@@ -598,7 +598,7 @@ function book(state: ShopState, concern: string) {
 }
 
 function uniqueTime(label: string) {
-  const slot = Math.abs(hash(label)) % 10;
+  const slot = Math.abs(hash(label)) % 9;
   const mins = 8 * 60 + slot * 30;
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
 }

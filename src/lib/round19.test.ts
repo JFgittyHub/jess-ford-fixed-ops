@@ -172,7 +172,7 @@ describe("round 19 appointments, phones, and logs", () => {
     const row = shop.getState().appointments.find((item) => item.id === "a8");
     assert.ok(row);
     const name = shop.getState().customers.find((item) => item.id === row.customerId)?.name ?? "";
-    const moved = shop.getState().moveAppointment(row.id, { time: "11:30", minutes: row.minutes + 30, techId: row.techId });
+    const moved = shop.getState().moveAppointment(row.id, { time: "09:00", minutes: row.minutes + 30, techId: row.techId });
     assert.equal(moved.ok, true, moved.error ?? "");
     const lines = shop.getState().settingsLog ?? [];
     assert.equal(lines.some((item) => item.field === "Move appointment"), true);

@@ -100,7 +100,7 @@ describe("round 17 clock and change log", () => {
     const scheduling = store.getState().settings.scheduling;
     const visit = draft(store.getState(), { date: bookableDay(0, { hours: scheduling.hours, closedDates: scheduling.closedDates }) });
     const id = store.getState().addAppointment(visit);
-    const moved = store.getState().moveAppointment(id, { time: "12:30", techId: "elena" });
+    const moved = store.getState().moveAppointment(id, { time: "10:00", techId: "elena" });
     assert.equal(moved.ok, true, moved.error ?? "");
     const row = store.getState().settingsLog?.find((item) => item.field === "Move appointment");
     assert.match(row?.after ?? "", /^Moved .+ from .+ with .+ to .+ with Elena Voss$/);
@@ -542,7 +542,7 @@ describe("round 17 requests, roles, and ownership", () => {
 
   it("does not let an advisor load the sample month", () => {
     const store = shop();
-    const id = store.getState().addAppointment(draft(store.getState(), { time: "12:30" }));
+    const id = store.getState().addAppointment(draft(store.getState(), { time: "10:30" }));
     store.getState().resetDemo(true);
     assert.equal(store.getState().appointments.some((row) => row.id === id), true);
     assert.equal(store.getState().settingsLog?.some((row) => row.field === "Load sample month"), false);
