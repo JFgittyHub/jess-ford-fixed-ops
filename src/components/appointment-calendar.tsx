@@ -234,6 +234,8 @@ export function AppointmentCalendar({
   const draftRef = useRef<Draft | null>(null);
   const [hover, setHover] = useState<{ id: string; x: number; y: number; below: boolean } | null>(null);
   const hideTimer = useRef<number | null>(null);
+  const touchSummaryAt = useRef(0);
+  const gesture = useRef({ moved: false, summary: false, x: 0, y: 0 });
   const hours = Array.from({ length: (END - START) / 60 }, (_, index) => START + index * 60);
   const height = ((END - START) / SNAP) * SLOT;
   const [now, setNow] = useState(() => new Date());
@@ -253,6 +255,7 @@ export function AppointmentCalendar({
   }
 
   function scheduleHide() {
+    if (Date.now() - touchSummaryAt.current < 700) return;
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => setHover(null), 160);
   }
@@ -265,17 +268,23 @@ export function AppointmentCalendar({
   function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize", quiet?: "summary") {
     event.preventDefault();
     event.stopPropagation();
+    const mark = event.currentTarget as HTMLElement;
     const origin = { x: event.clientX, y: event.clientY, time: appt.time, minutes: appt.minutes, techId: appt.techId };
     const column = (event.currentTarget as HTMLElement).closest("[data-tech]") as HTMLElement | null;
     const colWidth = column?.getBoundingClientRect().width ?? 140;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    mark.setPointerCapture?.(event.pointerId);
     setHover(null);
+    gesture.current = { moved: false, summary: quiet === "summary", x: event.clientX, y: event.clientY };
+    const slop = quiet === "summary" ? 16 : 4;
     let moved = false;
 
     function onMovePointer(ev: PointerEvent) {
       const dx = ev.clientX - origin.x;
       const dy = ev.clientY - origin.y;
-      if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
+      if (Math.abs(dx) + Math.abs(dy) > slop) {
+        moved = true;
+        gesture.current.moved = true;
+      }
       const next = planCalendarDrag({
         mode,
         time: origin.time,
@@ -295,7 +304,10 @@ export function AppointmentCalendar({
       const next = draftRef.current;
       commitDraft(null);
       if (moved && next) onMove(appt.id, { time: next.time, minutes: next.minutes, techId: next.techId });
-      else if (quiet === "summary") showHover(appt.id, (event.currentTarget as HTMLElement).getBoundingClientRect());
+      else if (quiet === "summary") {
+        if (event.pointerType === "touch") touchSummaryAt.current = Date.now();
+        showHover(appt.id, mark.getBoundingClientRect());
+      }
       else onSelect(appt.id);
     }
 
@@ -386,7 +398,14 @@ export function AppointmentCalendar({
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
-                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}{tag ? ` · ${tag}` : ""}</p>
+                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
+                      {tag ? (
+                        <span
+                          data-lane-tag
+                          className="pointer-events-none absolute z-10 truncate rounded-sm border border-[#9eb6d4] bg-white px-1 font-semibold text-[#14315c]"
+                          style={{ position: "absolute", left: 4, bottom: HANDLE, maxWidth: `calc(100% - ${gutter + 8}px)`, height: 14, lineHeight: "12px", fontSize: 10, zIndex: 1 }}
+                        >{tag}</span>
+                      ) : null}
                       <p
                         className="pointer-events-none absolute text-[11px]"
                         data-concern
@@ -423,6 +442,27 @@ export function AppointmentCalendar({
                         style={{ position: "absolute", right: 0, bottom: 0, width: mark.width, height: mark.height, margin: 0, zIndex: 2 }}
                         onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                         onMouseLeave={scheduleHide}
+                        onTouchStart={(event) => {
+                          const touch = event.changedTouches?.[0];
+                          gesture.current = { moved: false, summary: true, x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
+                        }}
+                        onTouchMove={(event) => {
+                          const touch = event.changedTouches?.[0];
+                          if (!touch) return;
+                          const dx = touch.clientX - gesture.current.x;
+                          const dy = touch.clientY - gesture.current.y;
+                          if (Math.abs(dx) + Math.abs(dy) > 16) gesture.current.moved = true;
+                        }}
+                        onTouchEnd={(event) => {
+                          const touch = event.changedTouches?.[0];
+                          const dx = touch ? Math.abs(touch.clientX - gesture.current.x) : 0;
+                          const dy = touch ? Math.abs(touch.clientY - gesture.current.y) : 0;
+                          event.stopPropagation();
+                          if (event.cancelable) event.preventDefault();
+                          if (dx + dy > 16) return;
+                          touchSummaryAt.current = Date.now();
+                          showHover(row.id, event.currentTarget.getBoundingClientRect());
+                        }}
                         onClick={(event) => { event.stopPropagation(); showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
@@ -476,6 +516,7 @@ function HoverCard({
   const detail = summary(row);
   return (
     <div
+      data-hover-summary
       className="fixed z-50 w-64 rounded-md border border-line bg-surface-2 p-3 shadow-card"
       style={{ left: hover.x, top: hover.y, transform: hover.below ? undefined : "translateY(-100%)" }}
       onMouseEnter={onEnter}

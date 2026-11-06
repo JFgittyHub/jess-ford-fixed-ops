@@ -552,6 +552,8 @@ export interface OverrideRecord {
   techName: string;
   advisorName: string;
   reason: OverrideReason;
+  /** Typed reason for a past-close approval. */
+  note?: string;
 }
 
 /** `sample` is the demo month. Anything else is a real shop and must not open the staff picker. */

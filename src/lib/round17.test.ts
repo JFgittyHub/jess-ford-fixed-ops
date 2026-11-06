@@ -118,8 +118,9 @@ describe("round 17 clock and change log", () => {
     const back = store.getState().reinstateAppointment(id);
     assert.equal(back.ok, true, back.error ?? "");
     assert.match(store.getState().settingsLog?.find((row) => row.field === "Reinstate appointment")?.after ?? "", /^Reinstated /);
+    store.setState({ laborOps: [...store.getState().laborOps, { id: "op-heavy", opcode: "HEAVY", description: "Heavy job", hours: 12, payType: "cp" }] });
     const heavy = store.getState().saveAdvisorAppointment({
-      ...draft(store.getState(), { time: "12:00", minutes: 600, concern: "Long diagnosis", lines: [{ id: "long", code: "A", concern: "Long diagnosis" }] }),
+      ...draft(store.getState(), { time: "12:00", minutes: 60, concern: "Long diagnosis", lines: [{ id: "long", code: "A", concern: "Long diagnosis" }], laborOpIds: ["op-heavy"] }),
       status: "scheduled",
     });
     assert.equal(heavy.ok, true, heavy.error ?? "");

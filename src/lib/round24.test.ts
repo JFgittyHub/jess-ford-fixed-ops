@@ -143,9 +143,15 @@ describe("round 24 past days, close, and stores", () => {
     const advisor = store.getState().saveAdvisorAppointment(input);
     assert.match(advisor.error ?? "", /past closing/);
     store.getState().setWorkingAs("derek");
-    const manager = store.getState().saveAdvisorAppointment({ ...input, advisorId: "derek" });
+    const missing = store.getState().saveAdvisorAppointment({ ...input, advisorId: "derek" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.needsCloseReason, true);
+    assert.equal(store.getState().overrides.some((row) => row.reason === "past-close"), false);
+    const manager = store.getState().saveAdvisorAppointment({ ...input, advisorId: "derek" }, undefined, undefined, undefined, "Customer is staying");
     assert.equal(manager.ok, true, manager.error ?? "");
-    assert.equal(store.getState().overrides.some((row) => row.reason === "past-close"), true);
+    const logged = store.getState().overrides.find((row) => row.reason === "past-close");
+    assert.equal(logged?.note, "Customer is staying");
+    assert.match(store.getState().settingsLog?.find((row) => row.field === "Capacity override")?.after ?? "", /Customer is staying/);
   });
 
   it("refuses shop hours and closed dates from an advisor", () => {

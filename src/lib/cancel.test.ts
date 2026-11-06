@@ -128,9 +128,10 @@ describe("cancel an appointment", () => {
   it("leaves the board, stops counting hours, and stays in history behind Show cancelled", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
+    addHeavyOp(shop);
     const state = shop.getState();
     const seed = deskSeedFor(state);
-    const heavy = state.saveAdvisorAppointment(draft(seed, { minutes: 690, concern: "Fills the day" }));
+    const heavy = state.saveAdvisorAppointment(draft(seed, { minutes: 60, concern: "Fills the day", laborOpIds: ["op-heavy"] }));
     assert.equal(heavy.ok, true, heavy.error ?? "");
     const full = assessAppointment({
       scheduling: state.settings.scheduling,
@@ -277,7 +278,8 @@ describe("cancel an appointment", () => {
     assert.equal(activeCancellation(restored!), null);
     assert.equal(appointmentsOnBoard(shop.getState().appointments).some((row) => row.id === quiet.appointmentId), true);
 
-    const heavy = shop.getState().saveAdvisorAppointment(draft(seed, { minutes: 690, concern: "Too long to reinstate quietly" }));
+    addHeavyOp(shop);
+    const heavy = shop.getState().saveAdvisorAppointment(draft(seed, { minutes: 60, concern: "Too long to reinstate quietly", laborOpIds: ["op-heavy"] }));
     assert.equal(heavy.ok, true, heavy.error ?? "");
     assert.equal(shop.getState().cancelAppointment(heavy.appointmentId, { reason: "rescheduled" }).ok, true);
     const logged = shop.getState().overrides.length;
@@ -644,6 +646,12 @@ function summary(name: string) {
     status: "Cancelled",
     canWrite: false,
   };
+}
+
+function addHeavyOp(shop: { getState: () => { laborOps: { id: string; opcode: string; description: string; hours: number; payType: string }[] }; setState: (patch: { laborOps: { id: string; opcode: string; description: string; hours: number; payType: string }[] }) => void }) {
+  const ops = shop.getState().laborOps;
+  if (ops.some((op) => op.id === "op-heavy")) return;
+  shop.setState({ laborOps: [...ops, { id: "op-heavy", opcode: "HEAVY", description: "Heavy job", hours: 12, payType: "cp" }] });
 }
 
 function requestFor(appointmentId: string, id: string): OnlineRequest {

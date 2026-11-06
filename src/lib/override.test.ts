@@ -18,7 +18,8 @@ describe("capacity overrides", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("megan");
-    const saved = shop.getState().saveAdvisorAppointment(draft(shop.getState(), { minutes: 690, concern: "Long job" }));
+    addHeavyOp(shop);
+    const saved = shop.getState().saveAdvisorAppointment(draft(shop.getState(), { minutes: 60, concern: "Long job", laborOpIds: ["op-heavy"] }));
     const log = shop.getState().overrides;
     assert.equal(log.length, 1);
     assert.equal(saved.overrideId, log[0].id);
@@ -41,8 +42,9 @@ describe("capacity overrides", () => {
     shop.getState().setWorkingAs("jordan");
     const saved = shop.getState().saveAdvisorAppointment(draft(shop.getState(), { minutes: 30, concern: "Oil change" }));
     assert.equal(shop.getState().overrides.length, 0);
+    addHeavyOp(shop);
     const edited = shop.getState().saveAdvisorAppointment(
-      draft(shop.getState(), { minutes: 690, concern: "Oil change grew" }),
+      draft(shop.getState(), { minutes: 60, concern: "Oil change grew", laborOpIds: ["op-heavy"] }),
       saved.appointmentId,
     );
     assert.equal(edited.appointmentId, saved.appointmentId);
@@ -50,7 +52,7 @@ describe("capacity overrides", () => {
     assert.equal(shop.getState().overrides[0].who, "Jordan Hale");
     assert.equal(shop.getState().overrides[0].at, when);
     assert.equal(shop.getState().overrides[0].reason, "tech-hours");
-    assert.equal(shop.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 690);
+    assert.equal(shop.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 60);
   });
 
   it("writes nothing when the booking fits, including a later edit that still fits", () => {
@@ -71,7 +73,8 @@ describe("capacity overrides", () => {
   it("does not record an override for a raw appointment save", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("jordan");
-    shop.getState().addAppointment(draft(shop.getState(), { minutes: 690, concern: "Long job" }));
+    addHeavyOp(shop);
+    shop.getState().addAppointment(draft(shop.getState(), { minutes: 60, concern: "Long job", laborOpIds: ["op-heavy"] }));
     assert.equal(shop.getState().overrides.length, 0);
   });
 
@@ -86,7 +89,8 @@ describe("capacity overrides", () => {
     }
     const advisorOnly = state.saveAdvisorAppointment(draft(state, { time: "15:00", minutes: 30, concern: "One more" }));
     assert.equal(shop.getState().overrides.find((row) => row.id === advisorOnly.overrideId)?.reason, "advisor");
-    const both = state.saveAdvisorAppointment(draft(state, { time: "15:30", minutes: 630, concern: "Does not fit" }));
+    addHeavyOp(shop);
+    const both = state.saveAdvisorAppointment(draft(state, { time: "15:30", minutes: 30, concern: "Does not fit", laborOpIds: ["op-heavy"] }));
     assert.equal(shop.getState().overrides.find((row) => row.id === both.overrideId)?.reason, "both");
   });
 
@@ -94,7 +98,8 @@ describe("capacity overrides", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
     shop.getState().setWorkingAs("jordan");
-    shop.getState().saveAdvisorAppointment(draft(shop.getState(), { minutes: 690, concern: "Coulee overload" }));
+    addHeavyOp(shop);
+    shop.getState().saveAdvisorAppointment(draft(shop.getState(), { minutes: 60, concern: "Coulee overload", laborOpIds: ["op-heavy"] }));
     const coulee = shop.getState().overrides;
     assert.equal(coulee.length, 1);
     assert.equal(coulee[0].who, "Jordan Hale");
@@ -104,7 +109,8 @@ describe("capacity overrides", () => {
     assert.equal(shop.getState().overrides.length, 0);
     const pullman = shop.getState();
     pullman.setWorkingAs(pullman.advisors[0].id);
-    pullman.saveAdvisorAppointment(draft(pullman, { minutes: 690, concern: "Pullman overload" }));
+    addHeavyOp(shop);
+    pullman.saveAdvisorAppointment(draft(pullman, { minutes: 60, concern: "Pullman overload", laborOpIds: ["op-heavy"] }));
     const pullmanLog = shop.getState().overrides;
     assert.equal(pullmanLog.length, 1);
     assert.equal(pullmanLog[0].storeId, "pullman");
@@ -140,7 +146,7 @@ describe("capacity overrides", () => {
 
 function draft(
   state: { customers: { id: string }[]; vehicles: { id: string }[]; advisors: { id: string }[]; techs: { id: string }[] },
-  patch: { minutes: number; concern: string; time?: string },
+  patch: { minutes: number; concern: string; time?: string; laborOpIds?: string[] },
 ): Omit<Appointment, "id" | "orderId"> {
   return {
     date: friday,
@@ -152,7 +158,7 @@ function draft(
     concern: patch.concern,
     lines: [{ id: "", code: "A", concern: patch.concern }],
     vin: "",
-    laborOpIds: [],
+    laborOpIds: patch.laborOpIds ?? [],
     techId: state.techs[0].id,
     lane: "drop",
     status: "scheduled",
@@ -162,6 +168,12 @@ function draft(
 function slot(index: number) {
   const mins = 7 * 60 + 30 + index * 30;
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+}
+
+function addHeavyOp(shop: { getState: () => { laborOps: { id: string; opcode: string; description: string; hours: number; payType: string }[] }; setState: (patch: { laborOps: { id: string; opcode: string; description: string; hours: number; payType: string }[] }) => void }) {
+  const ops = shop.getState().laborOps;
+  if (ops.some((op) => op.id === "op-heavy")) return;
+  shop.setState({ laborOps: [...ops, { id: "op-heavy", opcode: "HEAVY", description: "Heavy job", hours: 12, payType: "cp" }] });
 }
 
 function memoryStorage(): ShopStorage {

@@ -10,7 +10,7 @@ import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, PAST_TODAY_MESSAGE, shopMinutes } from "@/lib/capacity";
+import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, shopMinutes, visitRunsPastClose } from "@/lib/capacity";
 import { filterDeskCustomers, tenDigitPhone } from "@/lib/desk-customers";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
@@ -101,6 +101,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [requestNote, setRequestNote] = useState("");
   const [approveGate, setApproveGate] = useState<{ id: string; linkCustomerId?: string; warning: string } | null>(null);
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
+  const [moveOverride, setMoveOverride] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; warning: string; closeReason?: string } | null>(null);
+  const [moveClose, setMoveClose] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; reason: string } | null>(null);
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
     if (ignoreRequestsHash.current) {
@@ -119,6 +121,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     setCancelId(null);
     setActionError(null);
     setOverridePrompt(null);
+    setMoveOverride(null);
+    setMoveClose(null);
     setArrivedGate(null);
   }
   const { customerId, vehicleId, advisorId, techId, serviceId: servicePick, onlineTechId } = liveSeed;
@@ -286,7 +290,20 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           setTime(nextTime);
           setBooking(true);
         }}
-        onMove={(id, patch) => shop.moveAppointment(id, patch)}
+        onMove={(id, patch) => {
+          const result = shop.moveAppointment(id, patch);
+          if (result.needsCloseReason) {
+            setMoveClose({ id, patch, reason: "" });
+            setActionError(null);
+            return;
+          }
+          if (result.needsOverride && result.warning) {
+            setMoveOverride({ id, patch, warning: result.warning });
+            setActionError(null);
+            return;
+          }
+          if (!result.ok && result.error) setActionError(result.error);
+        }}
         onWrite={(id) => {
           const row = shop.appointments.find((item) => item.id === id);
           if (row) setPreset(row);
@@ -456,8 +473,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           submitLabel="Book it"
           manager={actor === "service-manager"}
           scheduling={shop.settings.scheduling}
-          onCreate={(value, confirmTransfer, transferReason) => {
-            const result = shop.saveNewCustomerAppointment(value, confirmTransfer, transferReason);
+          onCreate={(value, confirmTransfer, transferReason, closeReason) => {
+            const result = shop.saveNewCustomerAppointment(value, confirmTransfer, transferReason, closeReason);
             if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
             if (!result.ok) return result.error;
             setBooking(false);
@@ -466,8 +483,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           capacityFor={(draft) => capacityFor(draft)}
           onVisitChange={(next) => { setDate(next.date); setTime(next.time); }}
           initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
-          onSubmit={(value, confirmTransfer, transferReason) => {
-            const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason);
+          onSubmit={(value, confirmTransfer, transferReason, closeReason) => {
+            const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason, closeReason);
             if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
             if (!result.ok) return result.error;
             setBooking(false);
@@ -502,8 +519,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 scheduling={shop.settings.scheduling}
                 capacityFor={(draft) => capacityFor(draft, editing.id)}
                 initial={editing}
-                onSubmit={(value, confirmTransfer, transferReason) => {
-                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason);
+                onSubmit={(value, confirmTransfer, transferReason, closeReason) => {
+                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason, closeReason);
                   if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
                   if (!result.ok) return result.error;
                   setEditingId(null);
@@ -537,6 +554,52 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             </div>
           </div>
         ) : cancelling ? <CancelForm key={cancelling.id} onSubmit={(input) => confirmCancel(input)} /> : null}
+      </Modal>
+
+      <Modal open={moveOverride !== null} onClose={() => setMoveOverride(null)} title="This move overloads the day" description="The same warning as a booking. Nothing is saved until you confirm.">
+        {moveOverride ? (
+          <div className="grid gap-3">
+            <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{moveOverride.warning}</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button className="min-h-11" tone="primary" onClick={() => {
+                const pending = moveOverride;
+                const result = shop.moveAppointment(pending.id, pending.patch, true, pending.closeReason);
+                if (!result.ok) setActionError(result.error);
+                setMoveOverride(null);
+              }}>Move anyway</Button>
+              <Button className="min-h-11" onClick={() => setMoveOverride(null)}>Leave it</Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal open={moveClose !== null} onClose={() => setMoveClose(null)} title="This visit runs past closing" description="A service manager can approve it after a reason.">
+        {moveClose ? (
+          <form className="grid gap-3" onSubmit={(event) => {
+            event.preventDefault();
+            const pending = moveClose;
+            const result = shop.moveAppointment(pending.id, pending.patch, false, pending.reason);
+            if (result.needsOverride && result.warning) {
+              setMoveOverride({ id: pending.id, patch: pending.patch, warning: result.warning, closeReason: pending.reason });
+              setMoveClose(null);
+              return;
+            }
+            if (!result.ok) {
+              setActionError(result.error);
+              return;
+            }
+            setMoveClose(null);
+            setActionError(null);
+          }}>
+            <Field label="Reason for running past close">
+              <input className="field" aria-label="Reason for running past close" value={moveClose.reason} onChange={(event) => setMoveClose({ ...moveClose, reason: event.target.value })} />
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button className="min-h-11" tone="primary" type="submit">Approve the move</Button>
+              <Button className="min-h-11" type="button" onClick={() => setMoveClose(null)}>Leave it</Button>
+            </div>
+          </form>
+        ) : null}
       </Modal>
 
       <Modal open={overridePrompt !== null} onClose={() => setOverridePrompt(null)} title="Reinstate past capacity" description="The same warning as a booking. Nothing is saved until you confirm.">
@@ -668,8 +731,8 @@ export function AppointmentFields({
   manager?: boolean;
   scheduling?: SchedulingSettings;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
-  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
-  onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
 }) {
@@ -688,6 +751,8 @@ export function AppointmentFields({
   const [formError, setFormError] = useState<string | null>(null);
   const [transferWarning, setTransferWarning] = useState("");
   const [transferReason, setTransferReason] = useState("");
+  const [closeReason, setCloseReason] = useState("");
+  const openedDate = useRef(initial.date);
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerOpen, setCustomerOpen] = useState(false);
   const [customerCursor, setCustomerCursor] = useState(0);
@@ -705,7 +770,8 @@ export function AppointmentFields({
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
-  const pastVisit = initial.date < today();
+  const pastVisit = showStatus === true && openedDate.current < today();
+  const runsPastClose = !pastVisit && scheduling ? visitRunsPastClose(scheduling, date, time, minutes) : false;
   const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
   const gridStarts = scheduling && !manager ? fittingStartTimes(scheduling, date, minutes, STARTS) : STARTS;
   const starts = gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts];
@@ -728,6 +794,14 @@ export function AppointmentFields({
         }
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
         if (creating && onCreate) {
+          if (runsPastClose && !manager) {
+            setFormError(PAST_CLOSE_MESSAGE);
+            return;
+          }
+          if (runsPastClose && !closeReason.trim()) {
+            setFormError(PAST_CLOSE_REASON);
+            return;
+          }
           const result = onCreate({
             name: newName,
             phone: newPhone,
@@ -746,7 +820,7 @@ export function AppointmentFields({
             lines: kept,
             concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "),
             laborOpIds,
-          }, transferRef.current, transferReason);
+          }, transferRef.current, transferReason, closeReason);
           transferRef.current = false;
           if (result && typeof result === "object" && result.needsTransfer) {
             setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
@@ -762,7 +836,15 @@ export function AppointmentFields({
           setFormError(block);
           return;
         }
-        const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason);
+        if (runsPastClose && !manager) {
+          setFormError(PAST_CLOSE_MESSAGE);
+          return;
+        }
+        if (runsPastClose && !closeReason.trim()) {
+          setFormError(PAST_CLOSE_REASON);
+          return;
+        }
+        const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, closeReason);
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsTransfer) {
           setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
@@ -969,6 +1051,12 @@ export function AppointmentFields({
       ) : null}
       {alertText ? <p role="alert" className="text-sm text-[#8a3b2a]">{alertText}</p> : null}
       {pastToday ? <p role="status" className="text-sm text-[#8a5a00]">{PAST_TODAY_MESSAGE}</p> : null}
+      {runsPastClose && !manager ? <p role="alert" className="text-sm text-[#8a3b2a]">{PAST_CLOSE_MESSAGE}</p> : null}
+      {runsPastClose && manager ? (
+        <Field label="Reason for running past close">
+          <input className="field" aria-label="Reason for running past close" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} />
+        </Field>
+      ) : null}
       {capacity.warning ? (
         <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{capacity.warning}</p>
       ) : null}

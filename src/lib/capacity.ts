@@ -358,15 +358,15 @@ export function visitTimeError(scheduling: SchedulingSettings, iso: string, time
 }
 
 export const PAST_CLOSE_MESSAGE = "That visit runs past closing. A service manager can approve it.";
+export const PAST_CLOSE_REASON = "Add a reason for running past close.";
 export const PAST_TODAY_MESSAGE = "That start time has already passed today.";
 
 /** True when the visit starts on the grid and finishes after that day's close. */
 export function visitRunsPastClose(scheduling: SchedulingSettings, iso: string, time: string, minutes: number): boolean {
   if (visitTimeError(scheduling, iso, time)) return false;
-  if (typeof minutes !== "number" || !Number.isInteger(minutes)) return false;
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes <= 0) return false;
   const day = shopDay(scheduling, iso);
-  const openLength = day.closeMinutes - day.openMinutes;
-  if (openLength <= 0 || minutes >= openLength) return false;
+  if (day.closeMinutes <= day.openMinutes) return false;
   const [hour, minute] = time.split(":").map(Number);
   const end = hour * 60 + minute + minutes;
   return end > day.closeMinutes;
