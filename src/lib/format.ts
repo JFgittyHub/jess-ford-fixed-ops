@@ -1,4 +1,4 @@
-import { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, ordinal, paceRatio, todayIso, todayLabel } from "./clock";
+import { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, now, ordinal, paceRatio, todayIso, todayLabel } from "./clock";
 import type { FeeLine } from "./types";
 
 export { addDays, dayOfMonth, daysBetween, daysInMonth, monthKey, monthLabel, monthName, ordinal, paceRatio, todayIso as today, todayLabel };
@@ -25,6 +25,12 @@ export function salesTax(beforeTax: number, rate: number) {
   return Math.round(Math.max(0, beforeTax) * (Math.max(0, Number(rate) || 0) / 100) * 100) / 100;
 }
 
+export function lengthLabel(minutes: number) {
+  if (minutes < 60) return `${minutes} min`;
+  const hours = minutes / 60;
+  return Number.isInteger(hours) ? `${hours} hr` : `${hours} hr`;
+}
+
 export function feeTotal(fees?: FeeLine[] | null, repair = 0) {
   if (!Array.isArray(fees)) return 0;
   return Math.round(fees.reduce((sum, line) => sum + feeCharge(line, repair), 0) * 100) / 100;
@@ -35,6 +41,47 @@ export function snapHalfHour(time: string) {
   const total = Math.round(((h || 0) * 60 + (m || 0)) / 30) * 30;
   const mins = Math.max(7 * 60, Math.min(17 * 60 + 30, total));
   return `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+}
+
+export function formatShopPhone(value: string) {
+  const digits = value.replace(/\D/g, "");
+  const local = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (local.length !== 10) return value.trim();
+  return `(${local.slice(0, 3)}) ${local.slice(3, 6)}-${local.slice(6)}`;
+}
+
+export function closedHeaderCopy(
+  order: { status: string; closeSnapshot?: { storeName?: string; storeAddress?: string; storeCity?: string; storePhone?: string; phone?: string } | null },
+  settings: { storeName: string; address: string; city: string; phone: string },
+) {
+  const snap = order.closeSnapshot;
+  const recorded = order.status === "closed" ? recordedStoreName(snap) : "";
+  if (order.status !== "closed") {
+    return {
+      name: settings.storeName,
+      line: [settings.address, settings.city, formatShopPhone(settings.phone)].filter(Boolean).join(" · ") || settings.city,
+    };
+  }
+  if (!recorded) {
+    return { name: "Header not recorded", line: "" };
+  }
+  return {
+    name: recorded,
+    line: [snap?.storeAddress, snap?.storeCity, formatShopPhone(snap?.storePhone || "")].filter(Boolean).join(" · "),
+  };
+}
+
+/** A saved header that still holds the old sample fixture is treated as missing. The customer's phone is never the store phone. */
+function recordedStoreName(snap?: { storeName?: string; storeAddress?: string; storeCity?: string; storePhone?: string; phone?: string } | null) {
+  const name = snap?.storeName?.trim() ?? "";
+  if (!name) return "";
+  const address = snap?.storeAddress?.trim() ?? "";
+  const city = snap?.storeCity?.trim() ?? "";
+  const phone = (snap?.storePhone ?? "").replace(/\D/g, "");
+  const fixture = name === "Captured At Close"
+    || (address === "Captured Road" && city === "Captured City")
+    || (name.startsWith("Captured") && phone === "5551112222");
+  return fixture ? "" : name;
 }
 
 export function clockTime(time: string) {
@@ -86,9 +133,20 @@ export function shortDate(iso: string) {
   return `${Number(m)}/${Number(d)}`;
 }
 
-export function punchHours(startedAt: string, endedAt: string | null, now = Date.now()) {
+/** A flagged punch stops at the repair order's close time, or at its start when there is no close time. */
+export function reviewCap(row: { startedAt: string; endedAt: string | null; needsReview?: boolean }, closedAt?: string | null): string | null {
+  if (row.endedAt || !row.needsReview) return null;
+  if (closedAt && Number.isFinite(Date.parse(closedAt)) && Date.parse(closedAt) >= Date.parse(row.startedAt)) return closedAt;
+  return row.startedAt;
+}
+
+export function punchHours(startedAt: string, endedAt: string | null, now = Date.now(), capAt?: string | null) {
   const start = new Date(startedAt).getTime();
-  const end = endedAt ? new Date(endedAt).getTime() : now;
+  let end = endedAt ? new Date(endedAt).getTime() : now;
+  if (capAt) {
+    const cap = new Date(capAt).getTime();
+    if (Number.isFinite(cap)) end = Math.min(end, cap);
+  }
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
   return (end - start) / 3_600_000;
 }
@@ -101,7 +159,14 @@ export function formatDuration(hours: number) {
   return `${h}h ${m}m`;
 }
 
-export function localStamp(date = new Date()) {
+export function formatVisit(date: string, time: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const stamp = new Date(Date.UTC(year || 2026, (month || 1) - 1, day || 1, 12));
+  const dayText = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(stamp);
+  return `${dayText}, ${clockTime(time)} PT`;
+}
+
+export function localStamp(date = now()) {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}:${p(date.getSeconds())}`;
 }
@@ -125,8 +190,17 @@ export const STATUS_LABEL = {
   parts: "Waiting parts",
   ready: "Ready",
   booked: "Booked",
-  invoiced: "Invoiced",
+  closed: "Closed",
 } as const;
+
+/** Badge label. Work steps stay Open. A no-work close is named on its own. */
+export function roStatusLabel(order: { status: string; closeType?: string | null }) {
+  if (order.status === "closed" && order.closeType === "no_work") return "Closed — no work ($0)";
+  if (order.status === "closed") return "Closed";
+  if (order.status === "booked") return "Booked";
+  if (order.status === "open" || order.status === "working" || order.status === "parts" || order.status === "ready") return "Open";
+  return "Open";
+}
 
 export const BAY_LABEL = {
   lot: "On the lot",
@@ -142,7 +216,7 @@ export const BAY_LABEL = {
 export function bayFromStatus(status: string) {
   if (status === "working") return "working" as const;
   if (status === "parts") return "parts" as const;
-  if (status === "ready" || status === "invoiced") return "ready" as const;
+  if (status === "ready" || status === "booked" || status === "closed") return "ready" as const;
   return "dispatch" as const;
 }
 

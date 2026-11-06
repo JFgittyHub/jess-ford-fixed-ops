@@ -5,7 +5,9 @@ import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } fr
  * A slot is open only when the job's labor hours fit the technician's
  * remaining shop day and the advisor still has a free appointment that day.
  * Hours follow that store's open hours. Pending holds count the same way as
- * appointments. No-shows and declined holds do not.
+ * appointments. No-shows, cancelled appointments, and declined holds do not.
+ * A technician or advisor who is not on this store is refused. That is not
+ * a warning the advisor can override.
  */
 export type CapacityLoad = {
   id: string;
@@ -36,8 +38,10 @@ export type CapacitySide = {
 export type CapacityResult = {
   /** False when online customers should not see the slot. */
   open: boolean;
-  /** Set when an advisor may continue anyway. Null when the slot is open. */
+  /** Set when an advisor may continue anyway. Null when the slot is open or blocked. */
   warning: string | null;
+  /** Hard stop. The visit is not saved and no override is written. */
+  blocked: string | null;
   tech: CapacitySide;
   advisor: CapacitySide;
 };
@@ -53,7 +57,8 @@ export type OnlineSlot = {
 const EPSILON = 1e-9;
 
 export function laborHoursFor(laborOpIds: string[], minutes: number, laborOps: { id: string; hours: number }[]): number {
-  const fromOps = laborOpIds.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
+  const ids = Array.isArray(laborOpIds) ? laborOpIds : [];
+  const fromOps = ids.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
   const hours = fromOps > 0 ? fromOps : Math.max(0, minutes) / 60;
   return round2(hours);
 }
@@ -69,7 +74,7 @@ export function appointmentLoads(
     advisorId: row.advisorId,
     techId: row.techId,
     laborHours: laborHoursFor(row.laborOpIds, row.minutes, laborOps),
-    counts: row.status !== "no_show",
+    counts: row.status !== "no_show" && row.status !== "cancelled",
   }));
 }
 
@@ -109,16 +114,18 @@ export function evaluateCapacity(input: {
   const advisorCapacity = !day.closed && knownAdvisor ? day.advisorCap : 0;
   const techOverloaded = !knownTech || techUsed + adding > techCapacity + EPSILON;
   const advisorOverloaded = !knownAdvisor || advisorUsed + 1 > advisorCapacity;
-  const warning = capacityWarning({
-    closed: day.closed,
-    knownTech,
-    knownAdvisor,
-    techOverloaded,
-    advisorOverloaded,
-  });
+  const blocked = day.closed ? "The shop is closed that day." : staffBlockMessage(knownTech, knownAdvisor);
+  const warning = blocked
+    ? null
+    : capacityWarning({
+        closed: false,
+        techOverloaded,
+        advisorOverloaded,
+      });
   return {
-    open: warning === null,
+    open: blocked === null && warning === null,
     warning,
+    blocked,
     tech: { used: techUsed, adding, capacity: techCapacity, overloaded: techOverloaded },
     advisor: { used: advisorUsed, adding: 1, capacity: advisorCapacity, overloaded: advisorOverloaded },
   };
@@ -157,16 +164,24 @@ export function assessAppointment(input: {
   });
 }
 
-/** Sentence for the advisor form. Saving stays allowed and records an override. */
+/** Sentence for the advisor form. A block is a hard stop. A warning can still be saved. */
 export function advisorBookingNote(result: CapacityResult): string | null {
+  if (result.blocked) return result.blocked;
   if (!result.warning) return null;
   return `${result.warning} You can still book it. Online customers will not see this time.`;
 }
 
+export function staffBlockMessage(knownTech: boolean, knownAdvisor: boolean): string | null {
+  if (!knownTech && !knownAdvisor) return "That technician and advisor aren't on this store.";
+  if (!knownTech) return "That technician isn't on this store.";
+  if (!knownAdvisor) return "That advisor isn't on this store.";
+  return null;
+}
+
 export function overrideReason(result: CapacityResult): OverrideReason | null {
-  if (result.open || !result.warning) return null;
-  if (result.warning.startsWith("The store is closed")) return "closed";
-  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return "unknown-staff";
+  if (result.blocked || result.open || !result.warning) return null;
+  if (result.warning.startsWith("The shop is closed")) return "closed";
+  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return null;
   if (result.tech.overloaded && result.advisor.overloaded) return "both";
   if (result.tech.overloaded) return "tech-hours";
   if (result.advisor.overloaded) return "advisor";
@@ -185,6 +200,8 @@ export function overrideReasonLabel(reason: OverrideReason): string {
       return "Store closed";
     case "unknown-staff":
       return "Staff not on this store";
+    case "past-close":
+      return "Runs past closing";
   }
 }
 
@@ -240,19 +257,19 @@ export function onlineSlots(input: {
 
 function capacityWarning(input: {
   closed: boolean;
-  knownTech: boolean;
-  knownAdvisor: boolean;
   techOverloaded: boolean;
   advisorOverloaded: boolean;
 }): string | null {
-  if (input.closed) return "The store is closed that day.";
-  if (!input.knownTech && !input.knownAdvisor) return "That technician and advisor aren't on this store.";
-  if (!input.knownTech) return "That technician isn't on this store.";
-  if (!input.knownAdvisor) return "That advisor isn't on this store.";
+  if (input.closed) return "The shop is closed that day.";
   if (input.techOverloaded && input.advisorOverloaded) return "This would overload technician hours and advisor capacity.";
   if (input.techOverloaded) return "This would overload technician hours for that job.";
   if (input.advisorOverloaded) return "This would overload advisor capacity.";
   return null;
+}
+
+/** How many appointments one advisor can take that day. Zero when the store is closed. */
+export function advisorDayCapacity(scheduling: SchedulingSettings, iso: string): number {
+  return shopDay(scheduling, iso).advisorCap;
 }
 
 function shopDay(scheduling: SchedulingSettings, iso: string): {
@@ -301,6 +318,10 @@ function instant(iso: string, minutes: number): number {
   return Date.UTC(year, month - 1, day) + minutes * 60_000;
 }
 
+export function shopMinutes(date: Date = now()): { date: string; minutes: number } {
+  return shopNow(date);
+}
+
 function shopNow(date: Date): { date: string; minutes: number } {
   const map: Record<string, string> = {};
   for (const part of new Intl.DateTimeFormat("en-US", {
@@ -321,6 +342,84 @@ function shopNow(date: Date): { date: string; minutes: number } {
     iso = addDays(iso, 1);
   }
   return { date: iso, minutes: hour * 60 + Number(map.minute) };
+}
+
+/** A bookable start is a half-hour on that day's open grid. Anything else is refused. */
+export function visitTimeError(scheduling: SchedulingSettings, iso: string, time: string): string | null {
+  if (!time || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !/^\d{2}:(00|30)$/.test(time)) {
+    return "That time is not on the clock.";
+  }
+  const day = shopDay(scheduling, iso);
+  if (day.closed) return "The shop is closed that day.";
+  const [hour, minute] = time.split(":").map(Number);
+  const mins = hour * 60 + minute;
+  if (mins < day.openMinutes || mins >= day.closeMinutes) return "That time is outside shop hours.";
+  return null;
+}
+
+export const PAST_CLOSE_MESSAGE = "That visit runs past closing. A service manager can approve it.";
+export const PAST_CLOSE_REASON = "Add a reason for running past close.";
+export const PAST_TODAY_MESSAGE = "That start time has already passed today.";
+
+/** True when the visit starts on the grid and finishes after that day's close. */
+export function visitRunsPastClose(scheduling: SchedulingSettings, iso: string, time: string, minutes: number): boolean {
+  if (visitTimeError(scheduling, iso, time)) return false;
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes <= 0) return false;
+  const day = shopDay(scheduling, iso);
+  if (day.closeMinutes <= day.openMinutes) return false;
+  const [hour, minute] = time.split(":").map(Number);
+  const end = hour * 60 + minute + minutes;
+  return end > day.closeMinutes;
+}
+
+/** Start times on the open grid whose visit ends by close. */
+export function fittingStartTimes(scheduling: SchedulingSettings, iso: string, minutes: number, starts: string[]): string[] {
+  return starts.filter((time) => !visitTimeError(scheduling, iso, time) && !visitRunsPastClose(scheduling, iso, time, minutes));
+}
+
+/**
+ * The next 30-minute start that fits a visit. Today uses the next slot after now.
+ * A later day uses that day's first open slot. If today has nothing left, the next open day.
+ */
+export function nextOpenVisit(scheduling: SchedulingSettings, selected: string, nowDate: Date, minutes = 60): { date: string; time: string } {
+  const clock = shopNow(nowDate);
+  const first = (iso: string, earliest: number) => {
+    const day = shopDay(scheduling, iso);
+    if (day.closed || day.closeMinutes <= day.openMinutes) return "";
+    let cursor = Math.max(day.openMinutes, Math.ceil(earliest / 30) * 30);
+    const length = Math.max(30, minutes);
+    while (cursor < day.closeMinutes) {
+      if (cursor + length <= day.closeMinutes) return formatTime(cursor);
+      cursor += 30;
+    }
+    return "";
+  };
+  const later = selected > clock.date ? selected : "";
+  if (later) {
+    let day = later;
+    for (let guard = 0; guard < 21; guard += 1) {
+      const time = first(day, 0);
+      if (time) return { date: day, time };
+      day = addDays(day, 1);
+    }
+  }
+  const todayTime = first(clock.date, clock.minutes + 1);
+  if (todayTime) return { date: clock.date, time: todayTime };
+  let day = addDays(clock.date, 1);
+  for (let guard = 0; guard < 21; guard += 1) {
+    const time = first(day, 0);
+    if (time) return { date: day, time };
+    day = addDays(day, 1);
+  }
+  return { date: clock.date, time: formatTime(shopDay(scheduling, clock.date).openMinutes || 8 * 60) };
+}
+
+/** Lengths are 30-minute steps. 24 hours does not fit a visit, so 1440 is refused. */
+export function visitLengthError(minutes: unknown): string | null {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440 || minutes % 30 !== 0) {
+    return "That length is not on this desk.";
+  }
+  return null;
 }
 
 function round2(value: number): number {

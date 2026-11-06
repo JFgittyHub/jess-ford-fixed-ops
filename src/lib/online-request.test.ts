@@ -8,6 +8,7 @@ import { pinClock, resetClock } from "./clock.ts";
 import { lookupOnlineCustomer, requestHolds, revealSavedVehicles, visitSlots } from "./online-request.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore, type ShopState } from "./store.ts";
+import { fullVin } from "./vin.ts";
 
 const when = "2026-10-20T14:00:00.000Z";
 const friday = "2026-10-23";
@@ -132,7 +133,7 @@ describe("online requests", () => {
       year: 2021,
       make: "Sample",
       model: "Hatch",
-      vin: "2T1BURHE0JC123456",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2021, plant: "G", serial: 11 }),
       plate: "NEW123",
     });
     assert.equal(created.ok, true);
@@ -156,10 +157,12 @@ describe("online requests", () => {
       ...pick,
       verified: false,
       customerName: "Hold Customer",
+      phone: "5095550188",
+      email: "hold@example.com",
       year: 2020,
       make: "Sample",
       model: "Truck",
-      vin: "3FAHP0HA6AR123456",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 12 }),
       plate: "HOLD1",
     });
     assert.equal(saved.ok, true);
@@ -201,10 +204,12 @@ describe("online requests", () => {
       ...couleePick,
       verified: false,
       customerName: "Helen Cho",
+      phone: "5095550140",
+      email: "helen.hold@example.com",
       year: 2024,
       make: "Sample",
       model: "Truck",
-      vin: "1FTAB12C0RG000001",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2024, plant: "G", serial: 1 }),
       plate: "COULEE",
     });
     shop.getState().switchStore("pullman");
@@ -214,10 +219,12 @@ describe("online requests", () => {
       ...pullmanPick,
       verified: false,
       customerName: "Bennett Shaw",
+      phone: "5095550141",
+      email: "bennett.hold@example.com",
       year: 2022,
       make: "Sample",
       model: "Wagon",
-      vin: "1FTPULMN0RC000002",
+      vin: fullVin({ prefix: "1FTPULMN", year: 2022, plant: "P", serial: 2 }),
       plate: "PULLMN",
     });
     assert.equal(saved.ok, true);

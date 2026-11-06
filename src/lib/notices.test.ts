@@ -6,10 +6,11 @@ import { NoticeLog } from "../components/notice-log.tsx";
 import { textingAdapter } from "./adapters/texting.ts";
 import { laborHoursFor } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
-import { requestHolds, visitSlots } from "./online-request.ts";
+import { phoneKey, requestHolds, visitSlots } from "./online-request.ts";
 import { onlineSlots } from "./capacity.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore, type ShopState } from "./store.ts";
+import { fullVin } from "./vin.ts";
 
 const when = "2026-10-20T14:00:00.000Z";
 const friday = "2026-10-23";
@@ -20,6 +21,7 @@ describe("approval, decline, and simulated notices", () => {
   it("approves a pending request into an appointment and keeps the same hours", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const state = shop.getState();
     const pick = choice(state, "09:00");
     const before = state.appointments.length;
@@ -33,7 +35,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2021,
       make: "Sample",
       model: "Hatch",
-      vin: "2T1BURHE0JC123456",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2021, plant: "G", serial: 21 }),
       plate: "NEW123",
     });
     assert.equal(saved.ok, true);
@@ -43,7 +45,7 @@ describe("approval, decline, and simulated notices", () => {
     assert.equal(held.length, 1);
     assert.equal(held[0].laborHours, pending.laborHours);
 
-    const approved = shop.getState().approveOnlineRequest(saved.id, "");
+    const approved = shop.getState().approveOnlineRequest(saved.id, "", true);
     assert.equal(approved.ok, true);
     const next = shop.getState();
     assert.equal(next.appointments.length, before + 1);
@@ -73,6 +75,7 @@ describe("approval, decline, and simulated notices", () => {
   it("links an unverified request to the matching customer", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const state = shop.getState();
     const denise = state.customers.find((row) => row.name === "Denise Harper");
     assert.ok(denise);
@@ -92,19 +95,20 @@ describe("approval, decline, and simulated notices", () => {
     });
     assert.equal(saved.ok, true);
     if (!saved.ok) return;
-    const approved = shop.getState().approveOnlineRequest(saved.id);
+    const approved = shop.getState().approveOnlineRequest(saved.id, undefined, true);
     assert.equal(approved.ok, true);
     const request = shop.getState().onlineRequests[0];
     assert.equal(request.customerId, denise.id);
     assert.equal(request.verified, false);
     assert.equal(shop.getState().vehicles.filter((row) => row.customerId === denise.id).length, beforeVehicles + 1);
     assert.equal(shop.getState().notices[0].method, "call");
-    assert.equal(shop.getState().notices[0].recipient, denise.phone);
+    assert.equal(shop.getState().notices[0].recipient, phoneKey(denise.phone));
   });
 
   it("frees the slot when an advisor declines", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const state = shop.getState();
     const pick = choice(state, "11:00");
     const saved = state.addOnlineRequest({
@@ -117,7 +121,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2020,
       make: "Sample",
       model: "Truck",
-      vin: "3FAHP0HA6AR123456",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2020, plant: "G", serial: 22 }),
       plate: "HOLD1",
     });
     assert.equal(saved.ok, true);
@@ -155,6 +159,7 @@ describe("approval, decline, and simulated notices", () => {
   it("simulates one day-before reminder per confirmed appointment", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const state = shop.getState();
     const tomorrow = "2026-10-21";
     const saved = state.addOnlineRequest({
@@ -167,12 +172,12 @@ describe("approval, decline, and simulated notices", () => {
       year: 2018,
       make: "Sample",
       model: "Coupe",
-      vin: "JH4KA4650MC000001",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2018, plant: "G", serial: 23 }),
       plate: "REMIND",
     });
     assert.equal(saved.ok, true);
     if (!saved.ok) return;
-    assert.equal(shop.getState().approveOnlineRequest(saved.id, "").ok, true);
+    assert.equal(shop.getState().approveOnlineRequest(saved.id, "", true).ok, true);
     const appointmentId = shop.getState().onlineRequests[0].appointmentId;
     const first = shop.getState().simulateDayBeforeReminders();
     const reminders = shop.getState().notices.filter((row) => row.kind === "reminder");
@@ -193,6 +198,7 @@ describe("approval, decline, and simulated notices", () => {
   it("keeps Pullman notices off the Grand Coulee desk", () => {
     pinClock(when);
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const coulee = shop.getState().addOnlineRequest({
       ...choice(shop.getState(), "13:00"),
       verified: false,
@@ -202,7 +208,7 @@ describe("approval, decline, and simulated notices", () => {
       year: 2024,
       make: "Sample",
       model: "Truck",
-      vin: "1FTAB12C0RG000099",
+      vin: fullVin({ prefix: "1FTAB12C", year: 2024, plant: "G", serial: 24 }),
       plate: "COULEE",
     });
     assert.equal(coulee.ok, true);
@@ -221,12 +227,13 @@ describe("approval, decline, and simulated notices", () => {
       year: 2022,
       make: "Sample",
       model: "Wagon",
-      vin: "1FTPULMN0RC000099",
+      vin: fullVin({ prefix: "1FTPULMN", year: 2022, plant: "P", serial: 25 }),
       plate: "PULLMN",
     });
     assert.equal(pullman.ok, true);
     if (!pullman.ok) return;
-    shop.getState().approveOnlineRequest(pullman.id, "");
+    shop.getState().setWorkingAs(shop.getState().advisors[0]?.id ?? "");
+    shop.getState().approveOnlineRequest(pullman.id, "", true);
     const pullmanHtml = renderToString(createElement(NoticeLog, { rows: shop.getState().notices }));
     assert.match(pullmanHtml, /Bennett Shaw/);
     assert.equal(pullmanHtml.includes("Helen Cho"), false);

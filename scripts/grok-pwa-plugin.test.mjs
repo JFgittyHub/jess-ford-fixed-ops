@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync as makeTempDir, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+const temps = [];
+function mkdtempSync(prefix) {
+  const root = makeTempDir(prefix);
+  temps.push(root);
+  return root;
+}
+test.after(() => {
+  for (const root of temps) rmSync(root, { recursive: true, force: true });
+});
 import {
   appNameFromHost,
   createHeadInjector,

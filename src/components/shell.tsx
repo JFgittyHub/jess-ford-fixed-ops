@@ -2,9 +2,7 @@ import { Link, useRouter, useRouterState } from "@tanstack/react-router";
 import {
   ArrowLeft,
   CalendarClock,
-  CalendarPlus,
   ClipboardList,
-  Inbox,
   FileText,
   ListChecks,
   NotebookPen,
@@ -13,6 +11,7 @@ import {
   Users,
   Wallet,
   UserRound,
+  BadgeCheck,
   Wrench,
   Timer,
   Activity,
@@ -20,10 +19,12 @@ import {
   Package,
   Receipt,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
+import { changeLogLine, deskActor, requestLogLine } from "@/lib/cancel";
+import { isLockedPath, SECTION_LOCK_HINT, SECTION_LOCK_NOTICE } from "@/lib/section-lock";
 import { shopHasOperationalData, useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
 import { SchedulingSettingsForm } from "./scheduling-settings";
@@ -37,14 +38,13 @@ const STORES: { id: StoreId; label: string }[] = [
 const NAV = [
   { to: "/", label: "Pulse", icon: Activity },
   { to: "/schedule", label: "Appointments", icon: CalendarClock },
-  { to: "/request", label: "Request a visit", icon: CalendarPlus },
-  { to: "/online-requests", label: "Online requests", icon: Inbox },
   { to: "/overrides", label: "Overrides", icon: NotebookPen },
   { to: "/orders", label: "Repair orders", icon: ClipboardList },
   { to: "/estimates", label: "Repair estimates", icon: FileText },
   { to: "/dispatch", label: "Technicians", icon: Wrench },
   { to: "/tech-board", label: "Tech board", icon: Timer },
   { to: "/advisors", label: "Advisors", icon: UserRound },
+  { to: "/service-managers", label: "Service managers", icon: BadgeCheck },
   { to: "/parts", label: "Parts", icon: Package },
   { to: "/expenses", label: "Fixed costs", icon: Wallet },
   { to: "/customers", label: "Marketing", icon: Users },
@@ -56,25 +56,44 @@ const NAV = [
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const pending = useShop((state) => (state.onlineRequests ?? []).filter((row) => row.status === "pending").length);
-  const items = NAV;
   return (
     <>
-      {items.map((item) => {
-        const active = item.to === "/" ? pathname === "/" : pathname.startsWith(item.to);
+      {NAV.map((item) => {
         const Icon = item.icon;
+        const locked = isLockedPath(item.to);
+        const active = !locked && (item.to === "/" ? pathname === "/" : pathname.startsWith(item.to));
+        if (locked) {
+          return (
+            <span key={item.to} className="nav-link cursor-not-allowed opacity-45" aria-disabled="true" title={SECTION_LOCK_HINT}>
+              <Icon className="size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide">{SECTION_LOCK_HINT}</span>
+              {"gear" in item && item.gear ? <Settings className="size-3.5 shrink-0" aria-hidden /> : null}
+            </span>
+          );
+        }
         return (
           <Link key={item.to} to={item.to} onClick={onNavigate} className={cn("nav-link", active && "is-active")}>
             <Icon className="size-4 shrink-0" aria-hidden />
-            <span className="min-w-0 flex-1 truncate">
-              {item.label}
-              {item.to === "/online-requests" && pending > 0 ? ` (${pending})` : ""}
-            </span>
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {"gear" in item && item.gear ? <Settings className="size-3.5 shrink-0" aria-hidden /> : null}
           </Link>
         );
       })}
     </>
+  );
+}
+
+export function deskGate(pathname: string, children: ReactNode) {
+  return isLockedPath(pathname) ? <ComingLater /> : children;
+}
+
+export function ComingLater() {
+  return (
+    <section className="card" aria-label={SECTION_LOCK_HINT}>
+      <h1 className="font-display text-4xl leading-none">{SECTION_LOCK_NOTICE}</h1>
+      <p className="mt-3 max-w-xl text-muted">We'll focus on this part of the build later. Pulse, appointments, overrides, and repair orders stay open.</p>
+    </section>
   );
 }
 
@@ -93,8 +112,13 @@ export function Shell({ children }: { children: ReactNode }) {
     void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
       if (live) setHydrated(true);
     });
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === "jess-ford-fixed-ops-v1") void useShop.persist.rehydrate();
+    };
+    window.addEventListener("storage", onStorage);
     return () => {
       live = false;
+      window.removeEventListener("storage", onStorage);
     };
   }, []);
 
@@ -107,18 +131,28 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const activeStoreId = useShop((state) => state.activeStoreId);
   const switchStore = useShop((state) => state.switchStore);
   const advisors = useShop((state) => state.advisors);
+  const serviceManagers = useShop((state) => state.serviceManagers);
   const techs = useShop((state) => state.techs);
   const workingAsId = useShop((state) => state.workingAsId);
   const setWorkingAs = useShop((state) => state.setWorkingAs);
-  const staffId = advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId)
-    ? workingAsId
-    : advisors[0]?.id ?? techs[0]?.id ?? "";
+  const managers = useMemo(
+    () => (serviceManagers ?? []).filter((row) => row.active !== false),
+    [serviceManagers],
+  );
+  const managerIds = new Set(managers.map((row) => row.id));
+  const knownWorker = managers.some((row) => row.id === workingAsId) || advisors.some((row) => row.id === workingAsId) || techs.some((row) => row.id === workingAsId);
+  const staffId = knownWorker ? workingAsId : "";
+  const actor = useShop((state) => deskActor(state));
+  const canEditSettings = actor === "advisor" || actor === "service-manager";
+  const settingsLog = useShop((state) => state.settingsLog ?? []);
+  const requestLog = useShop((state) => state.requestLog ?? []);
   const updateSettings = useShop((state) => state.updateSettings);
   const resetDemo = useShop((state) => state.resetDemo);
   const clearShop = useShop((state) => state.clearShop);
   const [open, setOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [storeNameDraft, setStoreNameDraft] = useState(settings.storeName);
   const [scrolled, setScrolled] = useState(false);
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const router = useRouter();
@@ -140,6 +174,20 @@ function OpenDesk({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  useEffect(() => {
+    setStoreNameDraft(settings.storeName);
+  }, [settings.storeName]);
+
+  function commitStoreName() {
+    const next = storeNameDraft.trim();
+    const current = useShop.getState().settings.storeName;
+    if (!next || next === current) {
+      setStoreNameDraft(current);
+      return;
+    }
+    updateSettings({ storeName: next });
+  }
+
   function goBack() {
     const stack = historyRef.current;
     if (stack.length < 2) return;
@@ -156,7 +204,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
           <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-auto w-full" />
           <p className="mt-2 px-1 text-sm text-muted">Fixed operations</p>
         </div>
-        <nav className="flex flex-1 flex-col gap-1">
+        <nav className="flex flex-1 flex-col gap-1" data-staff-nav>
           <NavLinks />
         </nav>
         <p className="px-3 pt-4 text-xs leading-relaxed text-muted">
@@ -164,7 +212,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
         </p>
       </aside>
       <div className="md:pl-60">
-        <header className="sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
+        <header className="app-header sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-14 w-auto md:hidden" />
@@ -173,18 +221,24 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 <p className="truncate text-xs text-muted">{settings.city} · {todayLabel()}</p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {staffId ? (
+            <div className="tap-targets flex flex-wrap items-center gap-2">
+              {managers.length + advisors.length + techs.length > 0 ? (
                 <label className="flex items-center gap-2 text-xs text-muted">
-                  Working as
+                  <span className="max-w-[9.5rem] leading-snug">Working as isn't a real sign-in yet.</span>
                   <select
                     aria-label="Working as"
                     className="field h-8 max-w-48"
                     value={staffId}
                     onChange={(event) => setWorkingAs(event.target.value)}
                   >
+                    <option value="">Choose who is working</option>
+                    {managers.length > 0 ? (
+                      <optgroup label="Service managers">
+                        {managers.map((manager) => <option key={manager.id} value={manager.id}>#{manager.number} {manager.name}</option>)}
+                      </optgroup>
+                    ) : null}
                     <optgroup label="Advisors">
-                      {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
+                      {advisors.filter((advisor) => !managerIds.has(advisor.id)).map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
                     </optgroup>
                     <optgroup label="Technicians">
                       {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} {tech.name}</option>)}
@@ -192,7 +246,9 @@ function OpenDesk({ children }: { children: ReactNode }) {
                   </select>
                 </label>
               ) : null}
-              <div role="group" aria-label="Active store" className="flex gap-1">
+              {!staffId ? <p role="status" className="text-sm font-semibold text-[#8a5a00]">Choose who is working to book or change anything.</p> : null}
+              <div role="group" aria-label="Viewing as" className="flex items-center gap-1">
+                <span className="text-sm text-muted">Viewing as</span>
                 {STORES.map((store) => (
                   <Button
                     key={store.id}
@@ -211,13 +267,17 @@ function OpenDesk({ children }: { children: ReactNode }) {
               </Button>
             </div>
           </div>
-          <nav className="nav-scroll px-3 pb-3 md:hidden">
+          <nav className="nav-scroll px-3 pb-3 md:hidden" data-staff-nav>
             <NavLinks onNavigate={() => undefined} />
           </nav>
         </header>
-        <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">{children}</main>
+        <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">
+          {deskGate(pathname, children)}
+        </main>
         <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          <p>
+            This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+          </p>
         </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
@@ -226,39 +286,48 @@ function OpenDesk({ children }: { children: ReactNode }) {
           </button>
         ) : null}
       </div>
-      <Modal open={open} onClose={() => setOpen(false)} wide title="Store settings" description="Name, city, targets, and scheduling for this store. Labor rates live on Pay Type.">
+      <Modal open={open} onClose={() => setOpen(false)} wide title="Store settings" description="Name, city, targets, and scheduling for this store. Labor rates stay with the pay types already on this store.">
         <form
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={(event) => {
             event.preventDefault();
+            commitStoreName();
             setOpen(false);
           }}
         >
+          {!canEditSettings ? <p role="status" className="text-sm text-[#8a3b2a] sm:col-span-2">{actor === "customer" ? "Choose who is working first." : "Only an advisor or service manager can change store settings."}</p> : null}
           <Field label="Store name">
-            <input className="field" value={settings.storeName} onChange={(event) => updateSettings({ storeName: event.target.value })} />
+            <input
+              className="field"
+              maxLength={80}
+              disabled={!canEditSettings}
+              value={storeNameDraft}
+              onChange={(event) => setStoreNameDraft(event.target.value)}
+              onBlur={() => commitStoreName()}
+            />
           </Field>
           <Field label="Street address">
-            <input className="field" value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />
+            <input className="field" disabled={!canEditSettings} value={settings.address} onChange={(event) => updateSettings({ address: event.target.value })} />
           </Field>
           <Field label="Shop phone">
-            <input className="field" value={settings.phone} onChange={(event) => updateSettings({ phone: event.target.value })} />
+            <input className="field" maxLength={20} disabled={!canEditSettings} value={settings.phone} onChange={(event) => updateSettings({ phone: event.target.value })} />
           </Field>
           <Field label="City">
-            <input className="field" value={settings.city} onChange={(event) => updateSettings({ city: event.target.value })} />
+            <input className="field" disabled={!canEditSettings} value={settings.city} onChange={(event) => updateSettings({ city: event.target.value })} />
           </Field>
           <Field label="Target effective labor rate">
-            <input className="field tabular-nums" type="number" min={0} step={1} value={settings.targetElr} onChange={(event) => updateSettings({ targetElr: Number(event.target.value) || 0 })} />
+            <input className="field tabular-nums" type="number" min={0} step={1} disabled={!canEditSettings} value={settings.targetElr} onChange={(event) => updateSettings({ targetElr: Number(event.target.value) || 0 })} />
           </Field>
           <Field label="Absorption target %">
-            <input className="field tabular-nums" type="number" min={0} step={1} value={Math.round(settings.targetAbsorption * 100)} onChange={(event) => updateSettings({ targetAbsorption: (Number(event.target.value) || 0) / 100 })} />
+            <input className="field tabular-nums" type="number" min={0} step={1} disabled={!canEditSettings} value={Math.round(settings.targetAbsorption * 100)} onChange={(event) => updateSettings({ targetAbsorption: (Number(event.target.value) || 0) / 100 })} />
           </Field>
           <Field label="Policy guide % of CP labor">
-            <input className="field tabular-nums" type="number" min={0} step={0.1} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
+            <input className="field tabular-nums" type="number" min={0} step={0.1} disabled={!canEditSettings} value={Math.round(settings.policyGuide * 1000) / 10} onChange={(event) => updateSettings({ policyGuide: (Number(event.target.value) || 0) / 100 })} />
           </Field>
           <SchedulingSettingsForm />
           <div className="flex flex-wrap gap-2 sm:col-span-2">
-            <Button tone="primary" type="submit">Done</Button>
-            {isDemoMode() ? (
+            {confirmClear ? null : <Button tone="primary" type="submit">Done</Button>}
+            {isDemoMode() && actor === "service-manager" ? (
               <Button
                 tone={confirmReset ? "accent" : "ghost"}
                 onClick={() => {
@@ -275,29 +344,62 @@ function OpenDesk({ children }: { children: ReactNode }) {
                 {confirmReset ? (realShop ? "Replace this shop with the sample month" : "Load sample month now") : "Load sample month"}
               </Button>
             ) : null}
-            <Button
-              tone={confirmClear ? "accent" : "ghost"}
-              onClick={() => {
-                if (!confirmClear) {
+            {isDemoMode() && actor === "service-manager" && !confirmClear ? (
+              <Button
+                tone="ghost"
+                onClick={() => {
                   setConfirmClear(true);
                   setConfirmReset(false);
-                  return;
-                }
-                clearShop();
-                setConfirmClear(false);
-                setOpen(false);
-              }}
-            >
-              {confirmClear ? "Clear shop data now" : "Clear shop data"}
-            </Button>
+                }}
+              >
+                Clear shop data
+              </Button>
+            ) : null}
           </div>
+          {confirmClear ? (
+            <div className="sm:col-span-2 grid gap-2">
+              <p role="status" className="text-sm text-muted">
+                This removes every appointment and every capacity override, and the open repair orders. Closed repair orders, the change log, the request log, and the rosters stay. Sample data resets when you reload.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  tone="danger"
+                  type="button"
+                  onClick={() => {
+                    clearShop();
+                    setConfirmClear(false);
+                    setOpen(false);
+                  }}
+                >
+                  Clear open work now
+                </Button>
+                <Button type="button" onClick={() => setConfirmClear(false)}>Cancel</Button>
+              </div>
+            </div>
+          ) : null}
+          {actor === "service-manager" ? (
+            <section className="sm:col-span-2" aria-label="Change log">
+              <h2 className="font-display text-2xl leading-none">Change log</h2>
+              <p className="mt-1 text-sm text-muted">Read only. Settings, appointments, and online request decisions. Times are Pacific.</p>
+              {settingsLog.length === 0 && requestLog.length === 0 ? <p className="mt-2 text-sm text-muted">No changes on this store yet.</p> : (
+                <ul className="mt-2 grid max-h-48 gap-1 overflow-auto text-sm">
+                  {settingsLog.map((row) => (
+                    <li key={`${row.at}-${row.field}-${row.after}`}>{changeLogLine(row)}</li>
+                  ))}
+                  {requestLog.map((row) => (
+                    <li key={`${row.at}-${row.requestId}-${row.action}`}>{requestLogLine(row)}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
         </form>
       </Modal>
     </div>
   );
 }
 
-function DeskLocked({ storeName }: { storeName: string }) {
+export function DeskLocked({ storeName }: { storeName: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4">
       <div className="w-full max-w-md text-center">

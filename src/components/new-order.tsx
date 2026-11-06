@@ -1,9 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PROMISE_TIMES, clockTime } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
+import { lastVisitHint, lastVisitMileage, mileageFloorMessage, mileageOutGapMessage } from "@/lib/mileage";
+import { phoneDigitError } from "@/lib/range";
+import { mileageReasonError } from "@/lib/ro";
+import { deskActor } from "@/lib/cancel";
 import { rateFor } from "@/lib/pay";
 import { noShowSuffix } from "@/lib/no-show-label";
-import { useShop } from "@/lib/store";
+import { repairOrderWriterError, useShop } from "@/lib/store";
 import { Button, Field, Modal } from "./ui";
 
 type DraftLine = { id: string; concern: string };
@@ -22,6 +26,7 @@ type NewOrderPreset = {
   lines?: { concern: string }[];
   laborOpIds?: string[];
   appointmentId?: string;
+  mileage?: string;
 };
 
 function presetIdentity(preset?: NewOrderPreset) {
@@ -58,17 +63,25 @@ function NewOrderForm({
   const shop = useShop();
   const [mode, setMode] = useState<"existing" | "new">("existing");
   const [customerId, setCustomerId] = useState(preset?.customerId ?? shop.customers[0]?.id ?? "");
-  const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId);
+  const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId && !vehicle.transferredTo);
   const [vehicleId, setVehicleId] = useState(preset?.vehicleId ?? vehicles[0]?.id ?? "");
   const [advisorId, setAdvisorId] = useState(preset?.advisorId ?? shop.advisors[0]?.id ?? "");
   const [lines, setLines] = useState<DraftLine[]>([draftLine(preset?.concern ?? "")]);
-  const [mileage, setMileage] = useState("40000");
+  const [mileage, setMileage] = useState("");
   const [mileageOut, setMileageOut] = useState("");
   const [promiseTime, setPromiseTime] = useState("16:00");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [year, setYear] = useState("2022");
-  const [model, setModel] = useState("F-150 XLT");
+  const [year, setYear] = useState("");
+  const [formError, setFormError] = useState("");
+  const [model, setModel] = useState("");
+  const [make, setMake] = useState("");
+  const [vin, setVin] = useState("");
+  const [vinWarning, setVinWarning] = useState("");
+  const [transferReason, setTransferReason] = useState("");
+  const transferRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [mileageReason, setMileageReason] = useState("");
 
   const seeded = preset?.lines?.map((line) => line.concern.trim()).filter(Boolean).join("\n") || preset?.concern || "";
 
@@ -76,9 +89,13 @@ function NewOrderForm({
     if (!open) return;
     const next = seeded ? seeded.split("\n") : [""];
     setLines(next.map((concern) => draftLine(concern)));
-  }, [open, seeded]);
+    if (preset?.mileage) setMileage(preset.mileage);
+  }, [open, seeded, preset?.mileage]);
 
   const resolvedVehicle = vehicles.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : vehicles[0]?.id ?? "";
+  const pickedVehicle = shop.vehicles.find((row) => row.id === (mode === "new" ? "" : resolvedVehicle));
+  const visitHint = lastVisitHint(lastVisitMileage(Object.values(shop.stores ?? {}), pickedVehicle, { openedAt: new Date().toISOString() }));
+  const canOverrideMileage = deskActor(shop) === "service-manager";
   const written = lines.map((line) => line.concern.trim()).filter(Boolean);
 
   return (
@@ -88,35 +105,88 @@ function NewOrderForm({
         <Button small tone={mode === "new" ? "primary" : "ghost"} onClick={() => setMode("new")}>New customer</Button>
       </div>
       <form
+        ref={formRef}
         className="grid gap-3"
         onSubmit={(event) => {
           event.preventDefault();
-          let nextCustomer = customerId;
-          let nextVehicle = resolvedVehicle;
+          const nextCustomer = customerId;
+          const nextVehicle = resolvedVehicle;
           if (mode === "new") {
-            if (!name.trim() || !model.trim()) return;
-            const created = shop.createCustomer({
+            const parsedYear = Number(year);
+            const problems: string[] = [];
+            if (!year.trim() || !Number.isFinite(parsedYear) || parsedYear <= 0) problems.push("Add the year.");
+            if (!make.trim()) problems.push("Add the make.");
+            if (!name.trim() || !model.trim()) problems.push("Add the customer name and model.");
+            if (phone.trim() && phoneDigitError(phone)) problems.push(phoneDigitError(phone) ?? "");
+            if (written.length === 0) problems.push("Add a concern.");
+            const miles = Number(mileage);
+            if (!mileage.trim() || !Number.isFinite(miles) || miles <= 0) problems.push("Mileage in has to be greater than zero.");
+            else if (miles > 999999) problems.push("Mileage in can't be over 999,999.");
+            if (problems.length > 0) {
+              setFormError(problems.join(" "));
+              return;
+            }
+            const created = shop.openWalkIn({
               name,
               phone,
-              year: Number(year) || 2022,
+              year: parsedYear,
+              make: make.trim(),
               model,
+              vin: vin.trim(),
+              confirmTransfer: transferRef.current,
+              transferReason,
+              advisorId,
+              lines: written.map((concern) => ({ concern })),
+              mileage: miles,
+              mileageOut: mileageOut.trim() === "" ? null : Number(mileageOut),
+              promiseTime,
             });
-            nextCustomer = created.customerId;
-            nextVehicle = created.vehicleId;
+            transferRef.current = false;
+            if (created.needsTransfer) {
+              setVinWarning(created.warning || `This VIN is on file for another customer. Transfer the vehicle to ${name.trim()}?`);
+              setFormError("");
+              return;
+            }
+            if (!created.ok || !created.orderId) {
+              setFormError(created.error || "That repair order was not opened.");
+              return;
+            }
+            setFormError("");
+            if (preset?.appointmentId) shop.linkAppointment(preset.appointmentId, created.orderId);
+            onClose();
+            return;
           }
-          if (!nextCustomer || !nextVehicle || written.length === 0) return;
+          const problems: string[] = [];
+          if (!nextCustomer || !nextVehicle) problems.push("Add the customer and vehicle.");
+          if (written.length === 0) problems.push("Add a concern.");
+          const miles = Number(mileage);
+          const vehicle = shop.vehicles.find((row) => row.id === nextVehicle);
+          const lastVisit = lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedAt: new Date().toISOString() });
+          const floor = mileageFloorMessage(miles, lastVisit);
+          if (!mileage.trim() || !Number.isFinite(miles) || miles <= 0) problems.push("Mileage in has to be greater than zero.");
+          else if (miles > 999999) problems.push("Mileage in can't be over 999,999.");
+          else if (floor && (deskActor(shop) !== "service-manager" || mileageReasonError(mileageReason))) problems.push(floor);
+          const outRaw = mileageOut.trim();
+          const out = outRaw === "" ? null : Number(outRaw);
+          if (out != null && (!Number.isFinite(out) || mileageOutGapMessage(miles, out) || out < miles)) {
+            problems.push(mileageOutGapMessage(miles, Number.isFinite(out) ? out : null) ?? "Mileage out can't be lower than mileage in.");
+          }
+          if (problems.length > 0) {
+            setFormError(problems.join(" "));
+            return;
+          }
           const booked = preset?.appointmentId
             ? shop.appointments.find((row) => row.id === preset.appointmentId)
             : undefined;
-          // An appointment with no tech stays unassigned. Invoice already requires a technician number on every labor line.
           const carriedTech = booked ? (booked.techId ?? "").trim() : (shop.techs[0]?.id ?? "");
           const id = shop.createOrder({
             customerId: nextCustomer,
             vehicleId: nextVehicle,
             advisorId,
             lines: written.map((concern) => ({ concern })),
-            mileage: Number(mileage) || 0,
-            mileageOut: mileageOut.trim() === "" ? null : Math.max(0, Number(mileageOut) || 0),
+            mileage: miles,
+            mileageReason: floor ? mileageReason : undefined,
+            mileageOut: out,
             promiseTime,
             labor: (preset?.laborOpIds ?? []).flatMap((opId) => {
               const op = shop.laborOps.find((row) => row.id === opId);
@@ -131,6 +201,11 @@ function NewOrderForm({
               }];
             }),
           });
+          if (!id) {
+            setFormError(repairOrderWriterError(shop) ?? floor ?? "Mileage in has to be greater than zero.");
+            return;
+          }
+          setFormError("");
           if (preset?.appointmentId) shop.linkAppointment(preset.appointmentId, id);
           onClose();
         }}
@@ -147,23 +222,37 @@ function NewOrderForm({
                   setVehicleId(first?.id ?? "");
                 }}
               >
-                {shop.customers.map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows)}</option>)}
+                {shop.customers.filter((customer) => !customer.formerRecord).map((customer) => <option key={customer.id} value={customer.id}>{customer.name}{noShowSuffix(customer.noShows)}</option>)}
               </select>
             </Field>
             <Field label="Vehicle">
               <select className="field" value={resolvedVehicle} onChange={(event) => setVehicleId(event.target.value)}>
-                {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.year} Ford {vehicle.model}</option>)}
+                {vehicles.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.year} {vehicle.make || "Ford"} {vehicle.model}</option>)}
               </select>
             </Field>
           </>
         ) : (
           <>
             <Field label="Name"><input className="field" value={name} onChange={(event) => setName(event.target.value)} required /></Field>
-            <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 010-0142" /></Field>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Year"><input className="field tabular-nums" type="number" min={1990} max={2027} value={year} onChange={(event) => setYear(event.target.value)} /></Field>
-              <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} /></Field>
+            <Field label="Phone"><input className="field" maxLength={20} value={phone} onChange={(event) => setPhone(event.target.value)} onBlur={() => { if (phone.trim()) setFormError(phoneDigitError(phone) ?? ""); }} placeholder="(555) 010-0142" /></Field>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Field label="Year"><input className="field tabular-nums" type="number" min={1990} max={2027} placeholder="Year" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
+              <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} placeholder="Ford" /></Field>
+              <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} placeholder="F-150" /></Field>
             </div>
+            <Field label="VIN"><input className="field font-mono uppercase" aria-label="VIN" maxLength={17} value={vin} onChange={(event) => { setVin(event.target.value.toUpperCase()); transferRef.current = false; setVinWarning(""); }} placeholder="17 characters" /></Field>
+            {vinWarning ? (
+              <div className="grid gap-2">
+                <p role="alert" className="text-sm text-[#8a3b2a]">{vinWarning}</p>
+                <Field label="Reason for the transfer">
+                  <input className="field" aria-label="Reason for the transfer" value={transferReason} onChange={(event) => setTransferReason(event.target.value)} />
+                </Field>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" small onClick={() => { transferRef.current = true; formRef.current?.requestSubmit(); }}>Transfer the vehicle</Button>
+                  <Button type="button" small onClick={() => { setVin(""); setVinWarning(""); setTransferReason(""); transferRef.current = false; }}>Fix the VIN</Button>
+                </div>
+              </div>
+            ) : null}
           </>
         )}
         <Field label="Advisor">
@@ -194,7 +283,11 @@ function NewOrderForm({
           </div>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Mileage in"><input className="field tabular-nums" type="number" min={0} value={mileage} onChange={(event) => setMileage(event.target.value)} /></Field>
+          <Field label="Mileage in">
+            <input className="field tabular-nums" aria-label="Mileage in" inputMode="numeric" value={mileage} onChange={(event) => setMileage(event.target.value)} />
+            {visitHint ? <p className="mt-1 text-sm font-normal text-muted">{visitHint}</p> : null}
+            {canOverrideMileage ? <textarea className="field mt-2 min-h-16" placeholder="Service manager reason if mileage is below the last visit" value={mileageReason} onChange={(event) => setMileageReason(event.target.value)} /> : null}
+          </Field>
           <Field label="Mileage out"><input className="field tabular-nums" type="number" min={0} value={mileageOut} placeholder="Optional" onChange={(event) => setMileageOut(event.target.value)} /></Field>
           <Field label="Promise">
             <select className="field" value={promiseTime} onChange={(event) => setPromiseTime(event.target.value)}>
@@ -203,6 +296,7 @@ function NewOrderForm({
             </select>
           </Field>
         </div>
+        {formError ? <p role="alert" className="text-sm text-[#8a3b2a]">{formError}</p> : null}
         <Button tone="primary" type="submit">Open the RO</Button>
       </form>
     </Modal>

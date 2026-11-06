@@ -110,6 +110,19 @@
     color: var(--color-accent-fg);
   }
 
+  .btn-danger {
+    background: #8a3b2a;
+    color: #fff;
+    border-color: #8a3b2a;
+  }
+
+  .desk-actions .btn,
+  .tap-targets .btn,
+  .modal-panel .btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
   .btn-small {
     min-height: 2.25rem;
     padding: 0.2rem 0.65rem;
@@ -136,6 +149,16 @@
     font-weight: 600;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+  }
+
+  .label input,
+  .label textarea,
+  .label select,
+  .label p,
+  .label button {
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
   }
 
   .nav-link {
@@ -545,7 +568,8 @@
 }
 
 @media print {
-  aside, header, .no-print { display: none !important; }
+  aside, header.app-header, .no-print { display: none !important; }
+  .ro-print header { display: block !important; }
   body { background: white; }
   .md\:pl-60 { padding-left: 0 !important; }
   body.printing-mpi * { visibility: hidden; }
