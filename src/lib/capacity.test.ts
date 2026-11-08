@@ -77,7 +77,7 @@ describe("capacity engine", () => {
     shop.getState().setWorkingAs("derek");
     const before = shop.getState().appointments.length;
     const openDay = bookableDay();
-    shop.getState().addAppointment(draft("10:00", 600, openDay));
+    shop.getState().addAppointment(draft("10:00", 600, openDay), undefined, "Capacity fixture runs past close");
     shop.getState().setWorkingAs("megan");
     shop.getState().addAppointment(draft("10:00", 60, openDay));
     assert.equal(shop.getState().appointments.length, before + 2);
