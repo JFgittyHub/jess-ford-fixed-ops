@@ -10,7 +10,7 @@ import { compile } from "@tailwindcss/node";
 import { chromium } from "playwright";
 import { AppointmentCalendar } from "../components/appointment-calendar.tsx";
 import { AppointmentFields } from "../routes/schedule.tsx";
-import { appointmentLoads, onlineSlots, visitLengthError, visitRunsPastClose, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON } from "./capacity.ts";
+import { appointmentLoads, onlineSlots, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
@@ -615,6 +615,122 @@ describe("round 25 direct past-close boundary", () => {
     assert.equal(created.ok, true, created.error ?? "");
     assert.equal(store.getState().overrides.filter((row) => row.appointmentId === created.appointmentId && row.reason === "past-close").length, 1);
     assert.equal(store.getState().overrides.find((row) => row.id === created.overrideId)?.note, "New customer reason");
+  });
+});
+
+describe("round 25 date-only hours and unchanged past-close edits", () => {
+  const when = "2026-11-04T20:00:00.000Z";
+
+  function stamp(store: ReturnType<typeof shop>) {
+    const state = store.getState();
+    return {
+      appointments: state.appointments.map((row) => `${row.id}|${row.date}|${row.time}|${row.minutes}|${row.concern}`).join("\n"),
+      overrides: state.overrides.length,
+      log: state.settingsLog?.length ?? 0,
+      ownership: JSON.stringify(state.ownershipLog ?? []),
+      vehicles: state.vehicles.map((row) => `${row.id}|${row.customerId}|${row.vin}`).join("\n"),
+      customers: state.customers.length,
+    };
+  }
+
+  it("refuses a date-only move onto an illegal start and keeps a past-close reason for a real schedule change", () => {
+    pinClock(when);
+    const store = shop();
+    const scheduling = store.getState().settings.scheduling;
+    assert.equal(visitRunsPastClose(scheduling, saturday, "16:00", 60), false);
+    assert.match(visitTimeError(scheduling, saturday, "16:00") ?? "", /outside shop hours/);
+    assert.equal(visitRunsPastClose(scheduling, saturday, "11:30", 120), true);
+    assert.equal(visitRunsPastClose(scheduling, saturday, "12:30", 30), false);
+
+    const fridayVisit = store.getState().saveAdvisorAppointment(bookInput(store.getState(), { time: "16:00", minutes: 60, vin: "" }));
+    assert.equal(fridayVisit.ok, true, fridayVisit.error ?? "");
+    const id = fridayVisit.appointmentId;
+    const before = stamp(store);
+
+    const advisorUpdate = store.getState().updateAppointment(id, { date: saturday });
+    assert.match(advisorUpdate.error ?? "", /outside shop hours/);
+    assert.deepEqual(stamp(store), before);
+    const advisorMove = store.getState().moveAppointment(id, { date: saturday });
+    assert.match(advisorMove.error ?? "", /outside shop hours/);
+    assert.deepEqual(stamp(store), before);
+
+    store.getState().setWorkingAs("derek");
+    const managerUpdate = store.getState().updateAppointment(id, { date: saturday }, "Saturday anyway");
+    assert.match(managerUpdate.error ?? "", /outside shop hours/);
+    assert.equal(managerUpdate.ok, false);
+    assert.deepEqual(stamp(store), before);
+    const managerMove = store.getState().moveAppointment(id, { date: saturday }, false, "Saturday anyway");
+    assert.match(managerMove.error ?? "", /outside shop hours/);
+    assert.deepEqual(stamp(store), before);
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.date, friday);
+
+    const crossing = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "11:30", minutes: 120, vin: "", advisorId: "derek", concern: "Crosses close",
+    }));
+    assert.equal(crossing.ok, true, crossing.error ?? "");
+    store.getState().setWorkingAs("megan");
+    const advisorCross = store.getState().updateAppointment(crossing.appointmentId, { date: saturday });
+    assert.equal(advisorCross.error, PAST_CLOSE_MESSAGE);
+    const advisorCrossMove = store.getState().moveAppointment(crossing.appointmentId, { date: saturday });
+    assert.equal(advisorCrossMove.error, PAST_CLOSE_MESSAGE);
+    assert.equal(store.getState().appointments.find((row) => row.id === crossing.appointmentId)?.date, friday);
+    store.getState().setWorkingAs("derek");
+    const missing = store.getState().updateAppointment(crossing.appointmentId, { date: saturday }, "  ");
+    assert.equal(missing.error, PAST_CLOSE_REASON);
+    assert.equal(store.getState().appointments.find((row) => row.id === crossing.appointmentId)?.date, friday);
+    const approved = store.getState().updateAppointment(crossing.appointmentId, { date: saturday }, "Staying past one");
+    assert.equal(approved.ok, true, approved.error ?? "");
+    assert.equal(store.getState().overrides.filter((row) => row.appointmentId === crossing.appointmentId && row.reason === "past-close").length, 1);
+    assert.equal(store.getState().overrides.find((row) => row.id === approved.overrideId)?.note, "Staying past one");
+    const back = store.getState().updateAppointment(crossing.appointmentId, { date: friday }, "Back to Friday");
+    assert.equal(back.ok, true, back.error ?? "");
+    const moveApproved = store.getState().moveAppointment(crossing.appointmentId, { date: saturday }, false, "Moved past one");
+    assert.equal(moveApproved.ok, true, moveApproved.error ?? "");
+    assert.equal(store.getState().overrides.filter((row) => row.appointmentId === crossing.appointmentId && row.reason === "past-close" && row.note === "Moved past one").length, 1);
+
+    const onTime = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "12:30", minutes: 30, vin: "", advisorId: "derek",
+    }));
+    assert.equal(onTime.ok, true, onTime.error ?? "");
+    const beforeOnTime = store.getState().overrides.length;
+    store.getState().setWorkingAs("megan");
+    const exact = store.getState().moveAppointment(onTime.appointmentId, { date: saturday });
+    assert.equal(exact.ok, true, exact.error ?? "");
+    assert.equal(store.getState().appointments.find((row) => row.id === onTime.appointmentId)?.date, saturday);
+    assert.equal(store.getState().overrides.length, beforeOnTime);
+
+    const late = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "16:30", minutes: 120, vin: "", advisorId: "megan", concern: "Screen", lines: [{ id: "a", code: "A", concern: "Screen" }],
+    }), undefined, undefined, undefined, "Screen reason");
+    assert.equal(late.ok, false);
+    store.getState().setWorkingAs("derek");
+    const approvedLate = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "16:30", minutes: 120, vin: "", advisorId: "derek", concern: "Screen", lines: [{ id: "a", code: "A", concern: "Screen" }],
+    }), undefined, undefined, undefined, "Screen reason");
+    assert.equal(approvedLate.ok, true, approvedLate.error ?? "");
+    const concernOnly = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "16:30", minutes: 120, vin: "", advisorId: "derek", concern: "Updated concern", lines: [{ id: "a", code: "A", concern: "Updated concern" }],
+    }), approvedLate.appointmentId);
+    assert.equal(concernOnly.ok, true, concernOnly.error ?? "");
+    assert.equal(store.getState().appointments.find((row) => row.id === approvedLate.appointmentId)?.concern, "A. Updated concern");
+    const kept = store.getState().overrides.filter((row) => row.appointmentId === approvedLate.appointmentId && row.reason === "past-close");
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].note, "Screen reason");
+    const blankShift = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "17:00", minutes: 120, vin: "", advisorId: "derek", concern: "Updated concern", lines: [{ id: "a", code: "A", concern: "Updated concern" }],
+    }), approvedLate.appointmentId, undefined, undefined, "   ");
+    assert.equal(blankShift.ok, false);
+    assert.equal(blankShift.needsCloseReason, true);
+    assert.equal(store.getState().appointments.find((row) => row.id === approvedLate.appointmentId)?.time, "16:30");
+    assert.equal(store.getState().overrides.filter((row) => row.appointmentId === approvedLate.appointmentId && row.reason === "past-close").length, 1);
+    const shifted = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      time: "17:00", minutes: 120, vin: "", advisorId: "derek", concern: "Updated concern", lines: [{ id: "a", code: "A", concern: "Updated concern" }],
+    }), approvedLate.appointmentId, undefined, undefined, "Second reason");
+    assert.equal(shifted.ok, true, shifted.error ?? "");
+    const rows = store.getState().overrides.filter((row) => row.appointmentId === approvedLate.appointmentId && row.reason === "past-close");
+    assert.equal(rows.length, 2);
+    assert.equal(rows.some((row) => row.note === "Screen reason"), true);
+    assert.equal(rows.filter((row) => row.note === "Second reason").length, 1);
   });
 });
 

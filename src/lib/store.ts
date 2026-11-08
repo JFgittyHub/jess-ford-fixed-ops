@@ -3309,15 +3309,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (staffError) return { ok: false, error: staffError };
         if (ownStoreError(state)) return { ok: false, error: ownStoreError(state) };
         if (current.date < today()) return { ok: false, error: PAST_ONLY };
-        if (patch.time !== undefined) {
-          const timeError = visitTimeError(state.settings.scheduling, patch.date || current.date, patch.time);
-          if (timeError) return { ok: false, error: timeError };
-        }
         if (patch.minutes !== undefined && visitLengthError(patch.minutes)) return { ok: false, error: visitLengthError(patch.minutes) ?? "That length is not on this desk." };
         const minutes = patch.minutes === undefined ? current.minutes : patch.minutes;
         const time = patch.time === undefined ? current.time : patch.time;
         const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
-        const pastClose = visitRunsPastClose(state.settings.scheduling, date, time, minutes);
+        const scheduleChanged = date !== current.date || time !== current.time || minutes !== current.minutes;
+        if (scheduleChanged) {
+          const timeError = visitTimeError(state.settings.scheduling, date, time);
+          if (timeError) return { ok: false, error: timeError };
+        }
+        const pastClose = scheduleChanged && visitRunsPastClose(state.settings.scheduling, date, time, minutes);
         if (pastClose && deskActor(state) !== "service-manager") return { ok: false, error: PAST_CLOSE_MESSAGE };
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return { ok: false, error: PAST_CLOSE_REASON, needsCloseReason: true };
@@ -3388,10 +3389,6 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const pastError = pastFieldChangeError(current, patch);
         if (pastError) return { ok: false, error: pastError };
-        if (patch.time !== undefined) {
-          const timeError = visitTimeError(state.settings.scheduling, patch.date || current.date, patch.time);
-          if (timeError) return { ok: false, error: timeError };
-        }
         if (patch.minutes !== undefined && visitLengthError(patch.minutes)) return { ok: false, error: visitLengthError(patch.minutes) ?? "That length is not on this desk." };
         if (Array.isArray(patch.lines)) {
           const concerns = patch.lines.map((line) => cleanFreeText(line.concern).trim()).filter(Boolean);
@@ -3424,7 +3421,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const scheduleChanged = (patch.date !== undefined && patch.date !== current.date)
           || (patch.time !== undefined && patch.time !== current.time)
           || (typeof patch.minutes === "number" && patch.minutes !== current.minutes);
-        const pastClose = scheduleChanged && current.date >= today() && visitRunsPastClose(state.settings.scheduling, patch.date || current.date, patch.time || current.time, patch.minutes ?? current.minutes);
+        const effectiveDate = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
+        const effectiveTime = patch.time !== undefined ? patch.time : current.time;
+        const effectiveMinutes = typeof patch.minutes === "number" ? patch.minutes : current.minutes;
+        if (scheduleChanged && current.date >= today()) {
+          const timeError = visitTimeError(state.settings.scheduling, effectiveDate, effectiveTime);
+          if (timeError) return { ok: false, error: timeError };
+        }
+        const pastClose = scheduleChanged && current.date >= today() && visitRunsPastClose(state.settings.scheduling, effectiveDate, effectiveTime, effectiveMinutes);
         if (pastClose && deskActor(state) !== "service-manager") {
           return { ok: false, error: PAST_CLOSE_MESSAGE };
         }
@@ -3665,7 +3669,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
           if (dateError) return { ok: false, appointmentId: "", overrideId: null, error: dateError };
         }
-        if (!pastStatusOnly && (!existing || input.time !== existing.time)) {
+        const clockChanged = !existing || existing.date !== input.date || existing.time !== input.time || existing.minutes !== input.minutes;
+        if (!pastStatusOnly && clockChanged) {
           const timeError = visitTimeError(state.settings.scheduling, input.date || existing?.date || "", input.time || "");
           if (timeError) return { ok: false, appointmentId: "", overrideId: null, error: timeError };
         }
@@ -3698,7 +3703,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (result?.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
-        const pastClose = !pastStatusOnly && visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
+        const pastClose = !pastStatusOnly && clockChanged && visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
         if (pastClose && deskActor(state) !== "service-manager") {
           return { ok: false, appointmentId: "", overrideId: null, error: PAST_CLOSE_MESSAGE };
         }
