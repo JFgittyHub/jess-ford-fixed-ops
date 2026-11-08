@@ -734,6 +734,244 @@ describe("round 25 date-only hours and unchanged past-close edits", () => {
   });
 });
 
+describe("round 25 edit form past-close reason", () => {
+  const when = "2026-11-10T20:00:00.000Z";
+  const friday13 = "2026-11-13";
+
+  function setControl(control: HTMLInputElement | HTMLSelectElement, value: string) {
+    const proto = control instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value")?.set?.call(control, value);
+    control.dispatchEvent(new Event("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function prepare() {
+    pinClock(when);
+    const store = shop();
+    store.getState().setWorkingAs("derek");
+    const saved = store.getState().saveAdvisorAppointment(bookInput(store.getState(), {
+      date: friday13,
+      time: "16:00",
+      minutes: 120,
+      vin: "",
+      advisorId: "derek",
+      concern: "Already approved",
+      lines: [{ id: "a", code: "A", concern: "Already approved" }],
+    }), undefined, undefined, undefined, "Already approved");
+    assert.equal(saved.ok, true, saved.error ?? "");
+    return { store, id: saved.appointmentId };
+  }
+
+  function mount(store: ReturnType<typeof shop>, id: string, manager: boolean) {
+    const state = store.getState();
+    const row = state.appointments.find((item) => item.id === id);
+    assert.ok(row);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    flushSync(() => {
+      root.render(createElement(AppointmentFields, {
+        initial: row,
+        customers: state.customers,
+        vehicles: state.vehicles,
+        advisors: state.advisors,
+        techs: state.techs,
+        laborOps: state.laborOps,
+        transports: state.settings.scheduling.transportOptions,
+        submitLabel: "Save changes",
+        showStatus: true,
+        manager,
+        scheduling: state.settings.scheduling,
+        onSubmit: (value, confirm, transfer, reason) => {
+          const result = store.getState().saveAdvisorAppointment(value, id, confirm, transfer, reason);
+          return result.ok ? null : result.error;
+        },
+      }));
+    });
+    const concern = [...host.querySelectorAll("label")].find((label) => label.textContent?.startsWith("Concern"))?.querySelector("input");
+    const length = host.querySelector<HTMLSelectElement>("[aria-label='Visit length']");
+    const day = host.querySelector<HTMLInputElement>("input[type='date']");
+    assert.ok(concern instanceof HTMLInputElement && length && day);
+    return { host, root, concern, length, day };
+  }
+
+  function pastCloseRows(store: ReturnType<typeof shop>, id: string) {
+    return store.getState().overrides.filter((row) => row.appointmentId === id && row.reason === "past-close");
+  }
+
+  it("lets an advisor change only the concern of an approved late visit from the edit form", () => {
+    const { store, id } = prepare();
+    store.getState().setWorkingAs("megan");
+    const view = mount(store, id, false);
+    assert.equal(view.host.querySelector("[aria-label='Reason for running past close']"), null);
+    assert.equal(view.host.textContent?.includes(PAST_CLOSE_MESSAGE), false);
+    flushSync(() => setControl(view.concern, "Advisor rewrote the concern"));
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.concern, "A. Advisor rewrote the concern");
+    const kept = pastCloseRows(store, id);
+    assert.equal(kept.length, 1);
+    assert.equal(kept[0].note, "Already approved");
+    assert.equal(kept[0].who, "Derek Lang");
+    assert.equal(kept[0].at, when);
+    const day = view.host.querySelector<HTMLInputElement>("input[type='date']");
+    assert.ok(day);
+    flushSync(() => setControl(day, "2026-11-20"));
+    assert.match(view.host.textContent ?? "", /past closing/);
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.date, friday13);
+    assert.equal(pastCloseRows(store, id).length, 1);
+    const restoredDay = view.host.querySelector<HTMLInputElement>("input[type='date']");
+    const restoredConcern = [...view.host.querySelectorAll("label")].find((label) => label.textContent?.startsWith("Concern"))?.querySelector("input");
+    assert.ok(restoredDay && restoredConcern instanceof HTMLInputElement);
+    flushSync(() => setControl(restoredDay, friday13));
+    assert.equal(view.host.textContent?.includes(PAST_CLOSE_MESSAGE), false);
+    flushSync(() => setControl(restoredConcern, "Back to the original clock"));
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.concern, "A. Back to the original clock");
+    assert.equal(pastCloseRows(store, id).length, 1);
+    view.root.unmount();
+    view.host.remove();
+  });
+
+  it("lets a service manager change only the concern, and asks again only when the clock changes", () => {
+    const { store, id } = prepare();
+    const view = mount(store, id, true);
+    assert.equal(view.host.querySelector("[aria-label='Reason for running past close']"), null);
+    flushSync(() => setControl(view.concern, "Manager rewrote the concern"));
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.concern, "A. Manager rewrote the concern");
+    assert.equal(pastCloseRows(store, id).length, 1);
+    assert.equal(pastCloseRows(store, id)[0].note, "Already approved");
+    const movedDay = view.host.querySelector<HTMLInputElement>("input[type='date']");
+    assert.ok(movedDay);
+    flushSync(() => setControl(movedDay, "2026-11-20"));
+    const reason = view.host.querySelector<HTMLInputElement>("[aria-label='Reason for running past close']");
+    assert.ok(reason);
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.match(view.host.textContent ?? "", /Add a reason/);
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.date, friday13);
+    assert.equal(pastCloseRows(store, id).length, 1);
+    const restoredDay = view.host.querySelector<HTMLInputElement>("input[type='date']");
+    const restoredConcern = [...view.host.querySelectorAll("label")].find((label) => label.textContent?.startsWith("Concern"))?.querySelector("input");
+    assert.ok(restoredDay && restoredConcern instanceof HTMLInputElement);
+    flushSync(() => setControl(restoredDay, friday13));
+    assert.equal(view.host.querySelector("[aria-label='Reason for running past close']"), null);
+    flushSync(() => setControl(restoredConcern, "Clock restored"));
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.concern, "A. Clock restored");
+    assert.equal(pastCloseRows(store, id).length, 1);
+    const again = view.host.querySelector<HTMLInputElement>("input[type='date']");
+    assert.ok(again);
+    flushSync(() => setControl(again, "2026-11-20"));
+    const againReason = view.host.querySelector<HTMLInputElement>("[aria-label='Reason for running past close']");
+    assert.ok(againReason);
+    flushSync(() => setControl(againReason, "Ran longer"));
+    flushSync(() => view.host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.date, "2026-11-20");
+    assert.equal(pastCloseRows(store, id).length, 2);
+    assert.equal(pastCloseRows(store, id).some((row) => row.note === "Already approved"), true);
+    assert.equal(pastCloseRows(store, id).filter((row) => row.note === "Ran longer").length, 1);
+    view.root.unmount();
+    view.host.remove();
+    const illegal = mount(store, id, true);
+    const illegalDay = illegal.host.querySelector<HTMLInputElement>("input[type='date']");
+    assert.ok(illegalDay);
+    flushSync(() => setControl(illegalDay, "2026-11-14"));
+    assert.equal(illegal.host.querySelector("[aria-label='Reason for running past close']"), null);
+    flushSync(() => illegal.host.querySelector("form")?.requestSubmit());
+    assert.match(illegal.host.textContent ?? "", /outside shop hours/);
+    assert.equal(store.getState().appointments.find((row) => row.id === id)?.date, "2026-11-20");
+    illegal.root.unmount();
+    illegal.host.remove();
+  });
+
+  it("still protects a new past-close booking and a past-day status edit", () => {
+    pinClock(when);
+    const store = shop();
+    store.getState().setWorkingAs("derek");
+    const state = store.getState();
+    const seed = bookInput(state, { date: friday13, time: "16:00", minutes: 120, vin: "", advisorId: "derek" });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const draw = (manager: boolean, time: string, minutes: number) => {
+      flushSync(() => {
+        root.render(createElement(AppointmentFields, {
+          initial: { ...seed, time, minutes },
+          customers: state.customers,
+          vehicles: state.vehicles,
+          advisors: state.advisors,
+          techs: state.techs,
+          laborOps: state.laborOps,
+          transports: state.settings.scheduling.transportOptions,
+          submitLabel: "Book it",
+          manager,
+          scheduling: state.settings.scheduling,
+          onSubmit: (value, _confirm, _transfer, reason) => {
+            const result = store.getState().saveAdvisorAppointment(value, undefined, undefined, undefined, reason);
+            return result.ok ? null : result.error;
+          },
+        }));
+      });
+    };
+    draw(false, "16:00", 120);
+    assert.match(host.textContent ?? "", /past closing/);
+    const before = store.getState().appointments.length;
+    flushSync(() => host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.length, before);
+    draw(true, "16:00", 120);
+    const reason = host.querySelector<HTMLInputElement>("[aria-label='Reason for running past close']");
+    assert.ok(reason);
+    flushSync(() => host.querySelector("form")?.requestSubmit());
+    assert.match(host.textContent ?? "", /Add a reason/);
+    assert.equal(store.getState().appointments.length, before);
+    flushSync(() => setControl(reason, "New booking stays late"));
+    flushSync(() => host.querySelector("form")?.requestSubmit());
+    assert.equal(store.getState().appointments.length, before + 1);
+    assert.equal(store.getState().overrides.filter((row) => row.note === "New booking stays late").length, 1);
+    const exactHost = document.createElement("div");
+    document.body.appendChild(exactHost);
+    const exactRoot = createRoot(exactHost);
+    flushSync(() => {
+      exactRoot.render(createElement(AppointmentFields, {
+        initial: { ...seed, date: "2026-11-14", time: "12:30", minutes: 30 },
+        customers: state.customers,
+        vehicles: state.vehicles,
+        advisors: state.advisors,
+        techs: state.techs,
+        laborOps: state.laborOps,
+        transports: state.settings.scheduling.transportOptions,
+        submitLabel: "Book it",
+        manager: true,
+        scheduling: state.settings.scheduling,
+        onSubmit: () => null,
+      }));
+    });
+    assert.equal(exactHost.querySelector("[aria-label='Reason for running past close']"), null);
+    exactRoot.unmount();
+    exactHost.remove();
+    root.unmount();
+    host.remove();
+
+    const past = prepare();
+    past.store.setState({
+      appointments: past.store.getState().appointments.map((row) => row.id === past.id ? { ...row, date: "2026-11-09" } : row),
+    });
+    const pastView = mount(past.store, past.id, true);
+    assert.equal(pastView.day.disabled, true);
+    assert.equal(pastView.host.querySelector("[aria-label='Reason for running past close']"), null);
+    const status = [...pastView.host.querySelectorAll("label")].find((label) => label.textContent?.startsWith("Status"))?.querySelector("select");
+    assert.ok(status);
+    flushSync(() => setControl(status, "arrived"));
+    flushSync(() => pastView.host.querySelector("form")?.requestSubmit());
+    assert.equal(past.store.getState().appointments.find((row) => row.id === past.id)?.status, "arrived");
+    assert.equal(pastCloseRows(past.store, past.id).length, 1);
+    assert.equal(pastCloseRows(past.store, past.id)[0].note, "Already approved");
+    pastView.root.unmount();
+    pastView.host.remove();
+  });
+});
+
 async function appCss(markup: string) {
   const source = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
   const compiled = await compile(source, { base: new URL("..", import.meta.url).pathname, onDependency() {} });

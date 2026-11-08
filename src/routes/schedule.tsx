@@ -753,6 +753,7 @@ export function AppointmentFields({
   const [transferReason, setTransferReason] = useState("");
   const [closeReason, setCloseReason] = useState("");
   const openedDate = useRef(initial.date);
+  const openedSchedule = useRef({ date: initial.date, time: snapHalfHour(initial.time), minutes: initial.minutes });
   const [customerQuery, setCustomerQuery] = useState("");
   const [customerOpen, setCustomerOpen] = useState(false);
   const [customerCursor, setCustomerCursor] = useState(0);
@@ -771,7 +772,9 @@ export function AppointmentFields({
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
   const pastVisit = showStatus === true && openedDate.current < today();
-  const runsPastClose = !pastVisit && scheduling ? visitRunsPastClose(scheduling, date, time, minutes) : false;
+  const scheduleMoved = date !== openedSchedule.current.date || time !== openedSchedule.current.time || minutes !== openedSchedule.current.minutes;
+  const selectedRunsPast = scheduling ? visitRunsPastClose(scheduling, date, time, minutes) : false;
+  const runsPastClose = !pastVisit && selectedRunsPast && (showStatus !== true || scheduleMoved);
   const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
   const gridStarts = scheduling && !manager ? fittingStartTimes(scheduling, date, minutes, STARTS) : STARTS;
   const starts = gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts];
@@ -779,7 +782,8 @@ export function AppointmentFields({
   const pastToday = !pastVisit && date === clock.date && time < `${String(Math.floor(clock.minutes / 60)).padStart(2, "0")}:${String(clock.minutes % 60).padStart(2, "0")}`;
   const matches = filterDeskCustomers(customers, vehicles, customerQuery);
   const chosen = customers.find((customer) => customer.id === customerId);
-  const alertText = transferWarning ? null : (formError || (!creating && owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
+  const staleCloseError = !runsPastClose && (formError === PAST_CLOSE_MESSAGE || formError === PAST_CLOSE_REASON);
+  const alertText = transferWarning ? null : ((staleCloseError ? null : formError) || (!creating && owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
   return (
     <form
@@ -820,7 +824,7 @@ export function AppointmentFields({
             lines: kept,
             concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "),
             laborOpIds,
-          }, transferRef.current, transferReason, closeReason);
+          }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
           transferRef.current = false;
           if (result && typeof result === "object" && result.needsTransfer) {
             setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
@@ -844,7 +848,7 @@ export function AppointmentFields({
           setFormError(PAST_CLOSE_REASON);
           return;
         }
-        const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, closeReason);
+        const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsTransfer) {
           setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
