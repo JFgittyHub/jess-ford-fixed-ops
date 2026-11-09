@@ -321,24 +321,22 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         </div>
       </div>
 
-      <div data-copy-bar className="sticky top-0 z-30 bg-surface">
-        {copiedName ? <p data-copied role="status" className="mt-3 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
-        <PasteNoticeBar
-          notice={pasteNotice}
-          onOverride={() => {
-            if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
-          }}
-          onReason={(reason) => {
-            if (pasteNotice?.kind !== "close") return;
-            if (!reason.trim()) {
-              setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
-              return;
-            }
-            pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
-          }}
-          onDismiss={() => setPasteNotice(null)}
-        />
-      </div>
+      <CopyBar
+        copiedName={copiedName}
+        notice={pasteNotice}
+        onOverride={() => {
+          if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
+        }}
+        onReason={(reason) => {
+          if (pasteNotice?.kind !== "close") return;
+          if (!reason.trim()) {
+            setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
+            return;
+          }
+          pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
+        }}
+        onDismiss={() => setPasteNotice(null)}
+      />
 
       {board.length === 0 ? (
         <p className="card mt-4 text-muted">No technicians are on a board yet. The day columns show up when a technician is on Express, Main shop, or Internals.</p>
@@ -1212,6 +1210,30 @@ export type PasteNotice =
   | { kind: "override"; techId: string; time: string; warning: string; closeReason?: string }
   | { kind: "close"; techId: string; time: string; reason: string; text: string | null };
 
+export function CopyBar({
+  copiedName,
+  notice,
+  onOverride,
+  onReason,
+  onDismiss,
+}: {
+  copiedName: string;
+  notice: PasteNotice | null;
+  onOverride: () => void;
+  onReason: (reason: string) => void;
+  onDismiss: () => void;
+}) {
+  if (!copiedName && !notice) return null;
+  return (
+    <div data-copy-bar className="sticky z-20 border-b border-line bg-surface p-3" style={{ top: "var(--app-header-height, 0px)" }}>
+      <div className="grid gap-3">
+        {copiedName ? <p data-copied role="status" className="text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
+        <PasteNoticeBar notice={notice} onOverride={onOverride} onReason={onReason} onDismiss={onDismiss} />
+      </div>
+    </div>
+  );
+}
+
 export function PasteNoticeBar({
   notice,
   onOverride,
@@ -1225,8 +1247,13 @@ export function PasteNoticeBar({
 }) {
   if (!notice) return null;
   return (
-    <div data-paste-notice role="alert" className="sticky top-0 z-30 mt-3 rounded-md border border-[#e7d7a8] bg-[#f8efd4] p-3 text-sm text-[#8a5a00]">
-      {notice.kind === "error" ? <p>{notice.text}</p> : null}
+    <div data-paste-notice role="alert" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] p-3 text-sm text-[#8a5a00]">
+      {notice.kind === "error" ? (
+        <div className="grid gap-2">
+          <p>{notice.text}</p>
+          <Button type="button" className="min-h-11" data-dismiss onClick={onDismiss}>Dismiss</Button>
+        </div>
+      ) : null}
       {notice.kind === "override" ? (
         <div className="grid gap-2">
           <p>{notice.warning}</p>

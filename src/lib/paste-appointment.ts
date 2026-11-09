@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useRef, useState } from "react";
 import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose } from "./capacity";
 import { deskActor } from "./cancel";
 import type { Appointment } from "./types";
@@ -39,21 +39,35 @@ export function pasterAdvisorId(state: { workingAsId: string; advisors: { id: st
   return state.advisors.some((row) => row.id === state.workingAsId) ? state.workingAsId : null;
 }
 
-/** Copy is tied to the person and the store they are viewing. Either change drops it. */
-export function copyWorkerKey(state: { userStoreId?: string; activeStoreId?: string; workingAsId: string }): string {
-  return `${state.userStoreId ?? ""}|${state.activeStoreId ?? ""}|${state.workingAsId}`;
+/** Copy is tied to the person, their role, and the store they are viewing. Any change drops it. */
+export function copyWorkerKey(state: {
+  userStoreId?: string;
+  activeStoreId?: string;
+  workingAsId: string;
+  advisors?: { id: string; role?: string }[];
+  techs?: { id: string }[];
+  serviceManagers?: { id: string; active?: boolean }[];
+}): string {
+  const role = state.advisors || state.serviceManagers || state.techs
+    ? deskActor({
+        workingAsId: state.workingAsId,
+        advisors: state.advisors ?? [],
+        techs: state.techs ?? [],
+        serviceManagers: state.serviceManagers,
+      })
+    : "";
+  return `${state.userStoreId ?? ""}|${state.activeStoreId ?? ""}|${state.workingAsId}|${role}`;
 }
 
-/** Drop a copied card when Working as or the store changes. The first paint keeps whatever is already copied. */
+/** Drop a copied card during render when the person, role, or store changes, so the old line never paints. */
 export function useForgetCopy(workerKey: string, clear: () => void) {
-  const seen = useRef(workerKey);
   const clearRef = useRef(clear);
   clearRef.current = clear;
-  useEffect(() => {
-    if (seen.current === workerKey) return;
-    seen.current = workerKey;
+  const [seen, setSeen] = useState(workerKey);
+  if (seen !== workerKey) {
+    setSeen(workerKey);
     clearRef.current();
-  }, [workerKey]);
+  }
 }
 
 type PasteStore = {

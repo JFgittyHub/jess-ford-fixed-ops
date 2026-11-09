@@ -231,7 +231,7 @@ export function AppointmentCalendar({
   onCancel?: (id: string) => void;
   onCopy?: (id: string) => void;
   onPasteSlot?: (techId: string, time: string) => void;
-  /** Paste stays disabled until a card has been copied. */
+  /** Paste stays hidden until a card has been copied. */
   canPaste?: boolean;
   /** Press-and-hold delay before the copy or paste menu opens. */
   longPressMs?: number;
@@ -429,12 +429,13 @@ export function AppointmentCalendar({
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 if (!onPasteSlot) return;
                 event.preventDefault();
+                if (!canPaste) return;
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
                 setMenu({ kind: "paste", techId: tech.id, time: fromMinutes(mins), x: event.clientX, y: event.clientY });
               }}
               onPointerDown={(event) => {
-                if (!onPasteSlot || event.button !== 0) return;
+                if (!onPasteSlot || !canPaste || event.button !== 0) return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 const startX = event.clientX;
                 const startY = event.clientY;
@@ -582,9 +583,9 @@ export function AppointmentCalendar({
         <div data-context-menu role="menu" className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
           {menu.kind === "copy" ? (
             <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { onCopy?.(menu.id); setMenu(null); }}>Copy</button>
-          ) : (
-            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" disabled={!canPaste} onClick={() => { if (!canPaste) return; onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
-          )}
+          ) : canPaste ? (
+            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" onClick={() => { onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
+          ) : null}
         </div>
       ) : null}
     </div>

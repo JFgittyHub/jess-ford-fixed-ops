@@ -7,9 +7,15 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { compile } from "@tailwindcss/node";
+import { createMemoryHistory, createRouter, RouterProvider } from "@tanstack/react-router";
 import { chromium, type Page } from "playwright";
 import { AppointmentCalendar } from "../components/appointment-calendar.tsx";
-import { PasteNoticeBar, type PasteNotice } from "../routes/schedule.tsx";
+import { CopyBar, PasteNoticeBar, type PasteNotice } from "../routes/schedule.tsx";
+import { routeTree } from "../routeTree.gen.ts";
+import { AppErrorComponent } from "./error-component.tsx";
+import { deskLocationRewrite } from "./preview-path-prefix.ts";
+import { createEmptyShop, createSeed } from "./seed.ts";
+import { useShop } from "./store.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, useForgetCopy, type CopiedAppointment } from "./paste-appointment.ts";
 import type { ShopStorage } from "./shop-storage.ts";
@@ -442,11 +448,15 @@ describe("round 26 paste board", () => {
     assert.ok(lane);
     lane.getBoundingClientRect = () => ({ top: 0, left: 0, right: 100, bottom: 800, width: 100, height: 800, x: 0, y: 0, toJSON() { return {}; } });
     flushSync(() => lane.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 64 })));
-    const earlyPaste = host.querySelector<HTMLButtonElement>("[data-paste]");
-    assert.ok(earlyPaste);
-    assert.equal(earlyPaste.disabled, true);
+    assert.equal(host.querySelector("[data-paste]"), null);
+    const pointer = window.PointerEvent;
+    await act(async () => {
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, clientX: 8, clientY: 96, pointerId: 9 }));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    assert.equal(host.querySelector("[data-paste]"), null);
+    window.dispatchEvent(new pointer("pointerup", { bubbles: true, clientX: 8, clientY: 96, pointerId: 9 }));
     const beforeCopy = store.getState().appointments.length;
-    flushSync(() => earlyPaste.click());
     assert.equal(store.getState().appointments.length, beforeCopy);
     assert.equal(host.querySelector("[data-paste-notice]"), null);
     flushSync(() => card()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 4, clientY: 4 })));
@@ -522,27 +532,34 @@ function CopyHold({ workerKey, name }: { workerKey: string; name: string }) {
 }
 
 describe("round 26 copy follows the person", () => {
-  it("keeps a copy until Working as or the store changes, for Megan and Derek", () => {
+  it("drops the copied line during render when the person, role, or store changes", () => {
     const host = document.createElement("div");
     document.body.appendChild(host);
     const root = createRoot(host);
     try {
-      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|megan", name: "Helen Cho" })));
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|megan|advisor", name: "Helen Cho" })));
       assert.match(host.textContent ?? "", /Copied Helen Cho/);
-      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|megan", name: "Helen Cho" })));
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|megan|advisor", name: "Helen Cho" })));
       assert.match(host.textContent ?? "", /Copied Helen Cho/);
-      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek", name: "Helen Cho" })));
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek|service-manager", name: "Helen Cho" })));
       assert.equal(host.querySelector("[data-copied]")?.textContent, "");
-      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek", name: "Jordan Hale" })));
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek|service-manager", name: "Jordan Hale" })));
       assert.match(host.textContent ?? "", /Copied Jordan Hale/);
-      act(() => root.render(createElement(CopyHold, { workerKey: "pullman|pullman|derek", name: "Jordan Hale" })));
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek|advisor", name: "Jordan Hale" })));
       assert.equal(host.querySelector("[data-copied]")?.textContent, "");
-      const store = shop("megan");
-      const first = copyWorkerKey(store.getState());
-      store.getState().setWorkingAs("derek");
-      assert.notEqual(copyWorkerKey(store.getState()), first);
-      store.getState().switchStore("pullman");
-      assert.notEqual(copyWorkerKey(store.getState()), first);
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek|advisor", name: "Helen Cho" })));
+      assert.match(host.textContent ?? "", /Copied Helen Cho/);
+      flushSync(() => root.render(createElement(CopyHold, { workerKey: "pullman|pullman|derek|advisor", name: "Helen Cho" })));
+      assert.equal(host.querySelector("[data-copied]")?.textContent, "");
+      const megan = shop("megan");
+      const first = copyWorkerKey(megan.getState());
+      assert.match(first, /\|megan\|advisor$/);
+      megan.getState().setWorkingAs("derek");
+      const asDerek = copyWorkerKey(megan.getState());
+      assert.match(asDerek, /\|derek\|service-manager$/);
+      assert.notEqual(asDerek, first);
+      megan.getState().switchStore("pullman");
+      assert.notEqual(copyWorkerKey(megan.getState()), asDerek);
     } finally {
       root.unmount();
       host.remove();
@@ -550,39 +567,39 @@ describe("round 26 copy follows the person", () => {
   });
 });
 
-describe("round 26 copy bar stays on screen", () => {
-  it("keeps the copied line and the refused-paste notice above the board at short heights", async () => {
-    const html = renderToStaticMarkup(createElement("div", null,
-      createElement("h1", null, "Today"),
-      createElement("div", { "data-copy-bar": "yes", className: "sticky top-0 z-30 bg-surface" },
-        createElement("p", { "data-copied": "yes", role: "status", className: "mt-3 text-sm text-muted" }, "Copied Helen Cho. Paste into an open slot. The copy stays until you copy another card."),
-        createElement(PasteNoticeBar, {
-          notice: { kind: "error", text: "That time is outside shop hours." },
-          onOverride: () => undefined,
-          onReason: () => undefined,
-          onDismiss: () => undefined,
-        }),
-      ),
-      createElement(AppointmentCalendar, {
-        appointments: [],
-        day: friday,
-        techs: [
-          { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
-          { id: "elena", number: "2", name: "Elena", board: "express" as const },
-        ],
-        selectedId: null,
-        onSelect: () => undefined,
-        onSlot: () => undefined,
-        onMove: () => undefined,
-        onWrite: () => undefined,
-        onEdit: () => undefined,
-        label: () => "",
-        summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
-        hoursFor: () => 0,
-      }),
-    ));
-    assert.ok(html.indexOf("data-copy-bar") < html.indexOf("data-tech"));
-    const css = await appCss(html);
+describe("round 26 copy bar stays under the header", () => {
+  it("keeps the copied line and a dismissible refusal below the desk header", async () => {
+    const header = await scheduleHeaderHtml();
+    const bar = renderToStaticMarkup(createElement(CopyBar, {
+      copiedName: "Helen Cho",
+      notice: { kind: "error", text: "That time is outside shop hours." },
+      onOverride: () => undefined,
+      onReason: () => undefined,
+      onDismiss: () => undefined,
+    }));
+    const board = renderToStaticMarkup(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: friday,
+      techs: [
+        { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
+        { id: "elena", number: "2", name: "Elena", board: "express" as const },
+      ],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: () => undefined,
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    }));
+    assert.ok(header.includes("Working as"));
+    assert.ok(header.includes("Viewing as"));
+    assert.ok(header.includes("Settings"));
+    assert.ok(bar.includes("data-dismiss"));
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="px-4 py-5"><h1>Today</h1>${bar}${board}</main></div></div>`;
+    const css = await appCss(`${header}${bar}${board}${html}`);
     const browser = await chromium.launch({ headless: true });
     try {
       const page = await browser.newPage();
@@ -590,30 +607,88 @@ describe("round 26 copy bar stays on screen", () => {
       for (const [width, height] of [[1400, 700], [820, 700], [390, 700]] as const) {
         await page.setViewportSize({ width, height });
         await page.evaluate(() => window.scrollTo(0, 0));
+        await pinHeader(page);
         const before = await measure(page);
-        assert.ok(before.bar && before.copied && before.notice && before.board, `${width} missing bar`);
-        assert.ok(before.bar.bottom <= before.board.top + 1, `${width} bar sits above the board`);
-        assert.ok(before.copied.top >= 0 && before.copied.bottom <= height, `${width} copied line starts on screen`);
-        assert.ok(before.notice.top >= 0 && before.notice.bottom <= height, `${width} refusal starts on screen`);
-        assert.ok(before.copied.left >= 0 && before.copied.right <= width + 1, `${width} copied line fits`);
-        assert.ok(before.notice.left >= 0 && before.notice.right <= width + 1, `${width} refusal fits`);
+        assert.ok(before.header && before.bar && before.copied && before.notice && before.dismiss && before.working && before.viewing && before.settings, `${width} missing header or bar`);
+        assert.ok(before.bar.top >= before.header.bottom - 1, `${width} bar starts below the header`);
+        assert.ok(before.copied.top >= before.header.bottom - 1 && before.notice.top >= before.header.bottom - 1, `${width} copy text stays below the header`);
+        assert.ok(before.working.bottom <= before.header.bottom + 1 && before.viewing.bottom <= before.header.bottom + 1 && before.settings.bottom <= before.header.bottom + 1, `${width} header controls stay in the header`);
+        assert.ok(before.copied.bottom <= height && before.notice.bottom <= height && before.dismiss.bottom <= height, `${width} refusal stays on screen`);
+        assert.ok(before.padTop >= 8, `${width} bar is padded`);
+        assert.equal(before.opaque, true, `${width} bar is opaque`);
+        assert.equal(before.coversHeader, false, `${width} bar covers a header control`);
         await page.evaluate(() => {
           const afternoon = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
           afternoon?.scrollIntoView({ block: "center" });
         });
+        await pinHeader(page);
         const after = await measure(page);
         assert.ok(after.afternoon, `${width} afternoon label`);
         assert.ok(after.scrollY > 80, `${width} scrolled the afternoon`);
-        assert.ok(after.afternoon.top >= 0 && after.afternoon.bottom <= height, `${width} afternoon is in view`);
-        assert.ok(after.bar && after.bar.top >= -1 && after.bar.top < 8, `${width} bar stays pinned`);
-        assert.ok(after.copied && after.copied.top >= 0 && after.copied.bottom <= height, `${width} copied line stays visible`);
-        assert.ok(after.notice && after.notice.top >= 0 && after.notice.bottom <= height, `${width} refusal stays visible`);
+        assert.ok(after.header && after.header.top >= -1 && after.header.top < 8, `${width} header stays pinned`);
+        assert.ok(after.bar && after.bar.top >= after.header.bottom - 1, `${width} bar stays below the header`);
+        assert.ok(after.copied && after.notice && after.dismiss, `${width} copy bar stayed mounted`);
+        assert.ok(after.copied.top >= after.header.bottom - 1 && after.copied.bottom <= height, `${width} copied line stays visible`);
+        assert.ok(after.notice.top >= after.header.bottom - 1 && after.notice.bottom <= height, `${width} refusal stays visible`);
+        assert.ok(after.dismiss.top >= after.header.bottom - 1 && after.dismiss.bottom <= height, `${width} dismiss stays visible`);
+        assert.equal(after.coversHeader, false, `${width} scrolled bar covers a header control`);
+        assert.ok(after.afternoon.bottom <= height, `${width} afternoon is in view`);
       }
     } finally {
       await browser.close();
     }
   });
 });
+
+async function scheduleHeaderHtml() {
+  useShop.setState({
+    ...createSeed(),
+    dataset: "sample",
+    focusOrderId: null,
+    activeStoreId: "grand-coulee",
+    userStoreId: "grand-coulee",
+    stores: {
+      "grand-coulee": { ...createSeed(), dataset: "sample" },
+      pullman: createEmptyShop(),
+    },
+  });
+  const router = createRouter({
+    routeTree,
+    history: createMemoryHistory({ initialEntries: ["/schedule"] }),
+    rewrite: deskLocationRewrite(),
+    caseSensitive: false,
+    trailingSlash: "never",
+    defaultErrorComponent: AppErrorComponent,
+  });
+  await router.load();
+  (router as { _rendered?: unknown[] })._rendered = [];
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => {
+      root.render(createElement(RouterProvider, { router }));
+    });
+    for (let i = 0; i < 25 && !host.querySelector("header.app-header"); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const header = host.querySelector("header.app-header");
+    assert.ok(header, "the schedule page rendered the desk header");
+    return header.outerHTML;
+  } finally {
+    flushSync(() => root.unmount());
+    host.remove();
+    useShop.setState({ ...createEmptyShop(), focusOrderId: null, dataset: "sample" });
+  }
+}
+
+async function pinHeader(page: Page) {
+  await page.evaluate(() => {
+    const header = document.querySelector("header.app-header");
+    if (!header) return;
+    document.documentElement.style.setProperty("--app-header-height", `${Math.ceil(header.getBoundingClientRect().height)}px`);
+  });
+}
 
 async function measure(page: Page) {
   return page.evaluate(() => {
@@ -625,13 +700,32 @@ async function measure(page: Page) {
     };
     const afternoon = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
     const rect = afternoon?.getBoundingClientRect();
+    const barNode = document.querySelector("[data-copy-bar]");
+    const barStyle = barNode ? getComputedStyle(barNode) : null;
+    const paint = barStyle?.backgroundColor ?? "";
+    const channels = paint.match(/[\d.]+/g)?.map(Number) ?? [];
+    const opaque = channels.length === 3 || (channels.length === 4 && channels[3] === 1);
+    const covers = (selector: string) => {
+      const node = document.querySelector(selector);
+      if (!node) return true;
+      const rect = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + Math.min(12, rect.width / 2), rect.top + Math.min(8, rect.height / 2));
+      return Boolean(hit?.closest("[data-copy-bar]"));
+    };
     return {
+      header: box("header.app-header"),
       bar: box("[data-copy-bar]"),
       copied: box("[data-copied]"),
       notice: box("[data-paste-notice]"),
-      board: box(".card"),
+      dismiss: box("[data-dismiss]"),
+      working: box("[aria-label='Working as']"),
+      viewing: box("[aria-label='Viewing as']"),
+      settings: box("[aria-label='Store settings']"),
       afternoon: rect ? { top: rect.top, bottom: rect.bottom } : null,
       scrollY: window.scrollY,
+      padTop: barStyle ? Number.parseFloat(barStyle.paddingTop) : 0,
+      opaque,
+      coversHeader: covers("[aria-label='Working as']") || covers("[aria-label='Viewing as']") || covers("[aria-label='Store settings']"),
     };
   });
 }

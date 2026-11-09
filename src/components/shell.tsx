@@ -19,7 +19,7 @@ import {
   Package,
   Receipt,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
@@ -158,7 +158,24 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const router = useRouter();
   const realShop = useShop((state) => state.dataset !== "sample" && shopHasOperationalData(state));
   const historyRef = useRef<string[]>([]);
+  const headerRef = useRef<HTMLElement>(null);
   const [backTo, setBackTo] = useState<string | null>(null);
+
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    if (!header || typeof document === "undefined") return;
+    const apply = () => {
+      document.documentElement.style.setProperty("--app-header-height", `${Math.ceil(header.getBoundingClientRect().height)}px`);
+    };
+    apply();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
+    observer?.observe(header);
+    window.addEventListener("resize", apply);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", apply);
+    };
+  }, []);
 
   useEffect(() => {
     const stack = historyRef.current;
@@ -212,7 +229,7 @@ function OpenDesk({ children }: { children: ReactNode }) {
         </p>
       </aside>
       <div className="md:pl-60">
-        <header className="app-header sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
+        <header ref={headerRef} className="app-header sticky top-0 z-30 border-b border-line bg-bg/95 backdrop-blur-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <img src="/jess-logo.avif" alt="Jess Ford, established 1991" className="h-14 w-auto md:hidden" />
