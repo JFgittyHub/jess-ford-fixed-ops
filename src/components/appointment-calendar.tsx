@@ -213,6 +213,7 @@ export function AppointmentCalendar({
   onCancel,
   onCopy,
   onPasteSlot,
+  canPaste = false,
   longPressMs = 550,
   label,
   summary,
@@ -230,6 +231,8 @@ export function AppointmentCalendar({
   onCancel?: (id: string) => void;
   onCopy?: (id: string) => void;
   onPasteSlot?: (techId: string, time: string) => void;
+  /** Paste stays disabled until a card has been copied. */
+  canPaste?: boolean;
   /** Press-and-hold delay before the copy or paste menu opens. */
   longPressMs?: number;
   label: (appt: Appointment) => string;
@@ -580,7 +583,7 @@ export function AppointmentCalendar({
           {menu.kind === "copy" ? (
             <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { onCopy?.(menu.id); setMenu(null); }}>Copy</button>
           ) : (
-            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" onClick={() => { onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
+            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" disabled={!canPaste} onClick={() => { if (!canPaste) return; onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
           )}
         </div>
       ) : null}

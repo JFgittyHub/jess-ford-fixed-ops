@@ -1,13 +1,17 @@
 import "./test-dom.ts";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, it } from "node:test";
 import { act, createElement, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToStaticMarkup } from "react-dom/server";
+import { compile } from "@tailwindcss/node";
+import { chromium, type Page } from "playwright";
 import { AppointmentCalendar } from "../components/appointment-calendar.tsx";
 import { PasteNoticeBar, type PasteNotice } from "../routes/schedule.tsx";
 import { pinClock, resetClock } from "./clock.ts";
-import { commitPaste, copiedFrom, pasteAppointmentInput, type CopiedAppointment } from "./paste-appointment.ts";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, useForgetCopy, type CopiedAppointment } from "./paste-appointment.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -55,6 +59,16 @@ function book(store: ReturnType<typeof shop>, patch: Partial<Appointment> = {}) 
   });
 }
 
+function halfHours() {
+  const times: string[] = [];
+  for (let mins = 7 * 60 + 30; mins <= 15 * 60; mins += 30) {
+    const time = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+    if (time === "13:30" || time === "14:00") continue;
+    times.push(time);
+  }
+  return times;
+}
+
 function stamp(store: ReturnType<typeof shop>) {
   const state = store.getState();
   return {
@@ -92,7 +106,7 @@ describe("round 26 paste appointments", () => {
       assert.equal(row.vin, original.vin);
       assert.equal(row.minutes, 90);
       assert.equal(row.lane, "waiter");
-      assert.equal(row.advisorId, original.advisorId);
+      assert.equal(row.advisorId, "megan");
       assert.notEqual(row.id, original.id);
     }
     assert.deepEqual(pasted.map((row) => row.time).sort(), ["11:00", "13:00"]);
@@ -166,6 +180,62 @@ describe("round 26 paste appointments", () => {
       assert.equal(entry?.whoId, who);
       assert.equal(entry?.at, when);
       assert.equal(store.getState().appointments.find((item) => item.id === accepted.appointmentId)?.techId, "marcus");
+      assert.equal(store.getState().appointments.find((item) => item.id === accepted.appointmentId)?.advisorId, who);
+    }
+  });
+
+  it("records the paste on the Working-as advisor for Megan and Derek, and counts that person's capacity", () => {
+    pinClock(when);
+    for (const who of ["megan", "derek"] as const) {
+      const store = shop(who);
+      const sourceAdvisor = who === "megan" ? "jordan" : "megan";
+      const open = halfHours().filter((time) => !store.getState().appointments.some((row) => row.date === friday && row.techId === "marcus" && row.time === time));
+      const onBook = (row: Appointment) => row.date === friday && row.advisorId === who && row.status !== "cancelled" && row.status !== "no_show";
+      const existing = store.getState().appointments.filter(onBook).length;
+      const need = Math.max(0, 10 - existing);
+      assert.ok(open.length >= need + 2, `${who} needs open slots`);
+      for (const time of open.slice(0, need)) {
+        const filled = book(store, { advisorId: who, time, minutes: 30, techId: "marcus", concern: `Fill ${time}`, lines: [{ id: "a", code: "A", concern: `Fill ${time}` }] });
+        assert.equal(filled.ok, true, filled.error ?? time);
+      }
+      const source = book(store, { advisorId: sourceAdvisor, time: "13:30", minutes: 30, techId: "elena", concern: "Source card", lines: [{ id: "b", code: "A", concern: "Source card" }] });
+      assert.equal(source.ok, true, source.error ?? "");
+      const row = store.getState().appointments.find((item) => item.id === source.appointmentId);
+      assert.ok(row);
+      const input = pasteAppointmentInput(copiedFrom(row), { date: friday, time: "14:00", techId: "elena" });
+      const before = stamp(store);
+      const asked = commitPaste(store, input);
+      assert.equal(asked.needsOverride, true, who);
+      assert.match(asked.warning ?? "", /advisor capacity/);
+      assert.deepEqual(stamp(store), before);
+      const accepted = commitPaste(store, input, { confirmOverride: true });
+      assert.equal(accepted.ok, true, accepted.error ?? "");
+      const pasted = store.getState().appointments.find((item) => item.id === accepted.appointmentId);
+      assert.equal(pasted?.advisorId, who);
+      assert.notEqual(pasted?.advisorId, sourceAdvisor);
+      const entry = store.getState().overrides.find((item) => item.id === accepted.overrideId);
+      assert.equal(entry?.whoId, who);
+      assert.equal(store.getState().appointments.filter(onBook).length, existing + need + 1);
+      assert.equal(store.getState().appointments.find((item) => item.id === source.appointmentId)?.advisorId, sourceAdvisor);
+    }
+  });
+
+  it("refuses a paste when Working as is not an advisor on this store", () => {
+    pinClock(when);
+    for (const who of ["megan", "derek"] as const) {
+      const store = shop(who);
+      const saved = book(store);
+      assert.equal(saved.ok, true, saved.error ?? "");
+      const source = store.getState().appointments.find((row) => row.id === saved.appointmentId);
+      assert.ok(source);
+      for (const outsider of ["marcus", "pl-jordan"]) {
+        if (outsider === "marcus") store.getState().setWorkingAs("marcus");
+        else store.setState({ workingAsId: "pl-jordan" });
+        const before = stamp(store);
+        const refused = commitPaste(store, pasteAppointmentInput(copiedFrom(source), { date: friday, time: "11:00", techId: "elena" }));
+        assert.match(refused.error ?? "", /isn't on this store/, outsider);
+        assert.deepEqual(stamp(store), before);
+      }
     }
   });
 });
@@ -183,6 +253,11 @@ function Board({
   const [notice, setNotice] = useState<PasteNotice | null>(null);
   const [label, setLabel] = useState("");
   const state = store.getState();
+  useForgetCopy(copyWorkerKey(state), () => {
+    setClip(null);
+    setLabel("");
+    setNotice(null);
+  });
   const rows = state.appointments.filter((row) => row.date === day && row.status !== "cancelled");
   function paste(techId: string, time: string, opts?: { confirmOverride?: boolean; closeReason?: string }) {
     if (!clip) {
@@ -242,6 +317,7 @@ function Board({
         setNotice(null);
       },
       onPasteSlot: (techId: string, time: string) => paste(techId, time),
+      canPaste: clip !== null,
       longPressMs: 30,
       label: (row: Appointment) => row.concern,
       summary: () => ({ name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "9:00", lane: "Drop", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
@@ -298,6 +374,7 @@ describe("round 26 paste board", () => {
         onEdit: () => undefined,
         onCopy: () => undefined,
         onPasteSlot: () => undefined,
+        canPaste: true,
         longPressMs: 30,
         label: () => "Helen",
         summary: () => ({ name: "Helen", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "9:00", lane: "Drop", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
@@ -354,11 +431,24 @@ describe("round 26 paste board", () => {
     document.body.appendChild(host);
     const root = createRoot(host);
     function draw() {
-      flushSync(() => root.render(createElement(Board, { store, day: friday })));
+      act(() => {
+        flushSync(() => root.render(createElement(Board, { store, day: friday })));
+      });
     }
     try {
     draw();
     const card = () => host.querySelector<HTMLElement>(`[data-appt-id='${saved.appointmentId}']`);
+    const lane = host.querySelector<HTMLElement>("[data-tech='elena']");
+    assert.ok(lane);
+    lane.getBoundingClientRect = () => ({ top: 0, left: 0, right: 100, bottom: 800, width: 100, height: 800, x: 0, y: 0, toJSON() { return {}; } });
+    flushSync(() => lane.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 64 })));
+    const earlyPaste = host.querySelector<HTMLButtonElement>("[data-paste]");
+    assert.ok(earlyPaste);
+    assert.equal(earlyPaste.disabled, true);
+    const beforeCopy = store.getState().appointments.length;
+    flushSync(() => earlyPaste.click());
+    assert.equal(store.getState().appointments.length, beforeCopy);
+    assert.equal(host.querySelector("[data-paste-notice]"), null);
     flushSync(() => card()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 4, clientY: 4 })));
     flushSync(() => host.querySelector<HTMLButtonElement>("[data-copy]")?.click());
     assert.match(host.textContent ?? "", /Copied/);
@@ -389,12 +479,14 @@ describe("round 26 paste board", () => {
     flushSync(() => host.querySelector<HTMLFormElement>("[data-paste-notice] form")?.requestSubmit());
     const pasted = store.getState().appointments.find((row) => row.techId === "elena" && row.time === "16:30");
     assert.ok(pasted);
+    assert.equal(pasted.advisorId, "derek");
     const logged = store.getState().overrides.filter((row) => row.appointmentId === pasted.id && row.reason === "past-close");
     assert.equal(logged.length, 1);
     assert.equal(logged[0].note, "Staying past one");
     assert.equal(logged[0].who, "Derek Lang");
     store.getState().setWorkingAs("megan");
     draw();
+    assert.equal(host.querySelector("[data-copied]")?.textContent, "");
     flushSync(() => card()?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 4, clientY: 4 })));
     flushSync(() => host.querySelector<HTMLButtonElement>("[data-copy]")?.click());
     const elenaBefore = store.getState().appointments.filter((row) => row.techId === "elena").length;
@@ -407,6 +499,7 @@ describe("round 26 paste board", () => {
     openPaste(2 * 32);
     openPaste(4 * 32);
     assert.equal(store.getState().appointments.filter((row) => row.techId === "elena").length, elenaBefore + 2);
+    assert.equal(store.getState().appointments.filter((row) => row.techId === "elena" && row.advisorId === "megan").length, 2);
     const original = store.getState().appointments.find((row) => row.id === saved.appointmentId);
     assert.equal(original?.techId, "marcus");
     assert.equal(original?.time, "09:00");
@@ -416,3 +509,136 @@ describe("round 26 paste board", () => {
     }
   });
 });
+
+function CopyHold({ workerKey, name }: { workerKey: string; name: string }) {
+  const [held, setHeld] = useState(name);
+  const [seenName, setSeenName] = useState(name);
+  if (name !== seenName) {
+    setSeenName(name);
+    setHeld(name);
+  }
+  useForgetCopy(workerKey, () => setHeld(""));
+  return createElement("p", { "data-copied": "yes" }, held ? `Copied ${held}` : "");
+}
+
+describe("round 26 copy follows the person", () => {
+  it("keeps a copy until Working as or the store changes, for Megan and Derek", () => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|megan", name: "Helen Cho" })));
+      assert.match(host.textContent ?? "", /Copied Helen Cho/);
+      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|megan", name: "Helen Cho" })));
+      assert.match(host.textContent ?? "", /Copied Helen Cho/);
+      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek", name: "Helen Cho" })));
+      assert.equal(host.querySelector("[data-copied]")?.textContent, "");
+      act(() => root.render(createElement(CopyHold, { workerKey: "grand-coulee|grand-coulee|derek", name: "Jordan Hale" })));
+      assert.match(host.textContent ?? "", /Copied Jordan Hale/);
+      act(() => root.render(createElement(CopyHold, { workerKey: "pullman|pullman|derek", name: "Jordan Hale" })));
+      assert.equal(host.querySelector("[data-copied]")?.textContent, "");
+      const store = shop("megan");
+      const first = copyWorkerKey(store.getState());
+      store.getState().setWorkingAs("derek");
+      assert.notEqual(copyWorkerKey(store.getState()), first);
+      store.getState().switchStore("pullman");
+      assert.notEqual(copyWorkerKey(store.getState()), first);
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+});
+
+describe("round 26 copy bar stays on screen", () => {
+  it("keeps the copied line and the refused-paste notice above the board at short heights", async () => {
+    const html = renderToStaticMarkup(createElement("div", null,
+      createElement("h1", null, "Today"),
+      createElement("div", { "data-copy-bar": "yes", className: "sticky top-0 z-30 bg-surface" },
+        createElement("p", { "data-copied": "yes", role: "status", className: "mt-3 text-sm text-muted" }, "Copied Helen Cho. Paste into an open slot. The copy stays until you copy another card."),
+        createElement(PasteNoticeBar, {
+          notice: { kind: "error", text: "That time is outside shop hours." },
+          onOverride: () => undefined,
+          onReason: () => undefined,
+          onDismiss: () => undefined,
+        }),
+      ),
+      createElement(AppointmentCalendar, {
+        appointments: [],
+        day: friday,
+        techs: [
+          { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
+          { id: "elena", number: "2", name: "Elena", board: "express" as const },
+        ],
+        selectedId: null,
+        onSelect: () => undefined,
+        onSlot: () => undefined,
+        onMove: () => undefined,
+        onWrite: () => undefined,
+        onEdit: () => undefined,
+        label: () => "",
+        summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+        hoursFor: () => 0,
+      }),
+    ));
+    assert.ok(html.indexOf("data-copy-bar") < html.indexOf("data-tech"));
+    const css = await appCss(html);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
+      for (const [width, height] of [[1400, 700], [820, 700], [390, 700]] as const) {
+        await page.setViewportSize({ width, height });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        const before = await measure(page);
+        assert.ok(before.bar && before.copied && before.notice && before.board, `${width} missing bar`);
+        assert.ok(before.bar.bottom <= before.board.top + 1, `${width} bar sits above the board`);
+        assert.ok(before.copied.top >= 0 && before.copied.bottom <= height, `${width} copied line starts on screen`);
+        assert.ok(before.notice.top >= 0 && before.notice.bottom <= height, `${width} refusal starts on screen`);
+        assert.ok(before.copied.left >= 0 && before.copied.right <= width + 1, `${width} copied line fits`);
+        assert.ok(before.notice.left >= 0 && before.notice.right <= width + 1, `${width} refusal fits`);
+        await page.evaluate(() => {
+          const afternoon = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
+          afternoon?.scrollIntoView({ block: "center" });
+        });
+        const after = await measure(page);
+        assert.ok(after.afternoon, `${width} afternoon label`);
+        assert.ok(after.scrollY > 80, `${width} scrolled the afternoon`);
+        assert.ok(after.afternoon.top >= 0 && after.afternoon.bottom <= height, `${width} afternoon is in view`);
+        assert.ok(after.bar && after.bar.top >= -1 && after.bar.top < 8, `${width} bar stays pinned`);
+        assert.ok(after.copied && after.copied.top >= 0 && after.copied.bottom <= height, `${width} copied line stays visible`);
+        assert.ok(after.notice && after.notice.top >= 0 && after.notice.bottom <= height, `${width} refusal stays visible`);
+      }
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+async function measure(page: Page) {
+  return page.evaluate(() => {
+    const box = (selector: string) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+    };
+    const afternoon = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
+    const rect = afternoon?.getBoundingClientRect();
+    return {
+      bar: box("[data-copy-bar]"),
+      copied: box("[data-copied]"),
+      notice: box("[data-paste-notice]"),
+      board: box(".card"),
+      afternoon: rect ? { top: rect.top, bottom: rect.bottom } : null,
+      scrollY: window.scrollY,
+    };
+  });
+}
+
+async function appCss(markup: string) {
+  const source = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+  const compiled = await compile(source, { base: new URL("..", import.meta.url).pathname, onDependency() {} });
+  const classes = [...markup.matchAll(/class="([^"]+)"/g)].flatMap((match) => match[1].split(/\s+/));
+  return compiled.build([...new Set(classes)]);
+}

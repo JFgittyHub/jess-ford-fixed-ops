@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose } from "./capacity";
 import { deskActor } from "./cancel";
 import type { Appointment } from "./types";
@@ -19,7 +20,7 @@ export function copiedFrom(row: Appointment): CopiedAppointment {
   };
 }
 
-export function pasteAppointmentInput(copy: CopiedAppointment, slot: { date: string; time: string; techId: string }): Omit<Appointment, "id" | "orderId"> {
+export function pasteAppointmentInput(copy: CopiedAppointment, slot: { date: string; time: string; techId: string; advisorId?: string }): Omit<Appointment, "id" | "orderId"> {
   return {
     ...copy,
     lines: copy.lines.map((line) => ({ ...line })),
@@ -27,8 +28,32 @@ export function pasteAppointmentInput(copy: CopiedAppointment, slot: { date: str
     date: slot.date,
     time: slot.time,
     techId: slot.techId,
+    advisorId: slot.advisorId ?? copy.advisorId,
     status: "scheduled",
   };
+}
+
+/** The pasted visit belongs to whoever is Working as, when that person is an advisor on this store. */
+export function pasterAdvisorId(state: { workingAsId: string; advisors: { id: string }[] }): string | null {
+  if (!state.workingAsId) return null;
+  return state.advisors.some((row) => row.id === state.workingAsId) ? state.workingAsId : null;
+}
+
+/** Copy is tied to the person and the store they are viewing. Either change drops it. */
+export function copyWorkerKey(state: { userStoreId?: string; activeStoreId?: string; workingAsId: string }): string {
+  return `${state.userStoreId ?? ""}|${state.activeStoreId ?? ""}|${state.workingAsId}`;
+}
+
+/** Drop a copied card when Working as or the store changes. The first paint keeps whatever is already copied. */
+export function useForgetCopy(workerKey: string, clear: () => void) {
+  const seen = useRef(workerKey);
+  const clearRef = useRef(clear);
+  clearRef.current = clear;
+  useEffect(() => {
+    if (seen.current === workerKey) return;
+    seen.current = workerKey;
+    clearRef.current();
+  }, [workerKey]);
 }
 
 type PasteStore = {
@@ -75,7 +100,12 @@ export function commitPaste(
   if (state.userStoreId && state.activeStoreId && state.userStoreId !== state.activeStoreId) {
     return { ok: false, error: "Book on your own store. Each store keeps its own schedule.", appointmentId: "", overrideId: null };
   }
-  const pastClose = visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
+  const advisorId = pasterAdvisorId(state);
+  if (!advisorId) {
+    return { ok: false, error: "That advisor isn't on this store.", appointmentId: "", overrideId: null };
+  }
+  const booked = { ...input, advisorId };
+  const pastClose = visitRunsPastClose(state.settings.scheduling, booked.date, booked.time, booked.minutes);
   if (pastClose && deskActor(state) !== "service-manager") {
     return { ok: false, error: PAST_CLOSE_MESSAGE, appointmentId: "", overrideId: null };
   }
@@ -90,12 +120,12 @@ export function commitPaste(
     appointments: state.appointments,
     laborOps: state.laborOps,
     proposal: {
-      date: input.date,
-      time: input.time,
-      minutes: input.minutes,
-      advisorId: input.advisorId,
-      techId: input.techId,
-      laborOpIds: input.laborOpIds ?? [],
+      date: booked.date,
+      time: booked.time,
+      minutes: booked.minutes,
+      advisorId: booked.advisorId,
+      techId: booked.techId,
+      laborOpIds: booked.laborOpIds ?? [],
     },
   });
   if (judged.blocked) return { ok: false, error: judged.blocked, appointmentId: "", overrideId: null };
@@ -103,6 +133,6 @@ export function commitPaste(
   if (warning && !opts?.confirmOverride) {
     return { ok: false, error: null, warning, needsOverride: true, appointmentId: "", overrideId: null };
   }
-  const saved = state.saveAdvisorAppointment(input, undefined, undefined, undefined, pastClose ? reason : undefined);
+  const saved = state.saveAdvisorAppointment(booked, undefined, undefined, undefined, pastClose ? reason : undefined);
   return { ...saved, warning: saved.warning ?? null };
 }

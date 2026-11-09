@@ -22,7 +22,7 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
-import { commitPaste, copiedFrom, pasteAppointmentInput, type CopiedAppointment } from "@/lib/paste-appointment";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import { now } from "@/lib/clock";
 import type { Appointment, CancelReason, SchedulingSettings, TransportOption } from "@/lib/types";
@@ -107,6 +107,11 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
   const [copiedName, setCopiedName] = useState("");
   const [pasteNotice, setPasteNotice] = useState<PasteNotice | null>(null);
+  useForgetCopy(copyWorkerKey(shop), () => {
+    setClipboard(null);
+    setCopiedName("");
+    setPasteNotice(null);
+  });
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
     if (ignoreRequestsHash.current) {
@@ -316,6 +321,25 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         </div>
       </div>
 
+      <div data-copy-bar className="sticky top-0 z-30 bg-surface">
+        {copiedName ? <p data-copied role="status" className="mt-3 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
+        <PasteNoticeBar
+          notice={pasteNotice}
+          onOverride={() => {
+            if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
+          }}
+          onReason={(reason) => {
+            if (pasteNotice?.kind !== "close") return;
+            if (!reason.trim()) {
+              setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
+              return;
+            }
+            pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
+          }}
+          onDismiss={() => setPasteNotice(null)}
+        />
+      </div>
+
       {board.length === 0 ? (
         <p className="card mt-4 text-muted">No technicians are on a board yet. The day columns show up when a technician is on Express, Main shop, or Internals.</p>
       ) : (
@@ -357,6 +381,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onCancel={canCancel ? (id) => askCancel(id) : undefined}
         onCopy={copyAppointment}
         onPasteSlot={(techId, time) => pasteInto(techId, time)}
+        canPaste={clipboard !== null}
         label={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         hoursFor={(row) => laborHours(row, shop.laborOps)}
         summary={(row) => {
@@ -416,22 +441,6 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         nameFor={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         allowReinstate={canCancel}
         onReinstate={reinstate}
-      />
-      {copiedName ? <p data-copied role="status" className="mt-3 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
-      <PasteNoticeBar
-        notice={pasteNotice}
-        onOverride={() => {
-          if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
-        }}
-        onReason={(reason) => {
-          if (pasteNotice?.kind !== "close") return;
-          if (!reason.trim()) {
-            setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
-            return;
-          }
-          pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
-        }}
-        onDismiss={() => setPasteNotice(null)}
       />
       {actionError && !selected ? <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{actionError}</p> : null}
 
