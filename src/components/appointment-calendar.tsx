@@ -211,6 +211,9 @@ export function AppointmentCalendar({
   onWrite,
   onEdit,
   onCancel,
+  onCopy,
+  onPasteSlot,
+  longPressMs = 550,
   label,
   summary,
   hoursFor,
@@ -225,6 +228,10 @@ export function AppointmentCalendar({
   onWrite: (id: string) => void;
   onEdit: (id: string) => void;
   onCancel?: (id: string) => void;
+  onCopy?: (id: string) => void;
+  onPasteSlot?: (techId: string, time: string) => void;
+  /** Press-and-hold delay before the copy or paste menu opens. */
+  longPressMs?: number;
   label: (appt: Appointment) => string;
   summary: (appt: Appointment) => ApptSummary;
   hoursFor: (appt: Appointment) => number;
@@ -236,6 +243,12 @@ export function AppointmentCalendar({
   const hideTimer = useRef<number | null>(null);
   const touchSummaryAt = useRef(0);
   const gesture = useRef({ moved: false, summary: false, x: 0, y: 0 });
+  const suppressSlotClick = useRef(false);
+  const [menu, setMenu] = useState<
+    | { kind: "copy"; id: string; x: number; y: number }
+    | { kind: "paste"; techId: string; time: string; x: number; y: number }
+    | null
+  >(null);
   const hours = Array.from({ length: (END - START) / 60 }, (_, index) => START + index * 60);
   const height = ((END - START) / SNAP) * SLOT;
   const [now, setNow] = useState(() => new Date());
@@ -244,6 +257,23 @@ export function AppointmentCalendar({
     const id = window.setInterval(() => setNow(new Date()), 15000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(null);
+    };
+    const onPointer = (event: PointerEvent) => {
+      if ((event.target as HTMLElement | null)?.closest?.("[data-context-menu]")) return;
+      setMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, [menu]);
 
   const nowMins = pacificMinutes(now);
   const nowTop = nowMins >= START && nowMins <= END ? ((nowMins - START) / SNAP) * SLOT : null;
@@ -266,6 +296,7 @@ export function AppointmentCalendar({
   }
 
   function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize", quiet?: "summary") {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     const mark = event.currentTarget as HTMLElement;
@@ -277,6 +308,18 @@ export function AppointmentCalendar({
     gesture.current = { moved: false, summary: quiet === "summary", x: event.clientX, y: event.clientY };
     const slop = quiet === "summary" ? 16 : 4;
     let moved = false;
+    let held = false;
+    const pressTimer = mode === "move" && quiet !== "summary" && onCopy
+      ? window.setTimeout(() => {
+        if (moved) return;
+        held = true;
+        window.removeEventListener("pointermove", onMovePointer);
+        window.removeEventListener("pointerup", onUp);
+        commitDraft(null);
+        setHover(null);
+        setMenu({ kind: "copy", id: appt.id, x: origin.x, y: origin.y });
+      }, longPressMs)
+      : 0;
 
     function onMovePointer(ev: PointerEvent) {
       const dx = ev.clientX - origin.x;
@@ -284,6 +327,7 @@ export function AppointmentCalendar({
       if (Math.abs(dx) + Math.abs(dy) > slop) {
         moved = true;
         gesture.current.moved = true;
+        if (pressTimer) window.clearTimeout(pressTimer);
       }
       const next = planCalendarDrag({
         mode,
@@ -299,8 +343,10 @@ export function AppointmentCalendar({
     }
 
     function onUp() {
+      if (pressTimer) window.clearTimeout(pressTimer);
       window.removeEventListener("pointermove", onMovePointer);
       window.removeEventListener("pointerup", onUp);
+      if (held) return;
       const next = draftRef.current;
       commitDraft(null);
       if (moved && next) onMove(appt.id, { time: next.time, minutes: next.minutes, techId: next.techId });
@@ -367,10 +413,45 @@ export function AppointmentCalendar({
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}
               onClick={(event) => {
+                if (suppressSlotClick.current) {
+                  suppressSlotClick.current = false;
+                  return;
+                }
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
                 onSlot(tech.id, fromMinutes(mins));
+              }}
+              onContextMenu={(event) => {
+                if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                if (!onPasteSlot) return;
+                event.preventDefault();
+                const top = event.currentTarget.getBoundingClientRect().top;
+                const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
+                setMenu({ kind: "paste", techId: tech.id, time: fromMinutes(mins), x: event.clientX, y: event.clientY });
+              }}
+              onPointerDown={(event) => {
+                if (!onPasteSlot || event.button !== 0) return;
+                if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                const startX = event.clientX;
+                const startY = event.clientY;
+                const column = event.currentTarget;
+                const timer = window.setTimeout(() => {
+                  suppressSlotClick.current = true;
+                  const top = column.getBoundingClientRect().top;
+                  const mins = clamp(START + Math.floor((startY - top) / SLOT) * SNAP, START, END - 30);
+                  setMenu({ kind: "paste", techId: tech.id, time: fromMinutes(mins), x: startX, y: startY });
+                }, longPressMs);
+                const move = (ev: PointerEvent) => {
+                  if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
+                };
+                const up = () => {
+                  window.clearTimeout(timer);
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", up);
+                };
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", up);
               }}
             >
               {rows.map(({ row, offset }) => {
@@ -396,6 +477,12 @@ export function AppointmentCalendar({
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
                     style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
+                    onContextMenu={(event) => {
+                      if (!onCopy) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMenu({ kind: "copy", id: row.id, x: event.clientX, y: event.clientY });
+                    }}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
                       <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
@@ -488,6 +575,15 @@ export function AppointmentCalendar({
         })}
       </div>
       {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onCancel={onCancel} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
+      {menu ? (
+        <div data-context-menu role="menu" className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
+          {menu.kind === "copy" ? (
+            <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { onCopy?.(menu.id); setMenu(null); }}>Copy</button>
+          ) : (
+            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" onClick={() => { onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

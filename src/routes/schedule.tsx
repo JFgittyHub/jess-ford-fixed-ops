@@ -22,6 +22,7 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
+import { commitPaste, copiedFrom, pasteAppointmentInput, type CopiedAppointment } from "@/lib/paste-appointment";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import { now } from "@/lib/clock";
 import type { Appointment, CancelReason, SchedulingSettings, TransportOption } from "@/lib/types";
@@ -103,6 +104,9 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
   const [moveOverride, setMoveOverride] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; warning: string; closeReason?: string } | null>(null);
   const [moveClose, setMoveClose] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; reason: string } | null>(null);
+  const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
+  const [copiedName, setCopiedName] = useState("");
+  const [pasteNotice, setPasteNotice] = useState<PasteNotice | null>(null);
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
     if (ignoreRequestsHash.current) {
@@ -123,6 +127,9 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     setOverridePrompt(null);
     setMoveOverride(null);
     setMoveClose(null);
+    setClipboard(null);
+    setCopiedName("");
+    setPasteNotice(null);
     setArrivedGate(null);
   }
   const { customerId, vehicleId, advisorId, techId, serviceId: servicePick, onlineTechId } = liveSeed;
@@ -245,6 +252,44 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     setSelectedId(id);
   }
 
+  function copyAppointment(id: string) {
+    if (actor !== "advisor" && actor !== "service-manager") {
+      setPasteNotice({ kind: "error", text: actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything." });
+      return;
+    }
+    const row = shop.appointments.find((item) => item.id === id);
+    if (!row) return;
+    setClipboard(copiedFrom(row));
+    setCopiedName(look.customer.get(row.customerId)?.name ?? "Appointment");
+    setPasteNotice(null);
+  }
+
+  function pasteInto(techId: string, time: string, opts?: { confirmOverride?: boolean; closeReason?: string }) {
+    if (actor !== "advisor" && actor !== "service-manager") {
+      setPasteNotice({ kind: "error", text: actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything." });
+      return;
+    }
+    if (!clipboard) {
+      setPasteNotice({ kind: "error", text: "Copy an appointment first." });
+      return;
+    }
+    const input = pasteAppointmentInput(clipboard, { date: day, time, techId });
+    const result = commitPaste({ getState: () => useShop.getState() }, input, opts);
+    if (result.needsCloseReason) {
+      setPasteNotice({ kind: "close", techId, time, reason: "", text: result.error });
+      return;
+    }
+    if (result.needsOverride && result.warning) {
+      setPasteNotice({ kind: "override", techId, time, warning: result.warning, closeReason: opts?.closeReason });
+      return;
+    }
+    if (!result.ok) {
+      setPasteNotice({ kind: "error", text: result.error ?? "That appointment could not be saved." });
+      return;
+    }
+    setPasteNotice(null);
+  }
+
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -310,6 +355,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         }}
         onEdit={(id) => openAppointment(id)}
         onCancel={canCancel ? (id) => askCancel(id) : undefined}
+        onCopy={copyAppointment}
+        onPasteSlot={(techId, time) => pasteInto(techId, time)}
         label={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         hoursFor={(row) => laborHours(row, shop.laborOps)}
         summary={(row) => {
@@ -369,6 +416,22 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         nameFor={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         allowReinstate={canCancel}
         onReinstate={reinstate}
+      />
+      {copiedName ? <p data-copied role="status" className="mt-3 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
+      <PasteNoticeBar
+        notice={pasteNotice}
+        onOverride={() => {
+          if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
+        }}
+        onReason={(reason) => {
+          if (pasteNotice?.kind !== "close") return;
+          if (!reason.trim()) {
+            setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
+            return;
+          }
+          pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
+        }}
+        onDismiss={() => setPasteNotice(null)}
       />
       {actionError && !selected ? <p role="alert" className="mt-3 text-sm text-[#8a3b2a]">{actionError}</p> : null}
 
@@ -1132,5 +1195,58 @@ function DayJump({ value, onChange }: { value: string; onChange: (iso: string) =
         </div>
       ) : null}
     </div>
+  );
+}
+
+export type PasteNotice =
+  | { kind: "error"; text: string }
+  | { kind: "override"; techId: string; time: string; warning: string; closeReason?: string }
+  | { kind: "close"; techId: string; time: string; reason: string; text: string | null };
+
+export function PasteNoticeBar({
+  notice,
+  onOverride,
+  onReason,
+  onDismiss,
+}: {
+  notice: PasteNotice | null;
+  onOverride: () => void;
+  onReason: (reason: string) => void;
+  onDismiss: () => void;
+}) {
+  if (!notice) return null;
+  return (
+    <div data-paste-notice role="alert" className="sticky top-0 z-30 mt-3 rounded-md border border-[#e7d7a8] bg-[#f8efd4] p-3 text-sm text-[#8a5a00]">
+      {notice.kind === "error" ? <p>{notice.text}</p> : null}
+      {notice.kind === "override" ? (
+        <div className="grid gap-2">
+          <p>{notice.warning}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" className="min-h-11" tone="primary" onClick={onOverride}>Paste anyway</Button>
+            <Button type="button" className="min-h-11" onClick={onDismiss}>Leave it</Button>
+          </div>
+        </div>
+      ) : null}
+      {notice.kind === "close" ? (
+        <ClosePaste key={`${notice.techId}-${notice.time}`} text={notice.text} onReason={onReason} onDismiss={onDismiss} />
+      ) : null}
+    </div>
+  );
+}
+
+function ClosePaste({ text, onReason, onDismiss }: { text: string | null; onReason: (reason: string) => void; onDismiss: () => void }) {
+  const [reason, setReason] = useState("");
+  return (
+    <form className="grid gap-2" onSubmit={(event) => { event.preventDefault(); onReason(reason); }}>
+      <p>That visit runs past closing. A service manager can approve it.</p>
+      {text ? <p>{text}</p> : null}
+      <Field label="Reason for running past close">
+        <input className="field" aria-label="Reason for running past close" value={reason} onChange={(event) => setReason(event.target.value)} />
+      </Field>
+      <div className="flex flex-wrap gap-2">
+        <Button type="submit" className="min-h-11" tone="primary">Paste</Button>
+        <Button type="button" className="min-h-11" onClick={onDismiss}>Leave it</Button>
+      </div>
+    </form>
   );
 }
