@@ -17,7 +17,7 @@ import { deskLocationRewrite } from "./preview-path-prefix.ts";
 import { createEmptyShop, createSeed } from "./seed.ts";
 import { useShop } from "./store.ts";
 import { pinClock, resetClock } from "./clock.ts";
-import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotOpensBook, useForgetCopy, type CopiedAppointment } from "./paste-appointment.ts";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotGestureError, slotOpensBook, useForgetCopy, type CopiedAppointment } from "./paste-appointment.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -703,6 +703,86 @@ describe("round 26 empty slot opens book", () => {
     }
   });
 
+  it("refuses a Saturday time after close for Megan and Derek, and clears that notice when the next slot is valid", () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("derek").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    for (const actor of ["advisor", "service-manager"] as const) {
+      assert.equal(slotGestureError({ actor, day: saturday, time: "10:00", scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }), null);
+      assert.match(slotGestureError({ actor, day: saturday, time: "16:00", scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }) ?? "", /outside shop hours/);
+    }
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    let notice: PasteNotice | null = { kind: "error", text: "That time is outside shop hours." };
+    function paint(canPaste: boolean) {
+      flushSync(() => root.render(createElement("div", null,
+        createElement(CopyBar, {
+          copiedName: "Helen Cho",
+          notice,
+          onOverride: () => undefined,
+          onReason: () => undefined,
+          onDismiss: () => undefined,
+        }),
+        createElement(AppointmentCalendar, {
+          appointments: [],
+          day: saturday,
+          techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+          selectedId: null,
+          onSelect: () => undefined,
+          onSlot: (techId: string, time: string) => bookings.push(`${techId}|${time}`),
+          onMove: () => undefined,
+          onWrite: () => undefined,
+          onEdit: () => undefined,
+          onPasteSlot: () => bookings.push("paste"),
+          canPaste,
+          slotOpen: true,
+          slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+          onSlotRefused: (message?: string) => {
+            notice = { kind: "error", text: message ?? "That time is outside shop hours." };
+            paint(canPaste);
+          },
+          onSlotAccepted: () => {
+            notice = null;
+            paint(canPaste);
+          },
+          longPressMs: 30,
+          label: () => "",
+          summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+          hoursFor: () => 0,
+        }),
+        createElement("p", { "data-below-board": "yes" }, "below the board"),
+      )));
+    }
+    try {
+      for (const canPaste of [true, false]) {
+        bookings.length = 0;
+        notice = null;
+        paint(canPaste);
+        const late = host.querySelector<HTMLElement>("[data-tech='elena']");
+        assert.ok(late);
+        late.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+        flushSync(() => late.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 18 * 32 })));
+        assert.equal(host.querySelector("[data-paste]"), null);
+        assert.equal(bookings.length, 0);
+        assert.match(host.querySelector("[data-copy-bar]")?.textContent ?? "", /outside shop hours/);
+        assert.equal((host.querySelector("[data-below-board]")?.textContent ?? "").includes("outside shop hours"), false);
+        const open = host.querySelector<HTMLElement>("[data-tech='elena']");
+        assert.ok(open);
+        open.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+        flushSync(() => open.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 6 * 32 })));
+        assert.equal((host.querySelector("[data-copy-bar]")?.textContent ?? "").includes("outside shop hours"), false);
+        if (canPaste) assert.ok(host.querySelector("[data-paste]"));
+        else assert.deepEqual(bookings, ["elena|10:00"]);
+      }
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
   it("keeps Book closed for Megan and Derek on a past day, a closed day, and the other store", () => {
     pinClock(when);
     const scheduling = shop().getState().settings.scheduling;
@@ -863,7 +943,7 @@ describe("round 26 copy bar stays under the header", () => {
       summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
       hoursFor: () => 0,
     }));
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor>${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:12rem"><h1 class="font-display text-5xl">Friday</h1></div>${board}</div></main></div></div>`;
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor class="contents" style="display:contents">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:12rem"><h1 class="font-display text-5xl">Friday</h1></div>${board}</div><footer class="pb-8 text-xs text-muted"><p>This visit is the sample month. Grand Coulee and Pullman are separate stores, and this footer sits under the board on a phone.</p></footer><div data-sticky-tail style="height:calc(100vh - var(--app-header-height, 0px))"></div></main></div></div>`;
     const css = await appCss(`${header}${bar}${board}${html}`);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -878,7 +958,8 @@ describe("round 26 copy bar stays under the header", () => {
           await pinHeader(page);
           const pinned = await measure(page);
           assert.ok(pinned.header && pinned.bar && pinned.copied, `${width} missing the pinned bar at ${depth}`);
-          assert.ok(pinned.bar.top >= pinned.header.bottom - 1 && pinned.bar.top <= pinned.header.bottom + 24, `${width} bar left the header at scroll ${depth} (top ${pinned.bar.top}, header ${pinned.header.bottom})`);
+          const slack = depth === 0 ? 24 : 1;
+          assert.ok(pinned.bar.top >= pinned.header.bottom - 1 && pinned.bar.top <= pinned.header.bottom + slack, `${width} bar left the header at scroll ${depth} (top ${pinned.bar.top}, header ${pinned.header.bottom}, scroll ${pinned.scrollY})`);
           assert.ok(pinned.copied.top >= pinned.header.bottom - 1 && pinned.copied.bottom <= height, `${width} copied line left the screen at scroll ${depth}`);
           assert.equal(pinned.coversHeader, false, `${width} bar covers the header at scroll ${depth}`);
           if (depth === 0) {
@@ -968,6 +1049,7 @@ async function scheduleShellHtml() {
     assert.ok(header, "the schedule page rendered the desk header");
     assert.ok(anchor?.querySelector("[data-desk-heading]"), "the sticky container does not span the day heading");
     assert.ok(anchor?.querySelector("[data-tech]"), "the sticky container does not span the board");
+    assert.ok(host.querySelector("main [data-sticky-tail]"), "the schedule page has no room under the board for the sticky bar");
     return { header: header.outerHTML, page: host.innerHTML };
   } finally {
     flushSync(() => root.unmount());

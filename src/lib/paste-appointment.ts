@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose } from "./capacity";
+import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
 import { deskActor } from "./cancel";
 import { bookingDateMessage } from "./store";
 import type { Appointment } from "./types";
@@ -51,6 +51,20 @@ export function slotOpensBook(input: {
   const dateError = bookingDateMessage(input.day, input.scheduling);
   if (dateError) return { ok: false, error: dateError };
   return { ok: true };
+}
+
+/** Day, store, and the slot's own clock. A miss opens neither Book nor Paste. */
+export function slotGestureError(input: {
+  actor: string;
+  day: string;
+  time: string;
+  scheduling: Parameters<typeof visitTimeError>[0];
+  userStoreId?: string;
+  activeStoreId?: string;
+}): string | null {
+  const dayDecision = slotOpensBook(input);
+  if (!dayDecision.ok) return dayDecision.error;
+  return visitTimeError(input.scheduling, input.day, input.time);
 }
 
 /** The pasted visit belongs to whoever is Working as, when that person is an advisor on this store. */

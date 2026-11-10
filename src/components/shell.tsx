@@ -290,12 +290,13 @@ function OpenDesk({ children }: { children: ReactNode }) {
         </header>
         <main key={activeStoreId} className="mx-auto w-full max-w-6xl px-4 py-5 md:px-8 md:py-7">
           {deskGate(pathname, children)}
+          <footer className="pb-8 text-xs text-muted">
+            <p>
+              This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
+            </p>
+          </footer>
+          {pathname === "/schedule" ? <div data-sticky-tail aria-hidden="true" style={{ height: "calc(100vh - var(--app-header-height, 0px))" }} /> : null}
         </main>
-        <footer className="mx-auto w-full max-w-6xl px-4 pb-8 text-xs text-muted md:px-8">
-          <p>
-            This visit is the sample month. Grand Coulee and Pullman are separate stores: customers, staff, vehicles, appointments, repair orders, and scheduling settings stay with the store you have open. Changes last until you reload, then the sample month is back. This demo is not saved in the browser. Settings can reload the open store, and will ask before replacing shop work. This does not submit warranty, order parts from Ford, or replace the manufacturer pipe.
-          </p>
-        </footer>
         {scrolled && backTo ? (
           <button type="button" className="btn btn-primary fixed bottom-5 left-4 z-40 shadow-card md:left-[16.5rem]" onClick={goBack}>
             <ArrowLeft className="size-4" aria-hidden />

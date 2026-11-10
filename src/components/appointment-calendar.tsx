@@ -216,6 +216,8 @@ export function AppointmentCalendar({
   canPaste = false,
   slotOpen = true,
   onSlotRefused,
+  onSlotAccepted,
+  slotError,
   longPressMs = 550,
   label,
   summary,
@@ -237,7 +239,11 @@ export function AppointmentCalendar({
   canPaste?: boolean;
   /** Closed, past, and other-store days open neither Book nor Paste. */
   slotOpen?: boolean;
-  onSlotRefused?: () => void;
+  onSlotRefused?: (message?: string) => void;
+  /** A valid Book or Paste clears a refusal that is already in the bar. */
+  onSlotAccepted?: () => void;
+  /** Outside shop hours, and any other slot the day check still allows. */
+  slotError?: (time: string) => string | null;
   /** Press-and-hold delay before the copy or paste menu opens. */
   longPressMs?: number;
   label: (appt: Appointment) => string;
@@ -426,24 +432,37 @@ export function AppointmentCalendar({
                   return;
                 }
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                const top = event.currentTarget.getBoundingClientRect().top;
+                const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
+                const time = fromMinutes(mins);
                 if (!slotOpen) {
                   onSlotRefused?.();
                   return;
                 }
-                const top = event.currentTarget.getBoundingClientRect().top;
-                const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
-                onSlot(tech.id, fromMinutes(mins));
+                const block = slotError?.(time);
+                if (block) {
+                  onSlotRefused?.(block);
+                  return;
+                }
+                onSlotAccepted?.();
+                onSlot(tech.id, time);
               }}
               onContextMenu={(event) => {
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 event.preventDefault();
+                const top = event.currentTarget.getBoundingClientRect().top;
+                const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
+                const time = fromMinutes(mins);
                 if (!slotOpen) {
                   onSlotRefused?.();
                   return;
                 }
-                const top = event.currentTarget.getBoundingClientRect().top;
-                const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
-                const time = fromMinutes(mins);
+                const block = slotError?.(time);
+                if (block) {
+                  onSlotRefused?.(block);
+                  return;
+                }
+                onSlotAccepted?.();
                 if (canPaste && onPasteSlot) {
                   setMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY });
                   return;
@@ -453,15 +472,15 @@ export function AppointmentCalendar({
               onPointerDown={(event) => {
                 if (event.button !== 0) return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
-                if (!slotOpen || !onPasteSlot || !canPaste) return;
                 const startX = event.clientX;
                 const startY = event.clientY;
                 const column = event.currentTarget;
+                const heldTime = fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
+                if (!slotOpen || slotError?.(heldTime) || !onPasteSlot || !canPaste) return;
                 const timer = window.setTimeout(() => {
                   suppressSlotClick.current = true;
-                  const top = column.getBoundingClientRect().top;
-                  const mins = clamp(START + Math.floor((startY - top) / SLOT) * SNAP, START, END - 30);
-                  setMenu({ kind: "paste", techId: tech.id, time: fromMinutes(mins), x: startX, y: startY });
+                  onSlotAccepted?.();
+                  setMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY });
                 }, longPressMs);
                 const move = (ev: PointerEvent) => {
                   if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);

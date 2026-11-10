@@ -22,7 +22,7 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
-import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotOpensBook, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotGestureError, slotOpensBook, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import { now } from "@/lib/clock";
 import type { Appointment, CancelReason, SchedulingSettings, TransportOption } from "@/lib/types";
@@ -302,15 +302,19 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     userStoreId: shop.userStoreId,
     activeStoreId: shop.activeStoreId,
   });
-  function refuseClosedSlot() {
-    if (slotDecision.ok) return;
+  function refuseClosedSlot(message?: string) {
+    const text = message ?? (slotDecision.ok ? "" : slotDecision.error);
+    if (!text) return;
     setBooking(false);
     setActionError(null);
-    setPasteNotice({ kind: "error", text: slotDecision.error });
+    setPasteNotice({ kind: "error", text });
+  }
+  function acceptSlot() {
+    setPasteNotice((notice) => notice?.kind === "error" ? null : notice);
   }
 
   return (
-    <div data-copy-anchor>
+    <div data-copy-anchor className="contents">
       <CopyBar
         copiedName={copiedName}
         notice={pasteNotice}
@@ -362,11 +366,33 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onSelect={(id) => openAppointment(id)}
         slotOpen={slotDecision.ok}
         onSlotRefused={refuseClosedSlot}
+        onSlotAccepted={acceptSlot}
+        slotError={(time) => slotGestureError({
+          actor,
+          day,
+          time,
+          scheduling: shop.settings.scheduling,
+          userStoreId: shop.userStoreId,
+          activeStoreId: shop.activeStoreId,
+        })}
         onSlot={(nextTech, nextTime) => {
           if (!slotDecision.ok) {
             refuseClosedSlot();
             return;
           }
+          const hours = slotGestureError({
+            actor,
+            day,
+            time: nextTime,
+            scheduling: shop.settings.scheduling,
+            userStoreId: shop.userStoreId,
+            activeStoreId: shop.activeStoreId,
+          });
+          if (hours) {
+            refuseClosedSlot(hours);
+            return;
+          }
+          acceptSlot();
           setActionError(null);
           setDate(day);
           patchSeed({ techId: nextTech });
