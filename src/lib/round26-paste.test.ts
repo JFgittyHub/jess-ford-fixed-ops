@@ -163,6 +163,37 @@ describe("round 26 paste appointments", () => {
     }
   });
 
+  it("asks Derek for one reason on a 180-minute Friday 5:00 PM paste and refuses Megan", () => {
+    pinClock(when);
+    for (const who of ["megan", "derek"] as const) {
+      const store = shop(who);
+      const saved = book(store, { minutes: 180, time: "09:00", concern: "Long visit", lines: [{ id: "a", code: "A", concern: "Long visit" }] });
+      assert.equal(saved.ok, true, saved.error ?? "");
+      const source = store.getState().appointments.find((row) => row.id === saved.appointmentId);
+      assert.ok(source);
+      const input = pasteAppointmentInput(copiedFrom(source), { date: friday, time: "17:00", techId: "elena" });
+      const before = stamp(store);
+      if (who === "megan") {
+        const refused = commitPaste(store, input, { closeReason: "Advisor tried" });
+        assert.match(refused.error ?? "", /past closing/);
+        assert.deepEqual(stamp(store), before);
+      } else {
+        const asked = commitPaste(store, input);
+        assert.equal(asked.needsCloseReason, true);
+        assert.deepEqual(stamp(store), before);
+        const accepted = commitPaste(store, input, { closeReason: "Staying for the tow" });
+        assert.equal(accepted.ok, true, accepted.error ?? "");
+        const pasted = store.getState().appointments.find((row) => row.id === accepted.appointmentId);
+        assert.equal(pasted?.time, "17:00");
+        assert.equal(pasted?.minutes, 180);
+        assert.equal(pasted?.advisorId, "derek");
+        const logged = store.getState().overrides.filter((row) => row.appointmentId === accepted.appointmentId && row.reason === "past-close");
+        assert.equal(logged.length, 1);
+        assert.equal(logged[0]?.who, "Derek Lang");
+      }
+    }
+  });
+
   it("warns Megan and Derek before an overloaded paste and logs the override only if they accept", () => {
     pinClock(when);
     for (const who of ["megan", "derek"] as const) {
@@ -581,6 +612,97 @@ describe("round 26 empty slot opens book", () => {
     }
   });
 
+  it("opens nothing on a closed, past, or other-store day, with or without a copy", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    const messages = ["The shop is closed that day.", "That day is already past.", "Book on your own store. Each store keeps its own schedule."];
+    function draw(canPaste: boolean, text: string) {
+      flushSync(() => root.render(createElement("div", null,
+        createElement("div", { "data-copy-anchor": "yes" },
+          createElement(CopyBar, {
+            copiedName: canPaste ? "Helen Cho" : "",
+            notice: null,
+            onOverride: () => undefined,
+            onReason: () => undefined,
+            onDismiss: () => undefined,
+          }),
+          createElement(AppointmentCalendar, {
+            appointments: [],
+            day: "2026-11-15",
+            techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+            selectedId: null,
+            onSelect: () => undefined,
+            onSlot: (techId: string, time: string) => bookings.push(`${techId}|${time}`),
+            onMove: () => undefined,
+            onWrite: () => undefined,
+            onEdit: () => undefined,
+            onPasteSlot: () => bookings.push("paste"),
+            canPaste,
+            slotOpen: false,
+            onSlotRefused: () => {
+              flushSync(() => root.render(createElement("div", null,
+                createElement("div", { "data-copy-anchor": "yes" },
+                  createElement(CopyBar, {
+                    copiedName: canPaste ? "Helen Cho" : "",
+                    notice: { kind: "error", text },
+                    onOverride: () => undefined,
+                    onReason: () => undefined,
+                    onDismiss: () => undefined,
+                  }),
+                  createElement("div", { "data-desk-heading": "yes" }, "Today"),
+                ),
+                createElement("p", { "data-below-board": "yes" }, "below the board"),
+              )));
+            },
+            longPressMs: 30,
+            label: () => "",
+            summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+            hoursFor: () => 0,
+          }),
+        ),
+        createElement("p", { "data-below-board": "yes" }, "below the board"),
+      )));
+    }
+    try {
+      for (const canPaste of [false, true]) {
+        for (const text of messages) {
+          bookings.length = 0;
+          draw(canPaste, text);
+          const column = host.querySelector<HTMLElement>("[data-tech='elena']");
+          assert.ok(column);
+          column.getBoundingClientRect = () => ({ top: 0, left: 0, right: 100, bottom: 800, width: 100, height: 800, x: 0, y: 0, toJSON() { return {}; } });
+          flushSync(() => column.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 64 })));
+          assert.equal(host.querySelector("[data-paste]"), null);
+          assert.equal(host.querySelector("[data-context-menu]"), null);
+          assert.equal(bookings.length, 0);
+          assert.match(host.querySelector("[data-copy-bar]")?.textContent ?? "", new RegExp(text.replace(/[.]/g, "\\.")));
+          assert.equal(host.querySelector("[data-below-board]")?.textContent?.includes(text), false);
+          draw(canPaste, text);
+          const lane = host.querySelector<HTMLElement>("[data-tech='elena']");
+          assert.ok(lane);
+          lane.getBoundingClientRect = () => ({ top: 0, left: 0, right: 100, bottom: 800, width: 100, height: 800, x: 0, y: 0, toJSON() { return {}; } });
+          const pointer = window.PointerEvent;
+          await act(async () => {
+            lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, clientX: 8, clientY: 96, pointerId: 4 }));
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            window.dispatchEvent(new pointer("pointerup", { bubbles: true, clientX: 8, clientY: 96, pointerId: 4 }));
+          });
+          lane.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 8, clientY: 96 }));
+          assert.equal(host.querySelector("[data-paste]"), null);
+          assert.equal(bookings.length, 0);
+          assert.match(host.querySelector("[data-copy-bar]")?.textContent ?? "", new RegExp(text.replace(/[.]/g, "\\.")));
+        }
+      }
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
   it("keeps Book closed for Megan and Derek on a past day, a closed day, and the other store", () => {
     pinClock(when);
     const scheduling = shop().getState().settings.scheduling;
@@ -672,7 +794,7 @@ describe("round 26 copy bar stays under the header", () => {
     assert.ok(header.includes("Viewing as"));
     assert.ok(header.includes("Settings"));
     assert.ok(bar.includes("data-dismiss"));
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:28rem"><h1 class="font-display text-5xl">Today</h1><div class="desk-actions flex flex-wrap gap-2"><button class="btn min-h-11" type="button">Book appointment</button></div></div>${board}</main></div></div>`;
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor>${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:28rem"><h1 class="font-display text-5xl">Today</h1><div class="desk-actions flex flex-wrap gap-2"><button class="btn min-h-11" type="button">Book appointment</button></div></div>${board}</div></main></div></div>`;
     const css = await appCss(`${header}${bar}${board}${html}`);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -719,7 +841,7 @@ describe("round 26 copy bar stays under the header", () => {
     const header = (await scheduleShellHtml()).header;
     const bar = renderToStaticMarkup(createElement(CopyBar, {
       copiedName: "Helen Cho",
-      notice: { kind: "close", techId: "elena", time: "17:00", reason: "", text: "Staying past close so the tow truck can finish. ".repeat(30) },
+      notice: { kind: "close", techId: "elena", time: "17:00", reason: "", text: "Friday 5:00 PM for 180 minutes runs past close." },
       onOverride: () => undefined,
       onReason: () => undefined,
       onDismiss: () => undefined,
@@ -741,7 +863,7 @@ describe("round 26 copy bar stays under the header", () => {
       summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
       hoursFor: () => 0,
     }));
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5">${bar}${board}</main></div></div>`;
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor>${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:12rem"><h1 class="font-display text-5xl">Friday</h1></div>${board}</div></main></div></div>`;
     const css = await appCss(`${header}${bar}${board}${html}`);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -749,8 +871,21 @@ describe("round 26 copy bar stays under the header", () => {
       await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
       for (const [width, height] of [[1400, 700], [820, 700], [390, 700]] as const) {
         await page.setViewportSize({ width, height });
-        await page.evaluate(() => window.scrollTo(0, 0));
         await pinHeader(page);
+        const maxScroll = await page.evaluate(() => Math.max(0, document.documentElement.scrollHeight - window.innerHeight));
+        for (const depth of [0, 240, 480, 800, maxScroll]) {
+          await page.evaluate((top) => window.scrollTo(0, top), depth);
+          await pinHeader(page);
+          const pinned = await measure(page);
+          assert.ok(pinned.header && pinned.bar && pinned.copied, `${width} missing the pinned bar at ${depth}`);
+          assert.ok(pinned.bar.top >= pinned.header.bottom - 1 && pinned.bar.top <= pinned.header.bottom + 24, `${width} bar left the header at scroll ${depth} (top ${pinned.bar.top}, header ${pinned.header.bottom})`);
+          assert.ok(pinned.copied.top >= pinned.header.bottom - 1 && pinned.copied.bottom <= height, `${width} copied line left the screen at scroll ${depth}`);
+          assert.equal(pinned.coversHeader, false, `${width} bar covers the header at scroll ${depth}`);
+          if (depth === 0) {
+            assert.equal(pinned.scrollY, 0);
+            assert.ok(pinned.bar.bottom <= height, `${width} the whole bar is inside the viewport at scroll 0`);
+          }
+        }
         await page.evaluate(() => {
           const afternoon = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
           afternoon?.scrollIntoView({ block: "center" });
@@ -779,7 +914,9 @@ describe("round 26 copy bar stays under the header", () => {
             formScroll: scroller instanceof HTMLElement ? scroller.scrollHeight - scroller.clientHeight : 0,
           };
         });
-        if (width === 390) assert.ok(laid.formScroll > 20, "the reason form does not scroll inside the bar");
+        if (width === 390 && laid.formScroll <= 20) {
+          assert.ok(laid.reason && laid.paste && laid.leave, "390 reason form is on screen without an inner scroll");
+        }
         assert.ok(laid.header && laid.bar && laid.copied && laid.reason && laid.paste && laid.leave, `${width} missing the reason form`);
         assert.ok(laid.bar.top >= laid.header.bottom - 1, `${width} form rides over the header`);
         assert.ok(laid.copied.top >= laid.header.bottom - 1 && laid.copied.bottom <= height, `${width} copied line stays visible`);
@@ -827,7 +964,10 @@ async function scheduleShellHtml() {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     const header = host.querySelector("header.app-header");
+    const anchor = host.querySelector("[data-copy-anchor]");
     assert.ok(header, "the schedule page rendered the desk header");
+    assert.ok(anchor?.querySelector("[data-desk-heading]"), "the sticky container does not span the day heading");
+    assert.ok(anchor?.querySelector("[data-tech]"), "the sticky container does not span the board");
     return { header: header.outerHTML, page: host.innerHTML };
   } finally {
     flushSync(() => root.unmount());

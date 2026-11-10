@@ -214,6 +214,8 @@ export function AppointmentCalendar({
   onCopy,
   onPasteSlot,
   canPaste = false,
+  slotOpen = true,
+  onSlotRefused,
   longPressMs = 550,
   label,
   summary,
@@ -233,6 +235,9 @@ export function AppointmentCalendar({
   onPasteSlot?: (techId: string, time: string) => void;
   /** Paste stays hidden until a card has been copied. */
   canPaste?: boolean;
+  /** Closed, past, and other-store days open neither Book nor Paste. */
+  slotOpen?: boolean;
+  onSlotRefused?: () => void;
   /** Press-and-hold delay before the copy or paste menu opens. */
   longPressMs?: number;
   label: (appt: Appointment) => string;
@@ -421,6 +426,10 @@ export function AppointmentCalendar({
                   return;
                 }
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                if (!slotOpen) {
+                  onSlotRefused?.();
+                  return;
+                }
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
                 onSlot(tech.id, fromMinutes(mins));
@@ -428,6 +437,10 @@ export function AppointmentCalendar({
               onContextMenu={(event) => {
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 event.preventDefault();
+                if (!slotOpen) {
+                  onSlotRefused?.();
+                  return;
+                }
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
                 const time = fromMinutes(mins);
@@ -438,8 +451,9 @@ export function AppointmentCalendar({
                 onSlot(tech.id, time);
               }}
               onPointerDown={(event) => {
-                if (!onPasteSlot || !canPaste || event.button !== 0) return;
+                if (event.button !== 0) return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                if (!slotOpen || !onPasteSlot || !canPaste) return;
                 const startX = event.clientX;
                 const startY = event.clientY;
                 const column = event.currentTarget;

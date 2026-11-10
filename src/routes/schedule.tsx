@@ -295,26 +295,38 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     setPasteNotice(null);
   }
 
+  const slotDecision = slotOpensBook({
+    actor,
+    day,
+    scheduling: shop.settings.scheduling,
+    userStoreId: shop.userStoreId,
+    activeStoreId: shop.activeStoreId,
+  });
+  function refuseClosedSlot() {
+    if (slotDecision.ok) return;
+    setBooking(false);
+    setActionError(null);
+    setPasteNotice({ kind: "error", text: slotDecision.error });
+  }
+
   return (
-    <>
-      <div data-copy-anchor>
-        <CopyBar
-          copiedName={copiedName}
-          notice={pasteNotice}
-          onOverride={() => {
-            if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
-          }}
-          onReason={(reason) => {
-            if (pasteNotice?.kind !== "close") return;
-            if (!reason.trim()) {
-              setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
-              return;
-            }
-            pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
-          }}
-          onDismiss={() => setPasteNotice(null)}
-        />
-      </div>
+    <div data-copy-anchor>
+      <CopyBar
+        copiedName={copiedName}
+        notice={pasteNotice}
+        onOverride={() => {
+          if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
+        }}
+        onReason={(reason) => {
+          if (pasteNotice?.kind !== "close") return;
+          if (!reason.trim()) {
+            setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
+            return;
+          }
+          pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
+        }}
+        onDismiss={() => setPasteNotice(null)}
+      />
       <div data-desk-heading className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Appointments</p>
@@ -348,17 +360,11 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         techs={board.map((tech) => ({ id: tech.id, number: tech.number, name: tech.name, board: tech.board }))}
         selectedId={selectedId}
         onSelect={(id) => openAppointment(id)}
+        slotOpen={slotDecision.ok}
+        onSlotRefused={refuseClosedSlot}
         onSlot={(nextTech, nextTime) => {
-          const decision = slotOpensBook({
-            actor,
-            day,
-            scheduling: shop.settings.scheduling,
-            userStoreId: shop.userStoreId,
-            activeStoreId: shop.activeStoreId,
-          });
-          if (!decision.ok) {
-            setActionError(decision.error);
-            setBooking(false);
+          if (!slotDecision.ok) {
+            refuseClosedSlot();
             return;
           }
           setActionError(null);
@@ -388,7 +394,13 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         onEdit={(id) => openAppointment(id)}
         onCancel={canCancel ? (id) => askCancel(id) : undefined}
         onCopy={copyAppointment}
-        onPasteSlot={(techId, time) => pasteInto(techId, time)}
+        onPasteSlot={(techId, time) => {
+          if (!slotDecision.ok) {
+            refuseClosedSlot();
+            return;
+          }
+          pasteInto(techId, time);
+        }}
         canPaste={clipboard !== null}
         label={(row) => look.customer.get(row.customerId)?.name ?? "Customer"}
         hoursFor={(row) => laborHours(row, shop.laborOps)}
@@ -706,7 +718,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           appointmentId: preset.id,
         } : undefined}
       />
-    </>
+    </div>
   );
 }
 
