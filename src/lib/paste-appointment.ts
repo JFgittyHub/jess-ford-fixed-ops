@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose } from "./capacity";
 import { deskActor } from "./cancel";
+import { bookingDateMessage } from "./store";
 import type { Appointment } from "./types";
 
 /** Fields Copy keeps. The slot supplies the day, the start, and the technician. */
@@ -31,6 +32,25 @@ export function pasteAppointmentInput(copy: CopiedAppointment, slot: { date: str
     advisorId: slot.advisorId ?? copy.advisorId,
     status: "scheduled",
   };
+}
+
+/** Right-click or press-and-hold opens Book only on an open day at this store. */
+export function slotOpensBook(input: {
+  actor: string;
+  day: string;
+  scheduling: Parameters<typeof bookingDateMessage>[1];
+  userStoreId?: string;
+  activeStoreId?: string;
+}): { ok: true } | { ok: false; error: string } {
+  if (input.actor !== "advisor" && input.actor !== "service-manager") {
+    return { ok: false, error: input.actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything." };
+  }
+  if (input.userStoreId && input.activeStoreId && input.userStoreId !== input.activeStoreId) {
+    return { ok: false, error: "Book on your own store. Each store keeps its own schedule." };
+  }
+  const dateError = bookingDateMessage(input.day, input.scheduling);
+  if (dateError) return { ok: false, error: dateError };
+  return { ok: true };
 }
 
 /** The pasted visit belongs to whoever is Working as, when that person is an advisor on this store. */

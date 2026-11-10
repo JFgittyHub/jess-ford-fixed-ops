@@ -22,7 +22,7 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
-import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotOpensBook, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import { now } from "@/lib/clock";
 import type { Appointment, CancelReason, SchedulingSettings, TransportOption } from "@/lib/types";
@@ -297,7 +297,25 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
 
   return (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div data-copy-anchor>
+        <CopyBar
+          copiedName={copiedName}
+          notice={pasteNotice}
+          onOverride={() => {
+            if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
+          }}
+          onReason={(reason) => {
+            if (pasteNotice?.kind !== "close") return;
+            if (!reason.trim()) {
+              setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
+              return;
+            }
+            pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
+          }}
+          onDismiss={() => setPasteNotice(null)}
+        />
+      </div>
+      <div data-desk-heading className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wide text-muted">Appointments</p>
           <h1 className="mt-1 flex flex-wrap items-baseline gap-3 font-display text-5xl leading-none tracking-tight">
@@ -321,23 +339,6 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         </div>
       </div>
 
-      <CopyBar
-        copiedName={copiedName}
-        notice={pasteNotice}
-        onOverride={() => {
-          if (pasteNotice?.kind === "override") pasteInto(pasteNotice.techId, pasteNotice.time, { confirmOverride: true, closeReason: pasteNotice.closeReason });
-        }}
-        onReason={(reason) => {
-          if (pasteNotice?.kind !== "close") return;
-          if (!reason.trim()) {
-            setPasteNotice({ ...pasteNotice, text: PAST_CLOSE_REASON });
-            return;
-          }
-          pasteInto(pasteNotice.techId, pasteNotice.time, { closeReason: reason });
-        }}
-        onDismiss={() => setPasteNotice(null)}
-      />
-
       {board.length === 0 ? (
         <p className="card mt-4 text-muted">No technicians are on a board yet. The day columns show up when a technician is on Express, Main shop, or Internals.</p>
       ) : (
@@ -348,11 +349,20 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         selectedId={selectedId}
         onSelect={(id) => openAppointment(id)}
         onSlot={(nextTech, nextTime) => {
-          if (actor !== "advisor" && actor !== "service-manager") {
-            setActionError(actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything.");
+          const decision = slotOpensBook({
+            actor,
+            day,
+            scheduling: shop.settings.scheduling,
+            userStoreId: shop.userStoreId,
+            activeStoreId: shop.activeStoreId,
+          });
+          if (!decision.ok) {
+            setActionError(decision.error);
+            setBooking(false);
             return;
           }
-          setDate(nextOpenShopDay(day, shop.settings.scheduling));
+          setActionError(null);
+          setDate(day);
           patchSeed({ techId: nextTech });
           setTime(nextTime);
           setBooking(true);
@@ -1225,9 +1235,13 @@ export function CopyBar({
 }) {
   if (!copiedName && !notice) return null;
   return (
-    <div data-copy-bar className="sticky z-20 border-b border-line bg-surface p-3" style={{ top: "var(--app-header-height, 0px)" }}>
-      <div className="grid gap-3">
-        {copiedName ? <p data-copied role="status" className="text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
+    <div
+      data-copy-bar
+      className="sticky z-20 flex max-h-[calc(100vh-var(--app-header-height,0px)-1.25rem)] flex-col gap-3 overflow-hidden border-b border-line bg-surface p-3"
+      style={{ top: "var(--app-header-height, 0px)", maxHeight: "calc(100vh - var(--app-header-height, 0px) - 1.25rem)" }}
+    >
+      {copiedName ? <p data-copied role="status" className="shrink-0 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
+      <div data-copy-scroll className="min-h-0 overflow-y-auto">
         <PasteNoticeBar notice={notice} onOverride={onOverride} onReason={onReason} onDismiss={onDismiss} />
       </div>
     </div>

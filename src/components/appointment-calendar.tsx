@@ -427,12 +427,15 @@ export function AppointmentCalendar({
               }}
               onContextMenu={(event) => {
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
-                if (!onPasteSlot) return;
                 event.preventDefault();
-                if (!canPaste) return;
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
-                setMenu({ kind: "paste", techId: tech.id, time: fromMinutes(mins), x: event.clientX, y: event.clientY });
+                const time = fromMinutes(mins);
+                if (canPaste && onPasteSlot) {
+                  setMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY });
+                  return;
+                }
+                onSlot(tech.id, time);
               }}
               onPointerDown={(event) => {
                 if (!onPasteSlot || !canPaste || event.button !== 0) return;

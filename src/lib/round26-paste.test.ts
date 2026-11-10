@@ -17,7 +17,7 @@ import { deskLocationRewrite } from "./preview-path-prefix.ts";
 import { createEmptyShop, createSeed } from "./seed.ts";
 import { useShop } from "./store.ts";
 import { pinClock, resetClock } from "./clock.ts";
-import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, useForgetCopy, type CopiedAppointment } from "./paste-appointment.ts";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotOpensBook, useForgetCopy, type CopiedAppointment } from "./paste-appointment.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -531,6 +531,78 @@ function CopyHold({ workerKey, name }: { workerKey: string; name: string }) {
   return createElement("p", { "data-copied": "yes" }, held ? `Copied ${held}` : "");
 }
 
+describe("round 26 empty slot opens book", () => {
+  it("right-click opens Book when nothing is copied, and shows Paste once a copy exists", () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const slots: string[] = [];
+    function draw(canPaste: boolean) {
+      flushSync(() => root.render(createElement(AppointmentCalendar, {
+        appointments: [],
+        day: friday,
+        techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+        selectedId: null,
+        onSelect: () => undefined,
+        onSlot: (techId: string, time: string) => slots.push(`${techId}|${time}`),
+        onMove: () => undefined,
+        onWrite: () => undefined,
+        onEdit: () => undefined,
+        onPasteSlot: () => slots.push("menu"),
+        canPaste,
+        longPressMs: 30,
+        label: () => "",
+        summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+        hoursFor: () => 0,
+      })));
+    }
+    try {
+      draw(false);
+      const column = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(column);
+      column.getBoundingClientRect = () => ({ top: 0, left: 0, right: 100, bottom: 800, width: 100, height: 800, x: 0, y: 0, toJSON() { return {}; } });
+      flushSync(() => column.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 64 })));
+      assert.equal(host.querySelector("[data-paste]"), null);
+      assert.equal(host.querySelector("[data-context-menu]"), null);
+      assert.deepEqual(slots, ["elena|08:00"]);
+      slots.length = 0;
+      draw(true);
+      const copied = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(copied);
+      copied.getBoundingClientRect = () => ({ top: 0, left: 0, right: 100, bottom: 800, width: 100, height: 800, x: 0, y: 0, toJSON() { return {}; } });
+      flushSync(() => copied.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 64 })));
+      assert.ok(host.querySelector("[data-paste]"));
+      assert.deepEqual(slots, []);
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
+  it("keeps Book closed for Megan and Derek on a past day, a closed day, and the other store", () => {
+    pinClock(when);
+    const scheduling = shop().getState().settings.scheduling;
+    for (const actor of ["advisor", "service-manager"] as const) {
+      const open = slotOpensBook({ actor, day: friday, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" });
+      assert.equal(open.ok, true, actor);
+      const past = slotOpensBook({ actor, day: "2026-11-09", scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" });
+      assert.equal(past.ok, false);
+      if (!past.ok) assert.match(past.error, /already past/);
+      const sunday = slotOpensBook({ actor, day: "2026-11-15", scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" });
+      assert.equal(sunday.ok, false);
+      if (!sunday.ok) assert.match(sunday.error, /closed/);
+      const holiday = slotOpensBook({ actor, day: "2026-11-26", scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" });
+      assert.equal(holiday.ok, false);
+      if (!holiday.ok) assert.match(holiday.error, /closed/);
+      const other = slotOpensBook({ actor, day: friday, scheduling, userStoreId: "grand-coulee", activeStoreId: "pullman" });
+      assert.equal(other.ok, false);
+      if (!other.ok) assert.match(other.error, /own store/);
+    }
+  });
+});
+
 describe("round 26 copy follows the person", () => {
   it("drops the copied line during render when the person, role, or store changes", () => {
     const host = document.createElement("div");
@@ -569,7 +641,9 @@ describe("round 26 copy follows the person", () => {
 
 describe("round 26 copy bar stays under the header", () => {
   it("keeps the copied line and a dismissible refusal below the desk header", async () => {
-    const header = await scheduleHeaderHtml();
+    const shell = await scheduleShellHtml();
+    const header = shell.header;
+    assert.ok(shell.page.indexOf("data-copy-anchor") !== -1 && shell.page.indexOf("data-copy-anchor") < shell.page.indexOf("data-desk-heading"));
     const bar = renderToStaticMarkup(createElement(CopyBar, {
       copiedName: "Helen Cho",
       notice: { kind: "error", text: "That time is outside shop hours." },
@@ -598,7 +672,7 @@ describe("round 26 copy bar stays under the header", () => {
     assert.ok(header.includes("Viewing as"));
     assert.ok(header.includes("Settings"));
     assert.ok(bar.includes("data-dismiss"));
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="px-4 py-5"><h1>Today</h1>${bar}${board}</main></div></div>`;
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:28rem"><h1 class="font-display text-5xl">Today</h1><div class="desk-actions flex flex-wrap gap-2"><button class="btn min-h-11" type="button">Book appointment</button></div></div>${board}</main></div></div>`;
     const css = await appCss(`${header}${bar}${board}${html}`);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -613,7 +687,9 @@ describe("round 26 copy bar stays under the header", () => {
         assert.ok(before.bar.top >= before.header.bottom - 1, `${width} bar starts below the header`);
         assert.ok(before.copied.top >= before.header.bottom - 1 && before.notice.top >= before.header.bottom - 1, `${width} copy text stays below the header`);
         assert.ok(before.working.bottom <= before.header.bottom + 1 && before.viewing.bottom <= before.header.bottom + 1 && before.settings.bottom <= before.header.bottom + 1, `${width} header controls stay in the header`);
-        assert.ok(before.copied.bottom <= height && before.notice.bottom <= height && before.dismiss.bottom <= height, `${width} refusal stays on screen`);
+        assert.equal(before.scrollY, 0, `${width} starts at the top`);
+        assert.ok(before.bar.top >= 0 && before.bar.bottom <= height, `${width} the whole bar is inside the viewport`);
+        assert.ok(before.copied.top >= 0 && before.copied.bottom <= height && before.notice.top >= 0 && before.notice.bottom <= height && before.dismiss.top >= 0 && before.dismiss.bottom <= height, `${width} refusal stays on screen`);
         assert.ok(before.padTop >= 8, `${width} bar is padded`);
         assert.equal(before.opaque, true, `${width} bar is opaque`);
         assert.equal(before.coversHeader, false, `${width} bar covers a header control`);
@@ -638,9 +714,87 @@ describe("round 26 copy bar stays under the header", () => {
       await browser.close();
     }
   });
+
+  it("keeps a past-close reason form under the header with the copied line visible", async () => {
+    const header = (await scheduleShellHtml()).header;
+    const bar = renderToStaticMarkup(createElement(CopyBar, {
+      copiedName: "Helen Cho",
+      notice: { kind: "close", techId: "elena", time: "17:00", reason: "", text: "Staying past close so the tow truck can finish. ".repeat(30) },
+      onOverride: () => undefined,
+      onReason: () => undefined,
+      onDismiss: () => undefined,
+    }));
+    const board = renderToStaticMarkup(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: friday,
+      techs: [
+        { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
+        { id: "elena", number: "2", name: "Elena", board: "express" as const },
+      ],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: () => undefined,
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    }));
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5">${bar}${board}</main></div></div>`;
+    const css = await appCss(`${header}${bar}${board}${html}`);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
+      for (const [width, height] of [[1400, 700], [820, 700], [390, 700]] as const) {
+        await page.setViewportSize({ width, height });
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await pinHeader(page);
+        await page.evaluate(() => {
+          const afternoon = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
+          afternoon?.scrollIntoView({ block: "center" });
+        });
+        await pinHeader(page);
+        const laid = await page.evaluate(() => {
+          const scroller = document.querySelector("[data-copy-scroll]");
+          if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight;
+          const box = (selector: string) => {
+            const node = document.querySelector(selector);
+            if (!node) return null;
+            const rect = node.getBoundingClientRect();
+            return { top: rect.top, bottom: rect.bottom };
+          };
+          const leave = [...document.querySelectorAll("button")].find((button) => button.textContent === "Leave it");
+          const leaveRect = leave?.getBoundingClientRect();
+          const copied = document.querySelector("[data-copied]");
+          return {
+            header: box("header.app-header"),
+            bar: box("[data-copy-bar]"),
+            copied: box("[data-copied]"),
+            reason: box("[aria-label='Reason for running past close']"),
+            paste: box("[data-paste-notice] button[type='submit']"),
+            leave: leaveRect ? { top: leaveRect.top, bottom: leaveRect.bottom } : null,
+            copiedOutsideScroll: copied ? !copied.closest("[data-copy-scroll]") : false,
+            formScroll: scroller instanceof HTMLElement ? scroller.scrollHeight - scroller.clientHeight : 0,
+          };
+        });
+        if (width === 390) assert.ok(laid.formScroll > 20, "the reason form does not scroll inside the bar");
+        assert.ok(laid.header && laid.bar && laid.copied && laid.reason && laid.paste && laid.leave, `${width} missing the reason form`);
+        assert.ok(laid.bar.top >= laid.header.bottom - 1, `${width} form rides over the header`);
+        assert.ok(laid.copied.top >= laid.header.bottom - 1 && laid.copied.bottom <= height, `${width} copied line stays visible`);
+        assert.equal(laid.copiedOutsideScroll, true, `${width} copied line scrolls away with the form`);
+        for (const [name, rect] of [["reason", laid.reason], ["paste", laid.paste], ["leave", laid.leave]] as const) {
+          assert.ok(rect.top >= laid.header.bottom - 1 && rect.bottom <= height + 1, `${width} ${name} is not reachable`);
+        }
+      }
+    } finally {
+      await browser.close();
+    }
+  });
 });
 
-async function scheduleHeaderHtml() {
+async function scheduleShellHtml() {
   useShop.setState({
     ...createSeed(),
     dataset: "sample",
@@ -674,7 +828,7 @@ async function scheduleHeaderHtml() {
     }
     const header = host.querySelector("header.app-header");
     assert.ok(header, "the schedule page rendered the desk header");
-    return header.outerHTML;
+    return { header: header.outerHTML, page: host.innerHTML };
   } finally {
     flushSync(() => root.unmount());
     host.remove();
