@@ -783,6 +783,107 @@ describe("round 26 empty slot opens book", () => {
     }
   });
 
+  it("shows a refusal at the hold threshold for a mouse and a touch, before the finger lifts", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    let notice: PasteNotice | null = null;
+    function paint(canPaste: boolean, slotOpen: boolean, refused: string) {
+      flushSync(() => root.render(createElement("div", null,
+        createElement(CopyBar, {
+          copiedName: canPaste ? "Helen Cho" : "",
+          notice,
+          onOverride: () => undefined,
+          onReason: () => undefined,
+          onDismiss: () => undefined,
+        }),
+        createElement(AppointmentCalendar, {
+          appointments: [],
+          day: slotOpen ? saturday : "2026-11-15",
+          techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+          selectedId: null,
+          onSelect: () => undefined,
+          onSlot: (techId: string, time: string) => bookings.push(`${techId}|${time}`),
+          onMove: () => undefined,
+          onWrite: () => undefined,
+          onEdit: () => undefined,
+          onPasteSlot: () => bookings.push("paste"),
+          canPaste,
+          slotOpen,
+          slotError: slotOpen
+            ? (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" })
+            : undefined,
+          onSlotRefused: (message?: string) => {
+            notice = { kind: "error", text: message ?? refused };
+            paint(canPaste, slotOpen, refused);
+          },
+          longPressMs: slotOpen ? 550 : 30,
+          label: () => "",
+          summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+          hoursFor: () => 0,
+        }),
+        createElement("p", { "data-below-board": "yes" }, "below the board"),
+      )));
+    }
+    function column() {
+      const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(node);
+      node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+      return node;
+    }
+    async function hold(pointerType: "mouse" | "touch", clientY: number, waitMs: number) {
+      const lane = column();
+      const pointer = window.PointerEvent;
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, clientX: 8, clientY, pointerId: 11 }));
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+      return lane;
+    }
+    try {
+      for (const canPaste of [false, true]) {
+        for (const pointerType of ["mouse", "touch"] as const) {
+          bookings.length = 0;
+          notice = null;
+          paint(canPaste, true, "That time is outside shop hours.");
+          await hold(pointerType, 18 * 32, 200);
+          assert.equal((host.querySelector("[data-copy-bar]")?.textContent ?? "").includes("outside shop hours"), false, `${pointerType} showed the refusal before the hold finished`);
+          assert.equal(bookings.length, 0);
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          assert.match(host.querySelector("[data-copy-bar]")?.textContent ?? "", /outside shop hours/);
+          assert.equal(host.querySelector("[data-paste]"), null);
+          assert.equal(host.querySelector("[data-context-menu]"), null);
+          assert.equal(bookings.length, 0);
+          assert.equal((host.querySelector("[data-below-board]")?.textContent ?? "").includes("outside shop hours"), false);
+          const lane = column();
+          const pointer = window.PointerEvent;
+          window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType, clientX: 8, clientY: 18 * 32, pointerId: 11 }));
+          lane.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 8, clientY: 18 * 32 }));
+          assert.equal(bookings.length, 0);
+          assert.equal(host.querySelector("[data-paste]"), null);
+        }
+      }
+      for (const [slotOpen, refused, clientY] of [
+        [false, "The shop is closed that day.", 64],
+        [false, "That day is already past.", 96],
+      ] as const) {
+        bookings.length = 0;
+        notice = null;
+        paint(true, slotOpen, refused);
+        await hold("touch", clientY, 50);
+        assert.match(host.querySelector("[data-copy-bar]")?.textContent ?? "", new RegExp(refused.replace(/[.]/g, "\\.")));
+        assert.equal(host.querySelector("[data-paste]"), null);
+        assert.equal(bookings.length, 0);
+      }
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
   it("keeps Book closed for Megan and Derek on a past day, a closed day, and the other store", () => {
     pinClock(when);
     const scheduling = shop().getState().settings.scheduling;

@@ -470,13 +470,31 @@ export function AppointmentCalendar({
                 onSlot(tech.id, time);
               }}
               onPointerDown={(event) => {
-                if (event.button !== 0) return;
+                if (event.button !== 0 && event.pointerType !== "touch") return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 const startX = event.clientX;
                 const startY = event.clientY;
                 const column = event.currentTarget;
                 const heldTime = fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
-                if (!slotOpen || slotError?.(heldTime) || !onPasteSlot || !canPaste) return;
+                const hoursBlock = slotError?.(heldTime) ?? null;
+                if (!slotOpen || hoursBlock) {
+                  const timer = window.setTimeout(() => {
+                    suppressSlotClick.current = true;
+                    onSlotRefused?.(slotOpen ? hoursBlock ?? undefined : undefined);
+                  }, longPressMs);
+                  const move = (ev: PointerEvent) => {
+                    if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
+                  };
+                  const up = () => {
+                    window.clearTimeout(timer);
+                    window.removeEventListener("pointermove", move);
+                    window.removeEventListener("pointerup", up);
+                  };
+                  window.addEventListener("pointermove", move);
+                  window.addEventListener("pointerup", up);
+                  return;
+                }
+                if (!onPasteSlot || !canPaste) return;
                 const timer = window.setTimeout(() => {
                   suppressSlotClick.current = true;
                   onSlotAccepted?.();
