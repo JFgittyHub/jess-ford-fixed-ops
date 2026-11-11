@@ -477,39 +477,33 @@ export function AppointmentCalendar({
                 const column = event.currentTarget;
                 const heldTime = fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
                 const hoursBlock = slotError?.(heldTime) ?? null;
-                if (!slotOpen || hoursBlock) {
-                  const timer = window.setTimeout(() => {
-                    suppressSlotClick.current = true;
-                    onSlotRefused?.(slotOpen ? hoursBlock ?? undefined : undefined);
-                  }, longPressMs);
+                const arm = (timer: number) => {
                   const move = (ev: PointerEvent) => {
                     if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
                   };
-                  const up = () => {
+                  const end = () => {
                     window.clearTimeout(timer);
                     window.removeEventListener("pointermove", move);
-                    window.removeEventListener("pointerup", up);
+                    window.removeEventListener("pointerup", end);
+                    window.removeEventListener("pointercancel", end);
                   };
                   window.addEventListener("pointermove", move);
-                  window.addEventListener("pointerup", up);
+                  window.addEventListener("pointerup", end);
+                  window.addEventListener("pointercancel", end);
+                };
+                if (!slotOpen || hoursBlock) {
+                  arm(window.setTimeout(() => {
+                    suppressSlotClick.current = true;
+                    onSlotRefused?.(slotOpen ? hoursBlock ?? undefined : undefined);
+                  }, longPressMs));
                   return;
                 }
                 if (!onPasteSlot || !canPaste) return;
-                const timer = window.setTimeout(() => {
+                arm(window.setTimeout(() => {
                   suppressSlotClick.current = true;
                   onSlotAccepted?.();
                   setMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY });
-                }, longPressMs);
-                const move = (ev: PointerEvent) => {
-                  if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
-                };
-                const up = () => {
-                  window.clearTimeout(timer);
-                  window.removeEventListener("pointermove", move);
-                  window.removeEventListener("pointerup", up);
-                };
-                window.addEventListener("pointermove", move);
-                window.addEventListener("pointerup", up);
+                }, longPressMs));
               }}
             >
               {rows.map(({ row, offset }) => {
