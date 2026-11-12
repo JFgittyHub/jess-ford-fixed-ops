@@ -934,6 +934,87 @@ describe("round 26 empty slot opens book", () => {
     }
   });
 
+  it("a hold that finishes and then cancels or lifts still lets the next legal tap open Book", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    const refusals: string[] = [];
+    function draw(canPaste: boolean) {
+      flushSync(() => root.render(createElement(AppointmentCalendar, {
+        appointments: [],
+        day: saturday,
+        techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+        selectedId: null,
+        onSelect: () => undefined,
+        onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+        onMove: () => undefined,
+        onWrite: () => undefined,
+        onEdit: () => undefined,
+        onPasteSlot: () => bookings.push("paste-save"),
+        canPaste,
+        slotOpen: true,
+        slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+        onSlotRefused: (message?: string) => refusals.push(message ?? ""),
+        longPressMs: 40,
+        label: () => "",
+        summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+        hoursFor: () => 0,
+      })));
+    }
+    function column() {
+      const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(node);
+      node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+      return node;
+    }
+    try {
+      const pointer = window.PointerEvent;
+      for (const canPaste of [false, true]) {
+        for (const pointerType of ["mouse", "touch"] as const) {
+          for (const ending of ["cancel", "up"] as const) {
+            bookings.length = 0;
+            refusals.length = 0;
+            draw(canPaste);
+            const lane = column();
+            lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, clientX: 8, clientY: 18 * 32, pointerId: 31 }));
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            assert.match(refusals.join(" "), /outside shop hours/, `${pointerType} ${ending} ${canPaste}`);
+            assert.equal(host.querySelector("[data-paste]"), null);
+            assert.deepEqual(bookings, []);
+            const endName = ending === "cancel" ? "pointercancel" : "pointerup";
+            window.dispatchEvent(new pointer(endName, { bubbles: true, button: 0, pointerType, clientX: 8, clientY: 18 * 32, pointerId: 31 }));
+            const next = column();
+            next.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, clientX: 12, clientY: 6 * 32, pointerId: 32 }));
+            next.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType, clientX: 12, clientY: 6 * 32, pointerId: 32 }));
+            next.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 12, clientY: 6 * 32 }));
+            assert.deepEqual(bookings, ["book|elena|10:00"], `${pointerType} ${ending} copy ${canPaste}`);
+            assert.equal(host.querySelector("[data-paste]"), null);
+          }
+        }
+      }
+      bookings.length = 0;
+      refusals.length = 0;
+      draw(true);
+      const legal = column();
+      legal.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "mouse", clientX: 8, clientY: 6 * 32, pointerId: 41 }));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      assert.ok(host.querySelector("[data-paste]"));
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "mouse", clientX: 8, clientY: 6 * 32, pointerId: 41 }));
+      legal.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 8, clientY: 6 * 32 }));
+      assert.deepEqual(bookings, []);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
   it("keeps Book closed for Megan and Derek on a past day, a closed day, and the other store", () => {
     pinClock(when);
     const scheduling = shop().getState().settings.scheduling;
