@@ -261,6 +261,9 @@ export function AppointmentCalendar({
   const heldPointerId = useRef<number | null>(null);
   const heldPointerActive = useRef(false);
   const foreignSlotClicks = useRef(0);
+  const foreignPointers = useRef(new Set<number>());
+  const windowCleanups = useRef(new Set<() => void>());
+  const disarmHold = useRef<(() => void) | null>(null);
   const [menu, setMenu] = useState<
     | { kind: "copy"; id: string; x: number; y: number }
     | { kind: "paste"; techId: string; time: string; x: number; y: number }
@@ -273,6 +276,22 @@ export function AppointmentCalendar({
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 15000);
     return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const cleanups = windowCleanups.current;
+    const pointers = foreignPointers.current;
+    return () => {
+      disarmHold.current?.();
+      disarmHold.current = null;
+      for (const cleanup of cleanups) cleanup();
+      cleanups.clear();
+      pointers.clear();
+      foreignSlotClicks.current = 0;
+      suppressSlotClick.current = false;
+      heldPointerId.current = null;
+      heldPointerActive.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -433,15 +452,17 @@ export function AppointmentCalendar({
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}
               onClick={(event) => {
+                if ((event.target as HTMLElement).closest?.("[data-appt]")) return;
                 if (foreignSlotClicks.current > 0) {
                   foreignSlotClicks.current -= 1;
+                  const pending = foreignPointers.current.values().next().value;
+                  if (pending !== undefined) foreignPointers.current.delete(pending);
                   return;
                 }
                 if (suppressSlotClick.current) {
                   suppressSlotClick.current = false;
                   return;
                 }
-                if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
                 const time = fromMinutes(mins);
@@ -458,6 +479,10 @@ export function AppointmentCalendar({
                 onSlot(tech.id, time);
               }}
               onContextMenu={(event) => {
+                if (heldPointerActive.current) {
+                  event.preventDefault();
+                  return;
+                }
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 event.preventDefault();
                 const top = event.currentTarget.getBoundingClientRect().top;
@@ -480,14 +505,39 @@ export function AppointmentCalendar({
                 onSlot(tech.id, time);
               }}
               onPointerDown={(event) => {
-                if (heldPointerActive.current && event.pointerId !== heldPointerId.current) {
-                  foreignSlotClicks.current += 1;
+                if (heldPointerId.current !== null && event.pointerId !== heldPointerId.current) {
+                  if (!foreignPointers.current.has(event.pointerId)) {
+                    const pointerId = event.pointerId;
+                    foreignPointers.current.add(pointerId);
+                    foreignSlotClicks.current += 1;
+                    let finish: (ev: PointerEvent) => void = () => undefined;
+                    const detach = () => {
+                      window.removeEventListener("pointerup", finish);
+                      window.removeEventListener("pointercancel", finish);
+                    };
+                    finish = (ev: PointerEvent) => {
+                      if (ev.pointerId !== pointerId) return;
+                      detach();
+                      windowCleanups.current.delete(detach);
+                      if (ev.type === "pointercancel") {
+                        if (foreignPointers.current.delete(pointerId)) foreignSlotClicks.current = Math.max(0, foreignSlotClicks.current - 1);
+                        return;
+                      }
+                      queueMicrotask(() => {
+                        if (foreignPointers.current.delete(pointerId)) foreignSlotClicks.current = Math.max(0, foreignSlotClicks.current - 1);
+                      });
+                    };
+                    windowCleanups.current.add(detach);
+                    window.addEventListener("pointerup", finish);
+                    window.addEventListener("pointercancel", finish);
+                  }
                   return;
                 }
                 const primary = event.isPrimary === true && (event.pointerType !== "mouse" || event.button === 0);
-                if (primary && !heldPointerActive.current) {
+                if (primary && heldPointerId.current === null) {
                   suppressSlotClick.current = false;
                   foreignSlotClicks.current = 0;
+                  foreignPointers.current.clear();
                 }
                 if (event.button !== 0 && event.pointerType !== "touch") return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
@@ -504,14 +554,25 @@ export function AppointmentCalendar({
                     if (ev.pointerId !== pointerId) return;
                     if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
                   };
-                  const end = (ev: PointerEvent) => {
-                    if (ev.pointerId !== pointerId) return;
+                  let end: (ev: PointerEvent) => void = () => undefined;
+                  const disarm = () => {
                     window.clearTimeout(timer);
-                    if (heldPointerId.current === pointerId) heldPointerActive.current = false;
                     window.removeEventListener("pointermove", move);
                     window.removeEventListener("pointerup", end);
                     window.removeEventListener("pointercancel", end);
+                    windowCleanups.current.delete(disarm);
+                    if (disarmHold.current === disarm) disarmHold.current = null;
+                    if (heldPointerId.current === pointerId) {
+                      heldPointerId.current = null;
+                      heldPointerActive.current = false;
+                    }
                   };
+                  end = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
+                    disarm();
+                  };
+                  disarmHold.current = disarm;
+                  windowCleanups.current.add(disarm);
                   window.addEventListener("pointermove", move);
                   window.addEventListener("pointerup", end);
                   window.addEventListener("pointercancel", end);
