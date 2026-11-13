@@ -1075,6 +1075,171 @@ describe("round 26 empty slot opens book", () => {
     }
   });
 
+  it("a second finger cannot take the hold or open Book on its own slot", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    flushSync(() => root.render(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: saturday,
+      techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      onPasteSlot: () => bookings.push("paste-save"),
+      canPaste: true,
+      slotOpen: true,
+      slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+      longPressMs: 40,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    })));
+    try {
+      const pointer = window.PointerEvent;
+      const column = () => {
+        const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+        assert.ok(node);
+        node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+        return node;
+      };
+      const pasteSlot = () => {
+        const menu = host.querySelector<HTMLElement>("[data-context-menu]");
+        return { count: host.querySelectorAll("[data-paste]").length, left: menu?.style.left ?? "", top: menu?.style.top ?? "" };
+      };
+      for (const pointerType of ["touch", "mouse"] as const) {
+        bookings.length = 0;
+        const lane = column();
+        lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 71 }));
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        assert.deepEqual(pasteSlot(), { count: 1, left: "8px", top: "192px" }, pointerType);
+        lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 72 }));
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType, isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 72 }));
+        lane.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, clientX: 8, clientY: 6 * 32 }));
+        lane.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, clientX: 48, clientY: 8 * 32 }));
+        assert.deepEqual(bookings, [], pointerType);
+        assert.deepEqual(pasteSlot(), { count: 1, left: "8px", top: "192px" }, pointerType);
+        window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType, isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 71 }));
+      }
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
+  it("a second finger that lifts early does not cancel the first hold", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    flushSync(() => root.render(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: saturday,
+      techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      onPasteSlot: () => bookings.push("paste-save"),
+      canPaste: true,
+      slotOpen: true,
+      slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+      longPressMs: 70,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    })));
+    try {
+      const pointer = window.PointerEvent;
+      const lane = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(lane);
+      lane.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 81 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 82 }));
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 82 }));
+      assert.equal(host.querySelector("[data-paste]"), null);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const menu = host.querySelector<HTMLElement>("[data-context-menu]");
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      assert.equal(menu?.style.left, "8px");
+      assert.equal(menu?.style.top, "192px");
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 81 }));
+      lane.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, clientX: 8, clientY: 6 * 32 }));
+      assert.deepEqual(bookings, []);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
+  it("a non-primary press does not clear a finished hold", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    flushSync(() => root.render(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: saturday,
+      techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      onPasteSlot: () => bookings.push("paste-save"),
+      canPaste: true,
+      slotOpen: true,
+      slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+      longPressMs: 40,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    })));
+    try {
+      const pointer = window.PointerEvent;
+      const lane = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(lane);
+      lane.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 91 }));
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 91 }));
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 48, clientY: 8 * 32, pointerId: 92 }));
+      lane.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, clientX: 8, clientY: 6 * 32 }));
+      assert.deepEqual(bookings, []);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      const menu = host.querySelector<HTMLElement>("[data-context-menu]");
+      assert.equal(menu?.style.left, "8px");
+      assert.equal(menu?.style.top, "192px");
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 48, clientY: 8 * 32, pointerId: 92 }));
+    } finally {
+      root.unmount();
+      host.remove();
+    }
+  });
+
   it("keeps Book closed for Megan and Derek on a past day, a closed day, and the other store", () => {
     pinClock(when);
     const scheduling = shop().getState().settings.scheduling;

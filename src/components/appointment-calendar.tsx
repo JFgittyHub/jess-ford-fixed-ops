@@ -260,6 +260,7 @@ export function AppointmentCalendar({
   const suppressSlotClick = useRef(false);
   const heldPointerId = useRef<number | null>(null);
   const heldPointerActive = useRef(false);
+  const foreignSlotClicks = useRef(0);
   const [menu, setMenu] = useState<
     | { kind: "copy"; id: string; x: number; y: number }
     | { kind: "paste"; techId: string; time: string; x: number; y: number }
@@ -281,6 +282,7 @@ export function AppointmentCalendar({
     };
     const onPointer = (event: PointerEvent) => {
       if ((event.target as HTMLElement | null)?.closest?.("[data-context-menu]")) return;
+      if (heldPointerActive.current && event.pointerId !== heldPointerId.current) return;
       if (event.isPrimary === false) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
       setMenu(null);
@@ -431,6 +433,10 @@ export function AppointmentCalendar({
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}
               onClick={(event) => {
+                if (foreignSlotClicks.current > 0) {
+                  foreignSlotClicks.current -= 1;
+                  return;
+                }
                 if (suppressSlotClick.current) {
                   suppressSlotClick.current = false;
                   return;
@@ -474,8 +480,15 @@ export function AppointmentCalendar({
                 onSlot(tech.id, time);
               }}
               onPointerDown={(event) => {
+                if (heldPointerActive.current && event.pointerId !== heldPointerId.current) {
+                  foreignSlotClicks.current += 1;
+                  return;
+                }
                 const primary = event.isPrimary === true && (event.pointerType !== "mouse" || event.button === 0);
-                if (primary && !heldPointerActive.current) suppressSlotClick.current = false;
+                if (primary && !heldPointerActive.current) {
+                  suppressSlotClick.current = false;
+                  foreignSlotClicks.current = 0;
+                }
                 if (event.button !== 0 && event.pointerType !== "touch") return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 const startX = event.clientX;
@@ -485,6 +498,8 @@ export function AppointmentCalendar({
                 const heldTime = fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
                 const hoursBlock = slotError?.(heldTime) ?? null;
                 const arm = (timer: number) => {
+                  heldPointerId.current = pointerId;
+                  heldPointerActive.current = true;
                   const move = (ev: PointerEvent) => {
                     if (ev.pointerId !== pointerId) return;
                     if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
