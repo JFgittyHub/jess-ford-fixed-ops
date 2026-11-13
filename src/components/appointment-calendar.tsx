@@ -260,7 +260,6 @@ export function AppointmentCalendar({
   const suppressSlotClick = useRef(false);
   const heldPointerId = useRef<number | null>(null);
   const heldPointerActive = useRef(false);
-  const foreignSlotClicks = useRef(0);
   const foreignPointers = useRef(new Set<number>());
   const windowCleanups = useRef(new Set<() => void>());
   const disarmHold = useRef<(() => void) | null>(null);
@@ -287,7 +286,6 @@ export function AppointmentCalendar({
       for (const cleanup of cleanups) cleanup();
       cleanups.clear();
       pointers.clear();
-      foreignSlotClicks.current = 0;
       suppressSlotClick.current = false;
       heldPointerId.current = null;
       heldPointerActive.current = false;
@@ -452,13 +450,12 @@ export function AppointmentCalendar({
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}
               onClick={(event) => {
-                if ((event.target as HTMLElement).closest?.("[data-appt]")) return;
-                if (foreignSlotClicks.current > 0) {
-                  foreignSlotClicks.current -= 1;
-                  const pending = foreignPointers.current.values().next().value;
-                  if (pending !== undefined) foreignPointers.current.delete(pending);
+                const clickPointerId = (event.nativeEvent as PointerEvent | undefined)?.pointerId;
+                if (typeof clickPointerId === "number" && clickPointerId >= 0 && foreignPointers.current.delete(clickPointerId)) {
+                  event.preventDefault();
                   return;
                 }
+                if ((event.target as HTMLElement).closest?.("[data-appt]")) return;
                 if (suppressSlotClick.current) {
                   suppressSlotClick.current = false;
                   return;
@@ -509,7 +506,6 @@ export function AppointmentCalendar({
                   if (!foreignPointers.current.has(event.pointerId)) {
                     const pointerId = event.pointerId;
                     foreignPointers.current.add(pointerId);
-                    foreignSlotClicks.current += 1;
                     let finish: (ev: PointerEvent) => void = () => undefined;
                     const detach = () => {
                       window.removeEventListener("pointerup", finish);
@@ -519,13 +515,7 @@ export function AppointmentCalendar({
                       if (ev.pointerId !== pointerId) return;
                       detach();
                       windowCleanups.current.delete(detach);
-                      if (ev.type === "pointercancel") {
-                        if (foreignPointers.current.delete(pointerId)) foreignSlotClicks.current = Math.max(0, foreignSlotClicks.current - 1);
-                        return;
-                      }
-                      queueMicrotask(() => {
-                        if (foreignPointers.current.delete(pointerId)) foreignSlotClicks.current = Math.max(0, foreignSlotClicks.current - 1);
-                      });
+                      if (ev.type === "pointercancel") foreignPointers.current.delete(pointerId);
                     };
                     windowCleanups.current.add(detach);
                     window.addEventListener("pointerup", finish);
@@ -536,7 +526,6 @@ export function AppointmentCalendar({
                 const primary = event.isPrimary === true && (event.pointerType !== "mouse" || event.button === 0);
                 if (primary && heldPointerId.current === null) {
                   suppressSlotClick.current = false;
-                  foreignSlotClicks.current = 0;
                   foreignPointers.current.clear();
                 }
                 if (event.button !== 0 && event.pointerType !== "touch") return;
@@ -621,6 +610,10 @@ export function AppointmentCalendar({
                     style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                     onContextMenu={(event) => {
+                      if (heldPointerActive.current) {
+                        event.preventDefault();
+                        return;
+                      }
                       if (!onCopy) return;
                       event.preventDefault();
                       event.stopPropagation();
