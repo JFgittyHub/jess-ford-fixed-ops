@@ -1,12 +1,67 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Meter } from "@/components/ui";
-import { today } from "@/lib/format";
+import { lengthLabel, today } from "@/lib/format";
 import type { Appointment, TechBoard } from "@/lib/types";
 
 const START = 7 * 60;
 const END = 18 * 60;
 const SNAP = 30;
 const SLOT = 32;
+const HANDLE = 10;
+/** Prior help box was 44px. 34px is about 23% smaller and still a usable touch target. */
+const SUMMARY_MARK = 34;
+
+function summaryMarkBox(block: number) {
+  const width = SUMMARY_MARK;
+  const height = Math.min(SUMMARY_MARK, Math.max(1, block - 1));
+  return { width, height, top: Math.max(0, block - height), right: 0, bottom: 0 };
+}
+
+function laneTag(lane: string) {
+  if (lane === "waiter") return "Waiter";
+  if (lane === "drop") return "Drop-off";
+  return "";
+}
+
+export { lengthLabel };
+
+export function cardBlockHeight(minutes: number) {
+  return Math.max(SLOT - 2, (minutes / SNAP) * SLOT - 2);
+}
+
+/** The grip is the bottom 10px of the card. It does not hang into the next slot. */
+export function lengthHandleRange(minutes: number) {
+  const height = cardBlockHeight(minutes);
+  const top = Math.max(0, height - HANDLE);
+  return { top, bottom: height, center: height / 2 };
+}
+
+export function planCalendarDrag(input: {
+  mode: "move" | "resize";
+  time: string;
+  minutes: number;
+  techId: string;
+  dx: number;
+  dy: number;
+  techIds: string[];
+  colWidth: number;
+}) {
+  const slots = Math.round(input.dy / SLOT);
+  if (input.mode === "resize") {
+    const start = toMinutes(input.time);
+    return {
+      time: input.time,
+      minutes: clamp(input.minutes + slots * SNAP, 30, END - start),
+      techId: input.techId,
+    };
+  }
+  const techShift = Math.round(input.dx / Math.max(1, input.colWidth));
+  const minutes = input.minutes;
+  const start = clamp(toMinutes(input.time) + slots * SNAP, START, END - minutes);
+  const index = Math.max(0, input.techIds.indexOf(input.techId));
+  const nextIndex = clamp(index + techShift, 0, Math.max(0, input.techIds.length - 1));
+  return { time: fromMinutes(start), minutes, techId: input.techIds[nextIndex] ?? input.techId };
+}
 export const TECH_DAY_GOAL = 8;
 
 type Draft = { id: string; time: string; minutes: number; techId: string };
@@ -142,6 +197,7 @@ export type ApptSummary = {
   ops: string;
   status: string;
   canWrite: boolean;
+  writeNote?: string;
 };
 
 export function AppointmentCalendar({
@@ -154,6 +210,15 @@ export function AppointmentCalendar({
   onMove,
   onWrite,
   onEdit,
+  onCancel,
+  onCopy,
+  onPasteSlot,
+  canPaste = false,
+  slotOpen = true,
+  onSlotRefused,
+  onSlotAccepted,
+  slotError,
+  longPressMs = 550,
   label,
   summary,
   hoursFor,
@@ -167,6 +232,20 @@ export function AppointmentCalendar({
   onMove: (id: string, patch: { time: string; minutes: number; techId: string }) => void;
   onWrite: (id: string) => void;
   onEdit: (id: string) => void;
+  onCancel?: (id: string) => void;
+  onCopy?: (id: string) => void;
+  onPasteSlot?: (techId: string, time: string) => void;
+  /** Paste stays hidden until a card has been copied. */
+  canPaste?: boolean;
+  /** Closed, past, and other-store days open neither Book nor Paste. */
+  slotOpen?: boolean;
+  onSlotRefused?: (message?: string) => void;
+  /** A valid Book or Paste clears a refusal that is already in the bar. */
+  onSlotAccepted?: () => void;
+  /** Outside shop hours, and any other slot the day check still allows. */
+  slotError?: (time: string) => string | null;
+  /** Press-and-hold delay before the copy or paste menu opens. */
+  longPressMs?: number;
   label: (appt: Appointment) => string;
   summary: (appt: Appointment) => ApptSummary;
   hoursFor: (appt: Appointment) => number;
@@ -176,6 +255,19 @@ export function AppointmentCalendar({
   const draftRef = useRef<Draft | null>(null);
   const [hover, setHover] = useState<{ id: string; x: number; y: number; below: boolean } | null>(null);
   const hideTimer = useRef<number | null>(null);
+  const touchSummaryAt = useRef(0);
+  const gesture = useRef({ moved: false, summary: false, x: 0, y: 0 });
+  const suppressSlotClick = useRef(false);
+  const heldPointerId = useRef<number | null>(null);
+  const heldPointerActive = useRef(false);
+  const foreignPointers = useRef(new Set<number>());
+  const windowCleanups = useRef(new Set<() => void>());
+  const disarmHold = useRef<(() => void) | null>(null);
+  const [menu, setMenu] = useState<
+    | { kind: "copy"; id: string; x: number; y: number }
+    | { kind: "paste"; techId: string; time: string; x: number; y: number }
+    | null
+  >(null);
   const hours = Array.from({ length: (END - START) / 60 }, (_, index) => START + index * 60);
   const height = ((END - START) / SNAP) * SLOT;
   const [now, setNow] = useState(() => new Date());
@@ -184,6 +276,41 @@ export function AppointmentCalendar({
     const id = window.setInterval(() => setNow(new Date()), 15000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    const cleanups = windowCleanups.current;
+    const pointers = foreignPointers.current;
+    return () => {
+      disarmHold.current?.();
+      disarmHold.current = null;
+      for (const cleanup of cleanups) cleanup();
+      cleanups.clear();
+      pointers.clear();
+      suppressSlotClick.current = false;
+      heldPointerId.current = null;
+      heldPointerActive.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenu(null);
+    };
+    const onPointer = (event: PointerEvent) => {
+      if ((event.target as HTMLElement | null)?.closest?.("[data-context-menu]")) return;
+      if (heldPointerActive.current && event.pointerId !== heldPointerId.current) return;
+      if (event.isPrimary === false) return;
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      setMenu(null);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onPointer);
+    };
+  }, [menu]);
 
   const nowMins = pacificMinutes(now);
   const nowTop = nowMins >= START && nowMins <= END ? ((nowMins - START) / SNAP) * SLOT : null;
@@ -195,6 +322,7 @@ export function AppointmentCalendar({
   }
 
   function scheduleHide() {
+    if (Date.now() - touchSummaryAt.current < 700) return;
     if (hideTimer.current) window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => setHover(null), 160);
   }
@@ -204,42 +332,65 @@ export function AppointmentCalendar({
     setDraft(next);
   }
 
-  function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize") {
+  function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize", quiet?: "summary") {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    const mark = event.currentTarget as HTMLElement;
     const origin = { x: event.clientX, y: event.clientY, time: appt.time, minutes: appt.minutes, techId: appt.techId };
     const column = (event.currentTarget as HTMLElement).closest("[data-tech]") as HTMLElement | null;
     const colWidth = column?.getBoundingClientRect().width ?? 140;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    mark.setPointerCapture?.(event.pointerId);
     setHover(null);
+    gesture.current = { moved: false, summary: quiet === "summary", x: event.clientX, y: event.clientY };
+    const slop = quiet === "summary" ? 16 : 4;
     let moved = false;
+    let held = false;
+    const pressTimer = mode === "move" && quiet !== "summary" && onCopy
+      ? window.setTimeout(() => {
+        if (moved) return;
+        held = true;
+        window.removeEventListener("pointermove", onMovePointer);
+        window.removeEventListener("pointerup", onUp);
+        commitDraft(null);
+        setHover(null);
+        setMenu({ kind: "copy", id: appt.id, x: origin.x, y: origin.y });
+      }, longPressMs)
+      : 0;
 
     function onMovePointer(ev: PointerEvent) {
       const dx = ev.clientX - origin.x;
       const dy = ev.clientY - origin.y;
-      if (Math.abs(dx) + Math.abs(dy) > 4) moved = true;
-      const slots = Math.round(dy / SLOT);
-      if (mode === "resize") {
-        const start = toMinutes(origin.time);
-        const minutes = clamp(origin.minutes + slots * SNAP, 30, END - start);
-        commitDraft({ id: appt.id, time: origin.time, minutes, techId: origin.techId });
-        return;
+      if (Math.abs(dx) + Math.abs(dy) > slop) {
+        moved = true;
+        gesture.current.moved = true;
+        if (pressTimer) window.clearTimeout(pressTimer);
       }
-      const techShift = Math.round(dx / colWidth);
-      const minutes = origin.minutes;
-      const start = clamp(toMinutes(origin.time) + slots * SNAP, START, END - minutes);
-      const index = Math.max(0, techIds.indexOf(origin.techId));
-      const nextIndex = clamp(index + techShift, 0, Math.max(0, techIds.length - 1));
-      const techId = techIds[nextIndex] ?? origin.techId;
-      commitDraft({ id: appt.id, time: fromMinutes(start), minutes, techId });
+      const next = planCalendarDrag({
+        mode,
+        time: origin.time,
+        minutes: origin.minutes,
+        techId: origin.techId,
+        dx,
+        dy,
+        techIds,
+        colWidth,
+      });
+      commitDraft({ id: appt.id, ...next });
     }
 
     function onUp() {
+      if (pressTimer) window.clearTimeout(pressTimer);
       window.removeEventListener("pointermove", onMovePointer);
       window.removeEventListener("pointerup", onUp);
+      if (held) return;
       const next = draftRef.current;
       commitDraft(null);
       if (moved && next) onMove(appt.id, { time: next.time, minutes: next.minutes, techId: next.techId });
+      else if (quiet === "summary") {
+        if (event.pointerType === "touch") touchSummaryAt.current = Date.now();
+        showHover(appt.id, mark.getBoundingClientRect());
+      }
       else onSelect(appt.id);
     }
 
@@ -250,8 +401,8 @@ export function AppointmentCalendar({
   const shown = appointments.map((row) => placed(row, draft));
 
   return (
-    <div className="card mt-4 overflow-x-auto p-0">
-      <div className="grid min-w-[52rem]" style={{ gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(8.5rem, 1fr))` }}>
+    <div className="card mt-4 overflow-x-auto p-0" style={{ scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}>
+      <div className="grid min-w-[52rem]" style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(8.5rem, 1fr))` }}>
         <div className="border-b border-line" />
         {columnGroups(techs).map((group) => (
           <div key={group.key} className="border-b border-l border-line px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide" style={{ gridColumn: `span ${group.count}`, background: BOARD_SHADE[group.board].head }}>
@@ -292,15 +443,153 @@ export function AppointmentCalendar({
               data-tech={tech.id}
               className="relative border-l border-line"
               style={{
+                position: "relative",
                 height,
+                overflow: "visible",
                 backgroundColor: BOARD_SHADE[tech.board].column,
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}
               onClick={(event) => {
-                if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                const clickPointerId = (event.nativeEvent as PointerEvent | undefined)?.pointerId;
+                const usablePointer = typeof clickPointerId === "number" && clickPointerId >= 0;
+                if (heldPointerId.current !== null && (!usablePointer || clickPointerId !== heldPointerId.current)) {
+                  if (usablePointer) foreignPointers.current.delete(clickPointerId);
+                  event.preventDefault();
+                  return;
+                }
+                if (usablePointer && foreignPointers.current.delete(clickPointerId)) {
+                  event.preventDefault();
+                  return;
+                }
+                if ((event.target as HTMLElement).closest?.("[data-appt]")) return;
+                if (suppressSlotClick.current) {
+                  suppressSlotClick.current = false;
+                  return;
+                }
                 const top = event.currentTarget.getBoundingClientRect().top;
                 const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
-                onSlot(tech.id, fromMinutes(mins));
+                const time = fromMinutes(mins);
+                if (!slotOpen) {
+                  onSlotRefused?.();
+                  return;
+                }
+                const block = slotError?.(time);
+                if (block) {
+                  onSlotRefused?.(block);
+                  return;
+                }
+                onSlotAccepted?.();
+                onSlot(tech.id, time);
+              }}
+              onContextMenu={(event) => {
+                if (heldPointerActive.current) {
+                  event.preventDefault();
+                  return;
+                }
+                if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                event.preventDefault();
+                const top = event.currentTarget.getBoundingClientRect().top;
+                const mins = clamp(START + Math.floor((event.clientY - top) / SLOT) * SNAP, START, END - 30);
+                const time = fromMinutes(mins);
+                if (!slotOpen) {
+                  onSlotRefused?.();
+                  return;
+                }
+                const block = slotError?.(time);
+                if (block) {
+                  onSlotRefused?.(block);
+                  return;
+                }
+                onSlotAccepted?.();
+                if (canPaste && onPasteSlot) {
+                  setMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY });
+                  return;
+                }
+                onSlot(tech.id, time);
+              }}
+              onPointerDown={(event) => {
+                if (heldPointerId.current !== null && event.pointerId !== heldPointerId.current) {
+                  if (!foreignPointers.current.has(event.pointerId)) {
+                    const pointerId = event.pointerId;
+                    foreignPointers.current.add(pointerId);
+                    let finish: (ev: PointerEvent) => void = () => undefined;
+                    const detach = () => {
+                      window.removeEventListener("pointerup", finish);
+                      window.removeEventListener("pointercancel", finish);
+                    };
+                    finish = (ev: PointerEvent) => {
+                      if (ev.pointerId !== pointerId) return;
+                      detach();
+                      windowCleanups.current.delete(detach);
+                      if (ev.type === "pointercancel") foreignPointers.current.delete(pointerId);
+                    };
+                    windowCleanups.current.add(detach);
+                    window.addEventListener("pointerup", finish);
+                    window.addEventListener("pointercancel", finish);
+                  }
+                  return;
+                }
+                const primary = event.isPrimary === true && (event.pointerType !== "mouse" || event.button === 0);
+                if (primary && heldPointerId.current === null) {
+                  suppressSlotClick.current = false;
+                  foreignPointers.current.clear();
+                }
+                if (event.button !== 0 && event.pointerType !== "touch") return;
+                if ((event.target as HTMLElement).closest("[data-appt]")) return;
+                const startX = event.clientX;
+                const startY = event.clientY;
+                const column = event.currentTarget;
+                const pointerId = event.pointerId;
+                const heldTime = fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
+                const hoursBlock = slotError?.(heldTime) ?? null;
+                const arm = (timer: number) => {
+                  heldPointerId.current = pointerId;
+                  heldPointerActive.current = true;
+                  const move = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
+                    if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
+                  };
+                  let end: (ev: PointerEvent) => void = () => undefined;
+                  const disarm = () => {
+                    window.clearTimeout(timer);
+                    window.removeEventListener("pointermove", move);
+                    window.removeEventListener("pointerup", end);
+                    window.removeEventListener("pointercancel", end);
+                    windowCleanups.current.delete(disarm);
+                    if (disarmHold.current === disarm) disarmHold.current = null;
+                    if (heldPointerId.current === pointerId) {
+                      heldPointerId.current = null;
+                      heldPointerActive.current = false;
+                    }
+                  };
+                  end = (ev: PointerEvent) => {
+                    if (ev.pointerId !== pointerId) return;
+                    disarm();
+                  };
+                  disarmHold.current = disarm;
+                  windowCleanups.current.add(disarm);
+                  window.addEventListener("pointermove", move);
+                  window.addEventListener("pointerup", end);
+                  window.addEventListener("pointercancel", end);
+                };
+                const claimHold = () => {
+                  suppressSlotClick.current = true;
+                  heldPointerId.current = pointerId;
+                  heldPointerActive.current = true;
+                };
+                if (!slotOpen || hoursBlock) {
+                  arm(window.setTimeout(() => {
+                    claimHold();
+                    onSlotRefused?.(slotOpen ? hoursBlock ?? undefined : undefined);
+                  }, longPressMs));
+                  return;
+                }
+                if (!onPasteSlot || !canPaste) return;
+                arm(window.setTimeout(() => {
+                  claimHold();
+                  onSlotAccepted?.();
+                  setMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY });
+                }, longPressMs));
               }}
             >
               {rows.map(({ row, offset }) => {
@@ -308,32 +597,113 @@ export function AppointmentCalendar({
                 const top = ((start - START) / SNAP) * SLOT;
                 const block = Math.max(SLOT - 2, (row.minutes / SNAP) * SLOT - 2);
                 const selected = row.id === selectedId;
+                const titleBand = 11;
+                const mark = summaryMarkBox(block);
+                const gutter = mark.width + 2;
+                const concernRoom = block - HANDLE - titleBand - 1;
+                const concernLines = concernRoom >= 14 ? Math.floor(concernRoom / 14) : 0;
+                const concernHeight = concernLines * 14;
+                const titleRight = mark.top < titleBand ? gutter : 6;
+                const concernRight = titleBand + concernHeight > mark.top ? gutter : 6;
+                const tag = laneTag(row.lane);
                 return (
                   <article
                     key={row.id}
                     data-appt
-                    className={`absolute overflow-hidden rounded-md border border-[#c5d7ee] bg-[#e7f1fb] px-1.5 py-1 pr-6 text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
-                    style={{ top, height: block, left: 4 + offset * 12, right: 4, zIndex: hover?.id === row.id ? 30 : selected ? 5 : 1 + offset, cursor: "grab", touchAction: "none" }}
+                    data-appt-id={row.id}
+                    data-drag="move"
+                    className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
+                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
+                    onContextMenu={(event) => {
+                      if (heldPointerActive.current) {
+                        event.preventDefault();
+                        return;
+                      }
+                      if (!onCopy) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMenu({ kind: "copy", id: row.id, x: event.clientX, y: event.clientY });
+                    }}
                   >
-                    <p className="truncate text-xs font-semibold">{clockTime(row.time)} {label(row)}</p>
-                    <p className="truncate text-xs">{row.concern}</p>
-                    <button
-                      type="button"
-                      aria-label="Change length"
-                      className="absolute bottom-0 left-1 right-6 h-2 cursor-ns-resize border-0 bg-transparent"
-                      onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Appointment summary"
-                      className="absolute right-1 bottom-1 z-10 flex size-4 items-center justify-center rounded-full border border-line bg-surface text-[10px] font-semibold leading-none text-muted"
-                      onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
-                      onMouseLeave={scheduleHide}
-                      onPointerDown={(event) => event.stopPropagation()}
-                    >
-                      ?
-                    </button>
+                    <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
+                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
+                      {tag ? (
+                        <span
+                          data-lane-tag
+                          className="pointer-events-none absolute z-10 truncate rounded-sm border border-[#9eb6d4] bg-white px-1 font-semibold text-[#14315c]"
+                          style={{ position: "absolute", left: 4, bottom: HANDLE, maxWidth: `calc(100% - ${gutter + 8}px)`, height: 14, lineHeight: "12px", fontSize: 10, zIndex: 1 }}
+                        >{tag}</span>
+                      ) : null}
+                      <p
+                        className="pointer-events-none absolute text-[11px]"
+                        data-concern
+                        data-concern-lines={concernLines}
+                        style={{
+                          left: 6,
+                          right: concernRight,
+                          top: titleBand,
+                          height: concernHeight,
+                          margin: 0,
+                          lineHeight: "14px",
+                          overflow: "hidden",
+                          display: "-webkit-box",
+                          WebkitBoxOrient: "vertical",
+                          WebkitLineClamp: concernLines,
+                        }}
+                      >{row.concern}</p>
+                      <button
+                        type="button"
+                        aria-label="Change length"
+                        data-drag="resize"
+                        className="absolute cursor-ns-resize border-0 p-0"
+                        style={{ position: "absolute", left: 4, right: gutter, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
+                        onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
+                      >
+                        <span className={`pointer-events-none mx-auto mt-1 block h-1 w-10 rounded-full ${selected ? "bg-primary" : "bg-[#5d87b0]"} group-hover:h-1.5`} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Appointment summary"
+                        data-drag="move"
+                        data-summary-mark
+                        className="absolute z-20 flex items-center justify-center border border-line bg-surface font-semibold leading-none text-muted"
+                        style={{ position: "absolute", right: 0, bottom: 0, width: mark.width, height: mark.height, margin: 0, zIndex: 2 }}
+                        onMouseEnter={(event) => { if (!draft) showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
+                        onMouseLeave={scheduleHide}
+                        onTouchStart={(event) => {
+                          const touch = event.changedTouches?.[0];
+                          gesture.current = { moved: false, summary: true, x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
+                        }}
+                        onTouchMove={(event) => {
+                          const touch = event.changedTouches?.[0];
+                          if (!touch) return;
+                          const dx = touch.clientX - gesture.current.x;
+                          const dy = touch.clientY - gesture.current.y;
+                          if (Math.abs(dx) + Math.abs(dy) > 16) gesture.current.moved = true;
+                        }}
+                        onTouchEnd={(event) => {
+                          const touch = event.changedTouches?.[0];
+                          const dx = touch ? Math.abs(touch.clientX - gesture.current.x) : 0;
+                          const dy = touch ? Math.abs(touch.clientY - gesture.current.y) : 0;
+                          event.stopPropagation();
+                          if (event.cancelable) event.preventDefault();
+                          if (dx + dy > 16) return;
+                          touchSummaryAt.current = Date.now();
+                          showHover(row.id, event.currentTarget.getBoundingClientRect());
+                        }}
+                        onClick={(event) => { event.stopPropagation(); showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          showHover(row.id, event.currentTarget.getBoundingClientRect());
+                        }}
+                        onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move", "summary"); }}
+                      >
+                        <span className="pointer-events-none text-[8px] leading-none">?</span>
+                      </button>
+                    </div>
                   </article>
                 );
               })}
@@ -346,7 +716,16 @@ export function AppointmentCalendar({
           );
         })}
       </div>
-      {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
+      {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onCancel={onCancel} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
+      {menu ? (
+        <div data-context-menu role="menu" className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
+          {menu.kind === "copy" ? (
+            <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { onCopy?.(menu.id); setMenu(null); }}>Copy</button>
+          ) : canPaste ? (
+            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" onClick={() => { onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -357,6 +736,7 @@ function HoverCard({
   summary,
   onWrite,
   onEdit,
+  onCancel,
   onEnter,
   onLeave,
 }: {
@@ -365,6 +745,7 @@ function HoverCard({
   summary: (appt: Appointment) => ApptSummary;
   onWrite: (id: string) => void;
   onEdit: (id: string) => void;
+  onCancel?: (id: string) => void;
   onEnter: () => void;
   onLeave: () => void;
 }) {
@@ -373,6 +754,7 @@ function HoverCard({
   const detail = summary(row);
   return (
     <div
+      data-hover-summary
       className="fixed z-50 w-64 rounded-md border border-line bg-surface-2 p-3 shadow-card"
       style={{ left: hover.x, top: hover.y, transform: hover.below ? undefined : "translateY(-100%)" }}
       onMouseEnter={onEnter}
@@ -389,11 +771,13 @@ function HoverCard({
       <p className="mt-1 text-sm">{detail.concern}</p>
       <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-muted">{detail.status}</p>
       <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" className="btn btn-ghost btn-small" onClick={() => onEdit(row.id)}>Edit details</button>
+        <button type="button" className="btn btn-ghost btn-small min-h-11 min-w-11" onClick={() => onEdit(row.id)}>Edit details</button>
+        {onCancel && row.status !== "cancelled" ? <button type="button" className="btn btn-ghost btn-small min-h-11 min-w-11" onClick={() => onCancel(row.id)}>Cancel appointment</button> : null}
         {detail.canWrite ? (
           <button type="button" className="btn btn-primary btn-small" onClick={() => onWrite(row.id)}>Write repair order</button>
         ) : null}
       </div>
+      {!detail.canWrite && detail.writeNote ? <p className="mt-2 text-sm text-muted">{detail.writeNote}</p> : null}
       {!detail.canWrite && row.orderId ? <p className="mt-2 text-sm text-muted">Already on a repair order.</p> : null}
     </div>
   );

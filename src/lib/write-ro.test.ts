@@ -14,6 +14,7 @@ type Preset = {
   concern?: string;
   laborOpIds?: string[];
   appointmentId?: string;
+  mileage?: string;
 };
 
 type NewOrderProps = {
@@ -372,9 +373,9 @@ function loadShop() {
       { id: "mina", name: "Mina Patel", phone: "(555) 010-0003", mobile: "", email: "", noShows: 0 },
     ],
     vehicles: [
-      { id: "helen-truck", customerId: "helen", year: 2024, model: "F-150", vin: "1FTH" },
-      { id: "glenn-car", customerId: "glenn", year: 2019, model: "Escape", vin: "1FMC" },
-      { id: "mina-suv", customerId: "mina", year: 2021, model: "Explorer", vin: "1FM5" },
+      { id: "helen-truck", customerId: "helen", year: 2024, make: "Ford", model: "F-150", vin: "1FTH" },
+      { id: "glenn-car", customerId: "glenn", year: 2019, make: "Ford", model: "Escape", vin: "1FMC" },
+      { id: "mina-suv", customerId: "mina", year: 2021, make: "Ford", model: "Explorer", vin: "1FM5" },
     ],
     advisors: [
       { id: "advisor-21", number: "21", name: "First Advisor", base: 1, laborPercent: 1, partsPercent: 1 },
@@ -387,6 +388,7 @@ function loadShop() {
       appointment("appt-mina", "mina", "mina-suv", "advisor-mina", "scheduled"),
     ],
     orders: [],
+    workingAsId: "advisor-glenn",
   });
 }
 
@@ -463,7 +465,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "glenn",
         vehicleId: "glenn-car",
         advisorId: "advisor-glenn",
@@ -495,7 +497,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "mina",
         vehicleId: "mina-suv",
         advisorId: "advisor-mina",
@@ -532,7 +534,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: { customerId: "glenn", vehicleId: "glenn-car", concern: "Tire rotation" },
+      preset: { mileage: "40000", customerId: "glenn", vehicleId: "glenn-car", concern: "Tire rotation" },
     });
     const [customer, vehicle] = view.selects();
     assert.equal(customer?.value, "glenn");
@@ -551,7 +553,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: { customerId: "mina", vehicleId: "mina-suv", concern: "Alignment" },
+      preset: { mileage: "40000", customerId: "mina", vehicleId: "mina-suv", concern: "Alignment" },
     });
     const [nextCustomer, nextVehicle] = view.selects();
     assert.equal(nextCustomer?.value, "mina");
@@ -589,7 +591,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "glenn",
         vehicleId: "glenn-car",
         advisorId: "advisor-glenn",
@@ -625,7 +627,7 @@ describe("Write RO", () => {
     await view.set({
       open: true,
       onClose() {},
-      preset: {
+      preset: { mileage: "40000",
         customerId: "glenn",
         vehicleId: "glenn-car",
         advisorId: "advisor-glenn",
@@ -641,6 +643,68 @@ describe("Write RO", () => {
     assert.deepEqual(order.labor.map((line) => line.opcode), ["DSL"]);
     assert.equal(order.labor.every((line) => line.techId === ""), true);
     view.root.unmount();
+  });
+});
+
+describe("RO editor", () => {
+  before(async () => {
+    installTestDom();
+  });
+
+  it("renders an open and a closed repair order for every role", async () => {
+    const { OrderEditor } = await import("../components/order-editor.tsx");
+    const { createSeed } = await import("./seed.ts");
+    useShop.setState({ ...createSeed("grand-coulee"), focusOrderId: null });
+    const open = useShop.getState().orders.find((row) => row.status !== "closed");
+    const closed = useShop.getState().orders.find((row) => row.status === "closed");
+    assert.ok(open && closed);
+    for (const who of ["megan", "marcus", "derek"]) {
+      useShop.getState().setWorkingAs(who);
+      for (const id of [open.id, closed.id]) {
+        const host = (document as unknown as { createElement: (tag: string) => { textContent: string } }).createElement("div");
+        (document as unknown as { body: { appendChild: (node: unknown) => void } }).body.appendChild(host);
+        const root = createRoot(host as unknown as Element);
+        await act(async () => {
+          root.render(createElement(OrderEditor, { orderId: id, onClose() {} }));
+        });
+        const text = (document as unknown as { body: { textContent: string } }).body.textContent;
+        assert.match(text, new RegExp(String(useShop.getState().orders.find((row) => row.id === id)?.number)));
+        if (id === closed.id) assert.match(text, /It can be viewed, and it can't be changed/);
+        await act(async () => root.unmount());
+      }
+    }
+  });
+
+  it("renders Pullman for Tara Singh, a technician, and a booked repair order", async () => {
+    const { OrderEditor } = await import("../components/order-editor.tsx");
+    const { createSeed } = await import("./seed.ts");
+    const seed = createSeed("pullman");
+    const source = seed.orders.find((row) => row.status !== "closed" && row.labor.some((line) => line.techId));
+    assert.ok(source);
+    const tech = seed.techs.find((row) => row.id === source.labor.find((line) => line.techId)?.techId);
+    const tara = seed.advisors.find((row) => row.name === "Tara Singh");
+    assert.ok(tech && tara);
+    useShop.setState({
+      ...seed,
+      focusOrderId: null,
+      orders: seed.orders.map((row) => (row.id === source.id ? { ...row, status: "booked" as const, advisorId: tara.id } : row)),
+    });
+    useShop.getState().setWorkingAs("derek");
+    const host = (document as unknown as { createElement: (tag: string) => { textContent: string } }).createElement("div");
+    (document as unknown as { body: { appendChild: (node: unknown) => void } }).body.appendChild(host);
+    const root = createRoot(host as unknown as Element);
+    await act(async () => {
+      root.render(createElement(OrderEditor, { orderId: source.id, onClose() {} }));
+    });
+    const text = (document as unknown as { body: { textContent: string } }).body.textContent;
+    const customer = seed.customers.find((row) => row.id === source.customerId);
+    assert.match(text, /Advisor on this repair order: Tara Singh/);
+    assert.match(text, new RegExp(String(source.number)));
+    assert.match(text, new RegExp(source.concern.split("·")[0].trim().slice(0, 24).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(text, new RegExp(tech.name));
+    assert.match(text, /Booked/);
+    if (customer) assert.match(text, new RegExp(customer.name.split(" ")[0]));
+    await act(async () => root.unmount());
   });
 });
 

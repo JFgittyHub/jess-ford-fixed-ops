@@ -4,9 +4,11 @@ import { printRepairOrder } from "@/components/repair-order-print";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
 import { feeCharge, feeTotal, salesTax, today, usd } from "@/lib/format";
+import { lastVisitMileage, mileageFloorMessage } from "@/lib/mileage";
 import { lineLetter } from "@/lib/jobs";
 import { partSell, rateFor } from "@/lib/pay";
-import { useShop } from "@/lib/store";
+import { roCreationEnabled } from "@/lib/ro-flags";
+import { repairOrderWriterError, useShop } from "@/lib/store";
 
 export const Route = createFileRoute("/estimates")({ component: EstimatesPage });
 
@@ -84,22 +86,46 @@ function EstimatesPage() {
       setError("Add a concern, a labor op, or a part.");
       return;
     }
+    const miles = Number(mileage);
+    const vehicle = shop.vehicles.find((row) => row.id === vehicleOk);
+    const floor = mileageFloorMessage(miles, lastVisitMileage(Object.values(shop.stores ?? {}), vehicle, { openedAt: new Date().toISOString() }));
+    if (!String(mileage).trim() || !Number.isFinite(miles) || miles <= 0) {
+      setError("Mileage in has to be greater than zero.");
+      return;
+    }
+    if (miles > 999999) {
+      setError("Mileage in can't be over 999,999.");
+      return;
+    }
+    if (floor) {
+      setError(floor);
+      return;
+    }
     const id = shop.createOrder({
       customerId,
       vehicleId: vehicleOk,
       advisorId,
       lines: written.length > 0 ? written.map((concern) => ({ concern })) : [{ concern: "Estimate" }],
-      mileage: Number(mileage) || 0,
+      mileage: miles,
       promiseTime: "",
-      labor: labor.map((line) => ({
+    });
+    if (!id) {
+      setError(floor ?? "That repair order was not opened.");
+      return;
+    }
+    const opened = shop.orders.find((row) => row.id === id);
+    const jobId = opened?.jobs[0]?.id ?? "";
+    for (const line of labor) {
+      shop.addLabor(id, {
         opcode: line.opcode,
         description: line.description,
         hours: line.hours,
         rate: line.rate,
         payType: line.payType,
         techId: "",
-      })),
-    });
+        jobId,
+      });
+    }
     for (const line of parts) {
       shop.addPartLine(id, {
         partId: line.partId,
@@ -110,6 +136,7 @@ function EstimatesPage() {
         price: line.price,
         payType: "cp",
         condition: "new",
+        jobId,
       });
     }
     shop.updateWa(id, { choice: "written", estimate: beforeTax, date: today(), time: "08:00" });
@@ -237,7 +264,7 @@ function EstimatesPage() {
           {error ? <p className="mt-2 text-sm text-primary">{error}</p> : null}
           <div className="mt-4 flex flex-wrap gap-2">
             <Button onClick={printRepairOrder}>Print estimate</Button>
-            <Button tone="primary" onClick={openOrder}>Open as repair order</Button>
+            {!roCreationEnabled() ? <p className="text-sm text-muted">Repair orders come from Dealertrack.</p> : repairOrderWriterError(shop) ? <p className="text-sm text-muted">{repairOrderWriterError(shop)}</p> : <Button tone="primary" onClick={openOrder}>Open as repair order</Button>}
           </div>
         </aside>
       </div>
@@ -254,7 +281,7 @@ function EstimatesPage() {
       <article className="ro-print">
         <p className="ro-kicker">{shop.settings.storeName}</p>
         <h1>Repair estimate</h1>
-        <p>{customer?.name ?? "Customer"}{vehicle ? ` · ${vehicle.year} Ford ${vehicle.model}` : ""}{mileage ? ` · ${Number(mileage).toLocaleString("en-US")} miles` : ""}</p>
+        <p>{customer?.name ?? "Customer"}{vehicle ? ` · ${vehicle.year} ${vehicle.make || "Ford"} ${vehicle.model}` : ""}{mileage ? ` · ${Number(mileage).toLocaleString("en-US")} miles` : ""}</p>
         <p>Advisor {advisor ? `#${advisor.number} ${advisor.name}` : "—"} · {today()}</p>
         <h2>Concerns</h2>
         {written.length === 0 ? <p>No concerns written.</p> : written.map((line, index) => <p key={index}>{lineLetter(index)}. {line}</p>)}

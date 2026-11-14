@@ -1,13 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button, Field, Meter, Pill } from "@/components/ui";
 import { pct, usd } from "@/lib/format";
 import { digest } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 import type { PayStyle, Skill, TechBoard } from "@/lib/types";
 
-export const Route = createFileRoute("/dispatch")({ component: DispatchPage });
+export const Route = createFileRoute("/dispatch")({ component: guardLocked(DispatchPage) });
 
 const SKILLS: { id: Skill; label: string }[] = [
   { id: "master", label: "Master" },

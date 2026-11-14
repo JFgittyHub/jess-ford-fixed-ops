@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { bookableDay } from "./bookable-day.ts";
+import { todayIso } from "./clock.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
+import { fullVin } from "./vin.ts";
 
 /**
  * Two bookings on the same tech and time both save.
@@ -11,6 +14,7 @@ import type { Appointment } from "./types.ts";
 describe("appointment actions", () => {
   it("books, moves, updates, and links an appointment", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const before = shop.getState().appointments.map((row) => row.id);
     const customer = shop.getState().customers[0];
     const vehicle = shop.getState().vehicles.find((row) => row.customerId === customer.id);
@@ -46,20 +50,23 @@ describe("appointment actions", () => {
     assert.equal(shop.getState().appointments.find((row) => row.id === target.id)?.status, "arrived");
 
     shop.getState().linkAppointment(target.id, "open-helen");
+    assert.equal(shop.getState().appointments.find((row) => row.id === target.id)?.orderId, null);
+    shop.getState().linkAppointment(target.id, "open-ruth");
     const linked = shop.getState().appointments.find((row) => row.id === target.id);
     assert.equal(linked?.status, "in_shop");
-    assert.equal(linked?.orderId, "open-helen");
+    assert.equal(linked?.orderId, "open-ruth");
   });
 
   it("keeps a VIN edit on the appointment and leaves the vehicle record alone", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
-    const row = shop.getState().appointments.find((item) => item.id === "a6");
+    const row = shop.getState().appointments.find((item) => item.status === "scheduled" && item.date >= todayIso());
     assert.ok(row);
     const vehicle = shop.getState().vehicles.find((item) => item.id === row.vehicleId);
     assert.ok(vehicle);
     const original = vehicle.vin;
-    const typed = "1FTEW1EP5NKD12345";
+    const typed = fullVin({ prefix: "1FTEW1EP", year: 2022, plant: "D", serial: 345 });
     assert.notEqual(typed, original);
+    shop.getState().setWorkingAs("megan");
 
     shop.getState().updateAppointment(row.id, { vin: `  ${typed.toLowerCase()}  ` });
     const next = shop.getState();
@@ -70,6 +77,7 @@ describe("appointment actions", () => {
 
   it("refuses to remove a tech who still has appointments until those are reassigned", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     assert.equal(
       shop.getState().addTech({
         number: "99",
@@ -103,6 +111,7 @@ describe("appointment actions", () => {
 
   it("still blocks removal when the tech is on a repair order", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const techId = "chris";
     assert.equal(shop.getState().appointments.some((row) => row.techId === techId), true);
     assert.equal(shop.getState().removeTech(techId), "used");
@@ -112,7 +121,7 @@ describe("appointment actions", () => {
 
 function draft(customerId: string, vehicleId: string, advisorId: string, techId: string, time: string): Omit<Appointment, "id" | "orderId" | "status"> {
   return {
-    date: "2026-10-21",
+    date: bookableDay(),
     time,
     minutes: 60,
     customerId,
@@ -120,7 +129,7 @@ function draft(customerId: string, vehicleId: string, advisorId: string, techId:
     advisorId,
     concern: "Oil change",
     lines: [{ id: "", code: "A", concern: "Oil change" }],
-    vin: "1FTDEMO00000001AA",
+    vin: "",
     laborOpIds: [],
     techId,
     lane: "drop",

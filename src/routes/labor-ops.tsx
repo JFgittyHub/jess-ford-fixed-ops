@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button, Field } from "@/components/ui";
 import { usd } from "@/lib/format";
 import { rateFor } from "@/lib/pay";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/labor-ops")({ component: LaborOpsPage });
+export const Route = createFileRoute("/labor-ops")({ component: guardLocked(LaborOpsPage) });
 
 function LaborOpsPage() {
   const laborOps = useShop((state) => state.laborOps);

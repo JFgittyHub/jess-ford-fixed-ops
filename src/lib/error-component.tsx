@@ -1,15 +1,26 @@
 import type { ErrorComponentProps } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
+import { Button } from "@/components/ui";
+import { isDemoMode } from "@/lib/demo";
+import { useShop } from "@/lib/store";
 
 const FALLBACK_MESSAGE = "An unexpected error occurred. Try reloading the page.";
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;
   if (typeof error === "string" && error) return error;
   return FALLBACK_MESSAGE;
 }
 
-export function AppErrorComponent({ error }: ErrorComponentProps) {
+export function ShopError({
+  error,
+  demo,
+  onReset,
+}: {
+  error: unknown;
+  demo: boolean;
+  onReset: () => void;
+}) {
   return (
     <main
       className={
@@ -21,9 +32,22 @@ export function AppErrorComponent({ error }: ErrorComponentProps) {
         <TriangleAlert className="size-10" strokeWidth={2} />
       </span>
       <h1 className="text-lg font-semibold">Something went wrong</h1>
-      <p className="max-w-md text-sm break-words text-zinc-500 dark:text-zinc-400">
-        {errorMessage(error)}
-      </p>
+      <p className="max-w-md text-sm break-words text-zinc-500 dark:text-zinc-400">{errorMessage(error)}</p>
+      {demo ? <Button tone="primary" onClick={onReset}>Reset demo data</Button> : null}
     </main>
+  );
+}
+
+export function AppErrorComponent({ error }: ErrorComponentProps) {
+  const resetDemo = useShop((state) => state.resetDemo);
+  return (
+    <ShopError
+      error={error}
+      demo={isDemoMode()}
+      onReset={() => {
+        resetDemo(true);
+        window.location.assign("/");
+      }}
+    />
   );
 }

@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui";
+import { formatVisit } from "@/lib/format";
 import type { ContactMethod, OnlineRequest } from "@/lib/types";
 
 const METHOD: Record<ContactMethod, string> = { text: "Text", email: "Email", call: "Call" };
@@ -10,19 +11,32 @@ export function OnlineRequestList({
   suggested,
   onApprove,
   onDecline,
+  canAct = true,
+  refusal = "Only an advisor or service manager can approve or decline a request.",
+  rowWarning = null,
+  onCancelWarning,
+  onConfirmWarning,
 }: {
   rows: OnlineRequest[];
   customers?: { id: string; name: string }[];
   suggested?: (row: OnlineRequest) => string;
   onApprove?: (id: string, linkCustomerId?: string) => void;
   onDecline?: (id: string) => void;
+  /** Techs and a blank working-as pick do not get Approve or Decline. */
+  canAct?: boolean;
+  refusal?: string;
+  rowWarning?: { id: string; text: string } | null;
+  onCancelWarning?: () => void;
+  onConfirmWarning?: () => void;
 }) {
   const listed = [...rows].sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
   if (listed.length === 0) {
     return <p className="card mt-4 text-muted">No pending requests on this store.</p>;
   }
   return (
-    <div className="mt-4 overflow-x-auto card p-0">
+    <div className="mt-4">
+      {rowWarning ? <WarningBanner text={rowWarning.text} onCancel={onCancelWarning} onConfirm={onConfirmWarning} /> : null}
+      <div className="overflow-x-auto card p-0">
       <table className="data-table min-w-[64rem]">
         <caption className="sr-only">Pending requests for this store</caption>
         <thead>
@@ -40,8 +54,9 @@ export function OnlineRequestList({
         </thead>
         <tbody>
           {listed.map((row) => (
-            <tr key={row.id}>
-              <td className="whitespace-nowrap tabular-nums">{row.date} · {row.time}</td>
+            <Fragment key={row.id}>
+            <tr>
+              <td className="whitespace-nowrap">{formatVisit(row.date, row.time)}</td>
               <td>{row.customerName}</td>
               <td>{vehicleLine(row)}</td>
               <td>{row.serviceName} · {row.laborHours} hr</td>
@@ -51,19 +66,39 @@ export function OnlineRequestList({
               <td>{row.verified ? "Verified" : "Unverified"}</td>
               {onApprove ? (
                 <td>
-                  <RequestActions
-                    row={row}
-                    customers={customers}
-                    suggestion={suggested?.(row) ?? ""}
-                    onApprove={onApprove}
-                    onDecline={onDecline}
-                  />
+                  {canAct ? (
+                    <RequestActions
+                      row={row}
+                      customers={customers}
+                      suggestion={suggested?.(row) ?? ""}
+                      onApprove={onApprove}
+                      onDecline={onDecline}
+                    />
+                  ) : (
+                    <p role="alert" className="max-w-xs text-sm text-[#8a3b2a]">{refusal}</p>
+                  )}
                 </td>
               ) : null}
             </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
+      </div>
+    </div>
+  );
+}
+
+function WarningBanner({ text, onCancel, onConfirm }: { text: string; onCancel?: () => void; onConfirm?: () => void }) {
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => { row.current?.scrollIntoView({ block: "nearest" }); }, [text]);
+  return (
+    <div ref={row} data-approve-warning className="mb-3 grid w-full max-w-full gap-2">
+      <p role="status" className="w-full rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{text}</p>
+      <div className="flex max-w-full flex-wrap gap-2">
+        <Button type="button" onClick={onCancel}>Cancel</Button>
+        <Button tone="primary" type="button" onClick={onConfirm}>Override</Button>
+      </div>
     </div>
   );
 }

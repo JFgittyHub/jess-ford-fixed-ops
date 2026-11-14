@@ -1,6 +1,6 @@
 # Jess Ford fixed operations
 
-Service desk for Jess Ford in Grand Coulee and Pullman. Advisors write repair orders, techs flag time, parts come off the shelf when a ticket is invoiced, and the office can see the month against Washington’s repair-authorization rules (RCW 46.71).
+Service desk for Jess Ford in Grand Coulee and Pullman. Advisors write repair orders, techs flag time, parts come off the shelf when an advisor closes a ticket, and the office can see the month against Washington’s repair-authorization rules (RCW 46.71).
 
 Module titles stay Scheduling, Customer Messaging, Inspections, and Service Marketing. Do not use third-party Schedule, Engage, Inspect, or Invite product labels.
 
