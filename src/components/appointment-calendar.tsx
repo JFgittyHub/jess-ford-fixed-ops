@@ -401,7 +401,7 @@ export function AppointmentCalendar({
   const shown = appointments.map((row) => placed(row, draft));
 
   return (
-    <div className="card mt-4 overflow-x-auto p-0">
+    <div className="card mt-4 overflow-x-auto p-0" style={{ scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}>
       <div className="grid min-w-[52rem]" style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(8.5rem, 1fr))` }}>
         <div className="border-b border-line" />
         {columnGroups(techs).map((group) => (
@@ -451,7 +451,13 @@ export function AppointmentCalendar({
               }}
               onClick={(event) => {
                 const clickPointerId = (event.nativeEvent as PointerEvent | undefined)?.pointerId;
-                if (typeof clickPointerId === "number" && clickPointerId >= 0 && foreignPointers.current.delete(clickPointerId)) {
+                const usablePointer = typeof clickPointerId === "number" && clickPointerId >= 0;
+                if (heldPointerId.current !== null && (!usablePointer || clickPointerId !== heldPointerId.current)) {
+                  if (usablePointer) foreignPointers.current.delete(clickPointerId);
+                  event.preventDefault();
+                  return;
+                }
+                if (usablePointer && foreignPointers.current.delete(clickPointerId)) {
                   event.preventDefault();
                   return;
                 }
@@ -607,7 +613,7 @@ export function AppointmentCalendar({
                     data-appt-id={row.id}
                     data-drag="move"
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
-                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none" }}
+                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                     onContextMenu={(event) => {
                       if (heldPointerActive.current) {

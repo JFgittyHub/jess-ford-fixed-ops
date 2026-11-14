@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, useRouterState } from "@tanstack/react-router";
 import { Calendar } from "lucide-react";
-import { useEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { AppointmentCalendar, TECH_DAY_GOAL, addDays, clockRange, clockTime, dayLabel, flagHours, lengthLabel } from "@/components/appointment-calendar";
 import { CancelForm, CancelledHistory, DeskCancelActions } from "@/components/cancel-appointment";
 import { NewOrder } from "@/components/new-order";
@@ -1273,15 +1273,58 @@ export function CopyBar({
 }) {
   if (!copiedName && !notice) return null;
   return (
-    <div
-      data-copy-bar
-      className="sticky z-20 flex max-h-[calc(100vh-var(--app-header-height,0px)-1.25rem)] flex-col gap-3 overflow-hidden border-b border-line bg-surface p-3"
-      style={{ top: "var(--app-header-height, 0px)", maxHeight: "calc(100vh - var(--app-header-height, 0px) - 1.25rem)" }}
-    >
+    <CopyBarFrame copiedName={copiedName} notice={notice}>
       {copiedName ? <p data-copied role="status" className="shrink-0 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
       <div data-copy-scroll className="min-h-0 overflow-y-auto">
         <PasteNoticeBar notice={notice} onOverride={onOverride} onReason={onReason} onDismiss={onDismiss} />
       </div>
+    </CopyBarFrame>
+  );
+}
+
+function CopyBarFrame({
+  copiedName,
+  notice,
+  children,
+}: {
+  copiedName: string;
+  notice: PasteNotice | null;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    const root = document.documentElement;
+    const apply = () => {
+      const height = Math.ceil(node.getBoundingClientRect().height);
+      root.style.setProperty("--copy-bar-height", `${height}px`);
+      root.style.scrollPaddingTop = `calc(var(--app-header-height, 0px) + ${height}px)`;
+    };
+    apply();
+    if (typeof ResizeObserver === "undefined") {
+      return () => {
+        root.style.removeProperty("--copy-bar-height");
+        root.style.scrollPaddingTop = "";
+      };
+    }
+    const observer = new ResizeObserver(apply);
+    observer.observe(node);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--copy-bar-height");
+      root.style.scrollPaddingTop = "";
+    };
+  }, [copiedName, notice]);
+  return (
+    <div
+      ref={ref}
+      data-copy-bar
+      className="sticky z-20 flex max-h-[calc(100vh-var(--app-header-height,0px)-1.25rem)] flex-col gap-3 overflow-hidden border-b border-line bg-surface p-3"
+      style={{ top: "var(--app-header-height, 0px)", maxHeight: "calc(100vh - var(--app-header-height, 0px) - 1.25rem)", pointerEvents: "none" }}
+    >
+      <style>{`[data-copy-bar] button, [data-copy-bar] input, [data-copy-bar] textarea, [data-copy-bar] a { pointer-events: auto; }`}</style>
+      {children}
     </div>
   );
 }
