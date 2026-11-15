@@ -333,6 +333,11 @@ export function AppointmentCalendar({
   }
 
   function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize", quiet?: "summary") {
+    if (heldPointerId.current !== null && event.pointerId !== heldPointerId.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -683,6 +688,11 @@ export function AppointmentCalendar({
                           if (Math.abs(dx) + Math.abs(dy) > 16) gesture.current.moved = true;
                         }}
                         onTouchEnd={(event) => {
+                          if (heldPointerId.current !== null) {
+                            event.stopPropagation();
+                            if (event.cancelable) event.preventDefault();
+                            return;
+                          }
                           const touch = event.changedTouches?.[0];
                           const dx = touch ? Math.abs(touch.clientX - gesture.current.x) : 0;
                           const dy = touch ? Math.abs(touch.clientY - gesture.current.y) : 0;
@@ -692,7 +702,16 @@ export function AppointmentCalendar({
                           touchSummaryAt.current = Date.now();
                           showHover(row.id, event.currentTarget.getBoundingClientRect());
                         }}
-                        onClick={(event) => { event.stopPropagation(); showHover(row.id, event.currentTarget.getBoundingClientRect()); }}
+                        onClick={(event) => {
+                          const id = (event.nativeEvent as PointerEvent | undefined)?.pointerId;
+                          if (heldPointerId.current !== null && id !== heldPointerId.current) {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            return;
+                          }
+                          event.stopPropagation();
+                          showHover(row.id, event.currentTarget.getBoundingClientRect());
+                        }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
                           event.preventDefault();

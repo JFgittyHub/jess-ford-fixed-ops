@@ -1468,22 +1468,160 @@ describe("round 26 empty slot opens book", () => {
         node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
         return node;
       };
-      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 321 }));
+      const onClock = (run: () => void) => {
+        window.setTimeout(run, 0);
+        advance(clock, 0);
+      };
+      onClock(() => column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 321 })));
       advance(clock, 100);
-      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 }));
-      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 }));
-      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 321 }));
-      await afterMacrotask();
-      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 }));
-      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 }));
-      await afterMacrotask();
-      pointerClick(column(), { pointerId: 322, pointerType: "mouse", clientX: 48, clientY: 8 * 32 });
+      onClock(() => column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 })));
+      onClock(() => window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 })));
+      onClock(() => window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 321 })));
+      onClock(() => column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 })));
+      onClock(() => window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 322 })));
+      onClock(() => pointerClick(column(), { pointerId: 322, pointerType: "mouse", clientX: 48, clientY: 8 * 32 }));
       assert.deepEqual(bookings, ["book|elena|11:00"]);
       assert.equal(host.querySelector("[data-paste]"), null);
     } finally {
       root.unmount();
       host.remove();
       restoreFakeTimers?.();
+    }
+  });
+
+  it("a foreign click that arrives after the hold ends still belongs to that pointer", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const clock = fakeWindowTimers();
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    flushSync(() => root.render(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: saturday,
+      techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      onPasteSlot: () => bookings.push("paste-save"),
+      canPaste: true,
+      slotOpen: true,
+      slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+      longPressMs: 550,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    })));
+    try {
+      const pointer = window.PointerEvent;
+      const column = () => {
+        const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+        assert.ok(node);
+        node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+        return node;
+      };
+      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 501 }));
+      advance(clock, 550);
+      assert.equal(host.querySelector<HTMLElement>("[data-context-menu]")?.style.top, "192px");
+      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 48, clientY: 8 * 32, pointerId: 502 }));
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 48, clientY: 8 * 32, pointerId: 502 }));
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 501 }));
+      await afterMacrotask();
+      pointerClick(column(), { pointerId: 502, pointerType: "touch", clientX: 48, clientY: 8 * 32 });
+      column().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, clientX: 48, clientY: 8 * 32 }));
+      assert.deepEqual(bookings, []);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      assert.equal(host.querySelector<HTMLElement>("[data-context-menu]")?.style.top, "192px");
+      column().dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0, clientX: 48, clientY: 8 * 32 }));
+      assert.deepEqual(bookings, ["book|elena|11:00"]);
+    } finally {
+      root.unmount();
+      host.remove();
+      restoreFakeTimers?.();
+    }
+  });
+
+  it("a second finger on a card during a hold does not open details", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const pointer = window.PointerEvent;
+    const card = {
+      id: "oil", date: saturday, time: "09:00", minutes: 90, customerId: "c", vehicleId: "v", advisorId: "megan",
+      concern: "Oil", lines: [{ id: "oil-a", code: "A", concern: "Oil" }],
+      vin: "", laborOpIds: [] as string[], techId: "elena", lane: "waiter" as const, status: "scheduled" as const, orderId: null,
+    };
+    for (const phase of ["armed", "active"] as const) {
+      const clock = fakeWindowTimers();
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      const bookings: string[] = [];
+      const selected: string[] = [];
+      flushSync(() => root.render(createElement(AppointmentCalendar, {
+        appointments: [card],
+        day: saturday,
+        techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+        selectedId: null,
+        onSelect: (id: string) => selected.push(id),
+        onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+        onMove: () => undefined,
+        onWrite: () => undefined,
+        onEdit: () => undefined,
+        onPasteSlot: () => bookings.push("paste-save"),
+        canPaste: true,
+        slotOpen: true,
+        slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+        longPressMs: 550,
+        label: () => "Oil",
+        summary: () => ({ name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Elena", when: "9:00", lane: "Waiter", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
+        hoursFor: () => 0,
+      })));
+      try {
+        const column = () => {
+          const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+          assert.ok(node);
+          node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+          return node;
+        };
+        const visit = () => {
+          const node = host.querySelector<HTMLElement>("[data-appt]");
+          assert.ok(node);
+          return node;
+        };
+        column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 601 }));
+        advance(clock, phase === "armed" ? 120 : 550);
+        visit().dispatchEvent(new pointer("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 20, clientY: 4 * 32, pointerId: 602 }));
+        visit().dispatchEvent(new pointer("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 20, clientY: 4 * 32, pointerId: 602 }));
+        pointerClick(visit(), { pointerId: 602, pointerType: "touch", clientX: 20, clientY: 4 * 32 });
+        assert.deepEqual(selected, [], phase);
+        assert.equal(host.querySelector("[data-hover-summary]"), null, phase);
+        assert.deepEqual(bookings, [], phase);
+        if (phase === "armed") advance(clock, 430);
+        assert.equal(host.querySelector<HTMLElement>("[data-context-menu]")?.style.top, "192px", phase);
+        window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 601 }));
+        await afterMacrotask();
+        pointerClick(column(), { pointerId: 601, pointerType: "touch", clientX: 8, clientY: 6 * 32 });
+        assert.deepEqual(bookings, [], phase);
+        assert.equal(host.querySelectorAll("[data-paste]").length, 1, phase);
+        visit().dispatchEvent(new pointer("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 603 }));
+        window.dispatchEvent(new pointer("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 603 }));
+        pointerClick(visit(), { pointerId: 603, pointerType: "touch", clientX: 20, clientY: 4 * 32 });
+        assert.deepEqual(selected, ["oil"], phase);
+        assert.deepEqual(bookings, [], phase);
+        assert.equal(host.querySelectorAll("[data-paste]").length, 1, phase);
+      } finally {
+        root.unmount();
+        host.remove();
+        restoreFakeTimers?.();
+      }
     }
   });
 
@@ -2330,7 +2468,8 @@ describe("round 26 copy bar stays under the header", () => {
       summary: () => ({ name: "Isaac Feldman", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "7:30 AM", lane: "Drop-off", concern: "Brake", vin: "", ops: "", status: "Scheduled", canWrite: false }),
       hoursFor: () => 2.5,
     }));
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor class="contents" style="display:contents">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:8rem"><h1 class="font-display text-5xl">Friday</h1></div>${board}</div><footer class="pb-8 text-xs text-muted"><p>This visit is the sample month. Grand Coulee and Pullman are separate stores, and this footer sits under the board on a phone.</p></footer><div data-sticky-tail style="height:calc(100vh - var(--app-header-height, 0px))"></div></main></div></div>`;
+    const boardScroll = `<div data-board-scroll style="position:sticky;top:calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px));max-height:calc(100vh - var(--app-header-height, 0px) - var(--copy-bar-height, 0px))"><div style="overflow:auto;max-height:inherit">${board}</div></div>`;
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor class="contents" style="display:contents">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:8rem"><h1 class="font-display text-5xl">Friday</h1></div>${boardScroll}</div><footer class="pb-8 text-xs text-muted"><p>This visit is the sample month. Grand Coulee and Pullman are separate stores, and this footer sits under the board on a phone.</p></footer><div data-sticky-tail style="height:calc(100vh - var(--app-header-height, 0px))"></div></main></div></div>`;
     const css = await appCss(`${header}${bar}${board}${html}`);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -2349,8 +2488,11 @@ describe("round 26 copy bar stays under the header", () => {
         const maxScroll = await page.evaluate(() => Math.max(0, document.documentElement.scrollHeight - window.innerHeight));
         const depths = [0, 120, 240, 480, maxScroll];
         for (const depth of depths) {
-          await page.evaluate((top) => window.scrollTo(0, top), depth);
-          await pinHeader(page);
+          await page.evaluate((top) => window.scrollTo({ top, left: 0, behavior: "instant" }), depth);
+          await page.waitForFunction((top) => Math.abs(window.scrollY - top) < 1, depth);
+          await page.evaluate(() => new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }));
           const hit = await page.evaluate(() => {
             const card = document.querySelector("[data-appt]");
             const barNode = document.querySelector("[data-copy-bar]");
@@ -2359,75 +2501,137 @@ describe("round 26 copy bar stays under the header", () => {
             const cardBox = card.getBoundingClientRect();
             const barBox = barNode.getBoundingClientRect();
             const headerBox = headerNode.getBoundingClientRect();
+            const intersects = cardBox.left < barBox.right && cardBox.right > barBox.left && cardBox.top < barBox.bottom && cardBox.bottom > barBox.top;
             const cx = Math.min(Math.max(cardBox.left + cardBox.width / 2, 0), window.innerWidth - 1);
-            const sample = (y: number) => {
-              if (y < headerBox.bottom || y >= window.innerHeight) return null;
-              const target = document.elementFromPoint(cx, y);
-              return {
-                card: Boolean(target?.closest("[data-appt]")),
-                bar: Boolean(target?.closest("[data-copy-bar]")),
-                who: target ? `${target.tagName}.${String(target.className).slice(0, 80)}` : "none",
-                y,
-              };
-            };
-            const center = cardBox.top + cardBox.height / 2;
-            const overlapTop = Math.max(cardBox.top, barBox.top, headerBox.bottom);
-            const overlapBottom = Math.min(cardBox.bottom, barBox.bottom);
-            const overlap = overlapBottom > overlapTop + 1 ? sample((overlapTop + overlapBottom) / 2) : null;
-            const clearTop = Math.max(cardBox.top, barBox.bottom, headerBox.bottom);
-            const clearBottom = Math.min(cardBox.bottom, window.innerHeight);
-            const clear = clearBottom > clearTop + 1 ? sample((clearTop + clearBottom) / 2) : null;
+            const cy = cardBox.top + cardBox.height / 2;
+            const onScreen = cy >= headerBox.bottom && cy < window.innerHeight;
+            const target = onScreen ? document.elementFromPoint(cx, cy) : null;
             return {
-              center: center >= headerBox.bottom && center < window.innerHeight ? sample(center) : null,
-              overlap,
-              clear,
+              intersects,
+              onScreen,
+              card: Boolean(target?.closest("[data-appt]")),
+              bar: Boolean(target?.closest("[data-copy-bar]")),
+              who: target ? `${target.tagName}.${String(target.className).slice(0, 80)}` : "none",
+              y: cy,
               barTop: barBox.top,
               headerBottom: headerBox.bottom,
               scrollY: window.scrollY,
             };
           });
           assert.ok(hit, `${width} missing the top card at scroll ${depth}`);
-          for (const [name, point] of [["center", hit.center], ["overlap", hit.overlap], ["clear", hit.clear]] as const) {
-            if (!point) continue;
-            assert.equal(point.card, true, `${width} the top card is not the ${name} hit at scroll ${hit.scrollY} (${point.who} y ${point.y})`);
-            assert.equal(point.bar, false, `${width} the copied bar covers the top card ${name} at scroll ${hit.scrollY}`);
+          assert.equal(hit.intersects, false, `${width} the copied bar intersects the top card at scroll ${hit.scrollY}`);
+          if (hit.onScreen) {
+            assert.equal(hit.card, true, `${width} the top card is not the hit at scroll ${hit.scrollY} (${hit.who} y ${hit.y})`);
+            assert.equal(hit.bar, false, `${width} the copied bar covers the top card at scroll ${hit.scrollY}`);
           }
           if (depth === maxScroll) {
             assert.ok(Math.abs(hit.barTop - hit.headerBottom) <= 1, `${width} bar left the header at max scroll (top ${hit.barTop}, header ${hit.headerBottom})`);
           }
         }
-        await page.evaluate(() => {
-          const card = document.querySelector("[data-appt]");
-          const barNode = document.querySelector("[data-copy-bar]");
-          if (!card || !barNode) return;
-          const cardBox = card.getBoundingClientRect();
-          const barBox = barNode.getBoundingClientRect();
-          const delta = cardBox.top - barBox.top - 8;
-          window.scrollTo(0, window.scrollY + delta);
-        });
-        await pinHeader(page);
-        const covered = await page.evaluate(() => {
-          const card = document.querySelector("[data-appt]");
-          const barNode = document.querySelector("[data-copy-bar]");
-          const headerNode = document.querySelector("header.app-header");
-          if (!card || !barNode || !headerNode) return null;
-          const cardBox = card.getBoundingClientRect();
-          const barBox = barNode.getBoundingClientRect();
-          const headerBox = headerNode.getBoundingClientRect();
-          const x = Math.min(Math.max(cardBox.left + Math.min(24, cardBox.width / 2), 0), window.innerWidth - 1);
-          const y = Math.min(barBox.bottom, cardBox.bottom) - 4;
-          const target = y > headerBox.bottom ? document.elementFromPoint(x, y) : null;
-          return {
-            y,
-            card: Boolean(target?.closest("[data-appt]")),
-            bar: Boolean(target?.closest("[data-copy-bar]")),
-            who: target ? `${target.tagName}.${String(target.className).slice(0, 80)}` : "none",
-          };
-        });
-        assert.ok(covered, `${width} could not place the top card against the copied bar`);
-        assert.equal(covered.card, true, `${width} the top card is not the hit under the copied bar (${covered.who})`);
-        assert.equal(covered.bar, false, `${width} the copied bar still takes the top card's tap`);
       }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it("a press on the copied bar opens nothing and leaves the appointments", async () => {
+    const header = (await scheduleShellHtml()).header;
+    const bar = renderToStaticMarkup(createElement(CopyBar, {
+      copiedName: "Helen Cho",
+      notice: { kind: "error", text: "That time is outside shop hours." },
+      onOverride: () => undefined,
+      onReason: () => undefined,
+      onDismiss: () => undefined,
+    }));
+    const isaac = {
+      id: "isaac", date: friday, time: "07:30", minutes: 150, customerId: "c1", vehicleId: "v1", advisorId: "megan",
+      concern: "Brake pulsation", lines: [{ id: "isaac-a", code: "A", concern: "Brake" }],
+      vin: "", laborOpIds: [] as string[], techId: "marcus", lane: "drop" as const, status: "scheduled" as const, orderId: null,
+    };
+    const board = renderToStaticMarkup(createElement(AppointmentCalendar, {
+      appointments: [isaac],
+      day: friday,
+      techs: [
+        { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
+        { id: "elena", number: "2", name: "Elena", board: "express" as const },
+      ],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: () => undefined,
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      label: () => "Isaac Feldman",
+      summary: () => ({ name: "Isaac Feldman", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "7:30 AM", lane: "Drop-off", concern: "Brake", vin: "", ops: "", status: "Scheduled", canWrite: false }),
+      hoursFor: () => 2.5,
+    }));
+    const boardScroll = `<div data-board-scroll style="position:sticky;top:calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px));max-height:calc(100vh - var(--app-header-height, 0px) - var(--copy-bar-height, 0px))"><div style="overflow:auto;max-height:inherit">${board}</div></div>`;
+    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor class="contents" style="display:contents">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:8rem"><h1 class="font-display text-5xl">Friday</h1></div>${boardScroll}</div><footer class="pb-8 text-xs text-muted"><p>This visit is the sample month.</p></footer><div data-sticky-tail style="height:calc(100vh - var(--app-header-height, 0px))"></div></main></div></div>`;
+    const css = await appCss(`${header}${bar}${board}${html}`);
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}<script>
+        window.__hits = [];
+        const note = (kind) => (event) => {
+          const node = event.target;
+          if (!(node instanceof Element)) return;
+          if (node.closest("[data-copy-bar]")) return;
+          window.__hits.push(kind);
+        };
+        document.addEventListener("pointerdown", note("down"), true);
+        document.addEventListener("pointerup", note("up"), true);
+        document.addEventListener("click", note("click"), true);
+        document.addEventListener("contextmenu", note("menu"), true);
+        document.querySelector("[data-dismiss]")?.addEventListener("click", () => {
+          document.querySelector("[data-paste-notice]")?.remove();
+        });
+      </script></body></html>`);
+      for (const [width, height] of [[390, 700], [820, 700], [1400, 700]] as const) {
+        await page.setViewportSize({ width, height });
+        await pinHeader(page);
+        await page.evaluate(() => { (window as unknown as { __hits: string[] }).__hits = []; });
+        const before = await page.locator("[data-appt]").count();
+        const point = await page.evaluate((narrow) => {
+          const barNode = document.querySelector("[data-copy-bar]");
+          const text = document.querySelector("[data-copied]");
+          if (!barNode || !text) return null;
+          const barBox = barNode.getBoundingClientRect();
+          const textBox = text.getBoundingClientRect();
+          const overlapTop = Math.max(barBox.top + 2, 297);
+          const overlapBottom = Math.min(barBox.bottom - 2, 374);
+          let y = narrow && overlapBottom > overlapTop ? (overlapTop + overlapBottom) / 2 : textBox.top + Math.min(6, textBox.height / 2);
+          const x = Math.min(Math.max(textBox.left + 12, barBox.left + 8), barBox.right - 8);
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest("button, input, textarea, a")) y = textBox.top + Math.min(6, textBox.height / 2);
+          return { x, y, barTop: barBox.top, barBottom: barBox.bottom };
+        }, width === 390);
+        assert.ok(point, `${width} missing the copied bar`);
+        assert.ok(point.y > point.barTop && point.y < point.barBottom, `${width} press missed the bar (${point.barTop}-${point.barBottom} y ${point.y})`);
+        if (width === 390) assert.ok(point.y > 297 && point.y < 374, `${width} press y ${point.y} is outside 297-374 (bar ${point.barTop}-${point.barBottom})`);
+        const press = async (button?: "left" | "right", hold = false) => {
+          await page.mouse.move(point.x, point.y);
+          await page.mouse.down({ button });
+          if (hold) {
+            await page.evaluate(() => new Promise<void>((resolve) => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+            }));
+          }
+          await page.mouse.up({ button });
+        };
+        await press();
+        await page.mouse.click(point.x, point.y);
+        await press(undefined, true);
+        await page.mouse.click(point.x, point.y, { button: "right" });
+        const hits = await page.evaluate(() => (window as unknown as { __hits: string[] }).__hits);
+        assert.deepEqual(hits, [], `${width} a press on the bar reached the board`);
+        assert.equal(await page.locator("[data-appt]").count(), before, `${width} the bar press changed the appointments`);
+        assert.equal(await page.locator("[data-context-menu]").count(), 0, `${width} the bar opened a menu`);
+        assert.equal(await page.locator("[data-paste]").count(), 0, `${width} the bar opened Paste`);
+      }
+      await page.locator("[data-dismiss]").click();
+      assert.equal(await page.locator("[data-paste-notice]").count(), 0, "Dismiss still closes the notice");
+      assert.equal(await page.locator("[data-copied]").count(), 1, "Dismiss leaves the copied line");
     } finally {
       await browser.close();
     }
