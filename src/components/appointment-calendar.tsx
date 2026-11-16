@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { flushSync } from "react-dom";
 import { Meter } from "@/components/ui";
 import { lengthLabel, today } from "@/lib/format";
 import type { Appointment, TechBoard } from "@/lib/types";
@@ -304,11 +305,43 @@ export function AppointmentCalendar({
       if (event.pointerType === "mouse" && event.button !== 0) return;
       setMenu(null);
     };
+    const origin = new Map<EventTarget, { x: number; y: number }>();
+    const remember = (node: EventTarget, x: number, y: number) => origin.set(node, { x, y });
+    remember(window, window.scrollX, window.scrollY);
+    remember(document, window.scrollX, window.scrollY);
+    remember(document.documentElement, document.documentElement.scrollLeft, document.documentElement.scrollTop);
+    document.querySelectorAll("[data-tech]").forEach((column) => {
+      let node = column.parentElement;
+      while (node) {
+        remember(node, node.scrollLeft, node.scrollTop);
+        node = node.parentElement;
+      }
+    });
+    const pointOf = (target: EventTarget | null) => {
+      if (target instanceof HTMLElement && target !== document.body && target !== document.documentElement) {
+        return { node: target, x: target.scrollLeft, y: target.scrollTop };
+      }
+      return { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
+    };
+    const onScroll = (event: Event) => {
+      const now = pointOf(event.target);
+      const then = origin.get(now.node) ?? (now.node === window ? origin.get(window) : undefined);
+      if (!then || (Math.abs(now.x - then.x) <= 8 && Math.abs(now.y - then.y) <= 8)) return;
+      setMenu(null);
+    };
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 8) return;
+      setMenu(null);
+    };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointer);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("wheel", onWheel, true);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointer);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("wheel", onWheel, true);
     };
   }, [menu]);
 
@@ -546,8 +579,20 @@ export function AppointmentCalendar({
                 const startY = event.clientY;
                 const column = event.currentTarget;
                 const pointerId = event.pointerId;
-                const heldTime = fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
+                const slotAt = () => fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
+                const heldTime = slotAt();
                 const hoursBlock = slotError?.(heldTime) ?? null;
+                const ignoreHoldScroll = { current: false };
+                const scrollOrigin = new Map<EventTarget, { x: number; y: number }>();
+                const rememberScroll = (node: EventTarget, x: number, y: number) => scrollOrigin.set(node, { x, y });
+                rememberScroll(window, window.scrollX, window.scrollY);
+                rememberScroll(document, window.scrollX, window.scrollY);
+                rememberScroll(document.documentElement, document.documentElement.scrollLeft, document.documentElement.scrollTop);
+                let scrollNode: HTMLElement | null = column;
+                while (scrollNode) {
+                  rememberScroll(scrollNode, scrollNode.scrollLeft, scrollNode.scrollTop);
+                  scrollNode = scrollNode.parentElement;
+                }
                 const arm = (timer: number) => {
                   heldPointerId.current = pointerId;
                   heldPointerActive.current = true;
@@ -556,7 +601,7 @@ export function AppointmentCalendar({
                     if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
                   };
                   let end: (ev: PointerEvent) => void = () => undefined;
-                  let onScroll: () => void = () => undefined;
+                  let onScroll: (event: Event) => void = () => undefined;
                   const disarm = () => {
                     window.clearTimeout(timer);
                     window.removeEventListener("pointermove", move);
@@ -571,8 +616,14 @@ export function AppointmentCalendar({
                       heldPointerActive.current = false;
                     }
                   };
-                  onScroll = () => {
-                    if (heldPointerId.current !== pointerId) return;
+                  onScroll = (event: Event) => {
+                    if (ignoreHoldScroll.current || heldPointerId.current !== pointerId) return;
+                    const target = event.target;
+                    const now = target instanceof HTMLElement && target !== document.body && target !== document.documentElement
+                      ? { node: target as EventTarget, x: target.scrollLeft, y: target.scrollTop }
+                      : { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
+                    const then = scrollOrigin.get(now.node) ?? scrollOrigin.get(window);
+                    if (!then || (Math.abs(now.x - then.x) <= 8 && Math.abs(now.y - then.y) <= 8)) return;
                     suppressSlotClick.current = true;
                     disarm();
                     setMenu(null);
@@ -603,9 +654,14 @@ export function AppointmentCalendar({
                 }
                 if (!onPasteSlot || !canPaste) return;
                 arm(window.setTimeout(() => {
+                  ignoreHoldScroll.current = true;
+                  try {
+                    flushSync(() => { onSlotAccepted?.(); });
+                  } finally {
+                    ignoreHoldScroll.current = false;
+                  }
                   claimHold();
-                  onSlotAccepted?.();
-                  setMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY });
+                  setMenu({ kind: "paste", techId: tech.id, time: slotAt(), x: startX, y: startY });
                 }, longPressMs));
               }}
             >

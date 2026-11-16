@@ -1711,6 +1711,251 @@ describe("round 26 empty slot opens book", () => {
     }
   });
 
+  it("a scroll event that does not move keeps the hold", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const clock = fakeWindowTimers();
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    const card = {
+      id: "oil", date: saturday, time: "09:00", minutes: 60, customerId: "c", vehicleId: "v", advisorId: "megan",
+      concern: "Oil", lines: [{ id: "oil-a", code: "A", concern: "Oil" }],
+      vin: "", laborOpIds: [] as string[], techId: "elena", lane: "waiter" as const, status: "scheduled" as const, orderId: null,
+    };
+    flushSync(() => root.render(createElement(AppointmentCalendar, {
+      appointments: [card],
+      day: saturday,
+      techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      onPasteSlot: () => bookings.push("paste-save"),
+      canPaste: true,
+      slotOpen: true,
+      slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+      longPressMs: 550,
+      label: () => "Oil",
+      summary: () => ({ name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Elena", when: "9:00", lane: "Waiter", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
+      hoursFor: () => 1,
+    })));
+    try {
+      const before = host.querySelectorAll("[data-appt]").length;
+      const pointer = window.PointerEvent;
+      const column = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(column);
+      column.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+      const scrollY = window.scrollY;
+      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 811 }));
+      advance(clock, 120);
+      act(() => {
+        window.dispatchEvent(new Event("scroll"));
+        column.dispatchEvent(new Event("scroll"));
+      });
+      assert.equal(window.scrollY, scrollY);
+      advance(clock, 430);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      assert.equal(host.querySelectorAll("[data-appt]").length, before);
+      assert.deepEqual(bookings, []);
+    } finally {
+      root.unmount();
+      host.remove();
+      restoreFakeTimers?.();
+    }
+  });
+
+  it("a released Paste or Copy menu closes when the page scrolls and writes nothing", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const pointer = window.PointerEvent;
+    const cards = [0, 1].map((index) => ({
+      id: `oil-${index}`, date: saturday, time: index === 0 ? "09:00" : "09:30", minutes: 30, customerId: "c", vehicleId: "v", advisorId: "megan",
+      concern: "Oil", lines: [{ id: `oil-${index}-a`, code: "A", concern: "Oil" }],
+      vin: "", laborOpIds: [] as string[], techId: "elena", lane: "waiter" as const, status: "scheduled" as const, orderId: null,
+    }));
+    for (const kind of ["paste-hold", "paste-click", "copy-hold", "copy-click"] as const) {
+      const clock = fakeWindowTimers();
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      const bookings: string[] = [];
+      flushSync(() => root.render(createElement(AppointmentCalendar, {
+        appointments: cards,
+        day: saturday,
+        techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+        selectedId: null,
+        onSelect: () => undefined,
+        onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+        onMove: () => undefined,
+        onWrite: () => undefined,
+        onEdit: () => undefined,
+        onCopy: (id: string) => bookings.push(`copy|${id}`),
+        onPasteSlot: (techId: string, time: string) => bookings.push(`paste|${techId}|${time}`),
+        canPaste: true,
+        slotOpen: true,
+        slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+        longPressMs: 550,
+        label: () => "Oil",
+        summary: () => ({ name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Elena", when: "9:00", lane: "Waiter", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
+        hoursFor: () => 1,
+      })));
+      try {
+        const before = host.querySelectorAll("[data-appt]").length;
+        const column = () => {
+          const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+          assert.ok(node);
+          node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+          return node;
+        };
+        document.body.style.minHeight = "2400px";
+        if (kind === "paste-hold") {
+          column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 10 * 32, pointerId: 821 }));
+          advance(clock, 550);
+          window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 10 * 32, pointerId: 821 }));
+          assert.equal(host.querySelectorAll("[data-paste]").length, 1, kind);
+        } else if (kind === "paste-click") {
+          flushSync(() => column().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 8, clientY: 10 * 32 })));
+          assert.equal(host.querySelectorAll("[data-paste]").length, 1, kind);
+        } else if (kind === "copy-hold") {
+          const visit = host.querySelector<HTMLElement>("[data-appt]");
+          assert.ok(visit);
+          visit.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 822 }));
+          advance(clock, 550);
+          window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 822 }));
+          assert.equal(host.querySelectorAll("[data-copy]").length, 1, kind);
+        } else {
+          const visit = host.querySelector<HTMLElement>("[data-appt]");
+          assert.ok(visit);
+          flushSync(() => visit.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 20, clientY: 4 * 32 })));
+          assert.equal(host.querySelectorAll("[data-copy]").length, 1, kind);
+        }
+        await act(async () => { await afterMacrotask(); });
+        act(() => {
+          if (kind === "paste-click" || kind === "copy-hold") {
+            const scroller = column().closest(".overflow-x-auto");
+            assert.ok(scroller instanceof HTMLElement, kind);
+            scroller.style.height = "140px";
+            scroller.style.overflow = "auto";
+            scroller.scrollTop = 36;
+            assert.ok(scroller.scrollTop > 8, kind);
+            scroller.dispatchEvent(new Event("scroll"));
+          } else if (kind === "copy-click") {
+            column().dispatchEvent(new window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 140 }));
+          } else {
+            window.scrollTo(0, 160);
+            assert.ok(window.scrollY > 8, kind);
+            window.dispatchEvent(new Event("scroll"));
+          }
+        });
+        assert.equal(host.querySelectorAll("[data-context-menu]").length, 0, kind);
+        assert.equal(host.querySelectorAll("[data-appt]").length, before, kind);
+        assert.deepEqual(bookings, [], kind);
+      } finally {
+        window.scrollTo(0, 0);
+        document.body.style.minHeight = "";
+        root.unmount();
+        host.remove();
+        restoreFakeTimers?.();
+      }
+    }
+  });
+
+  it("a Friday hold still opens Paste when the outside-hours notice shrinks the bar", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const clock = fakeWindowTimers();
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    const rows = [0, 1].map((index) => ({
+      id: `fri-${index}`, date: friday, time: index === 0 ? "09:00" : "09:30", minutes: 30, customerId: "c", vehicleId: "v", advisorId: "megan",
+      concern: "Oil", lines: [{ id: `fri-${index}-a`, code: "A", concern: "Oil" }],
+      vin: "", laborOpIds: [] as string[], techId: "elena", lane: "waiter" as const, status: "scheduled" as const, orderId: null,
+    }));
+    function FridayBoard() {
+      const [showNotice, setShowNotice] = useState(true);
+      return createElement("div", null,
+        createElement(CopyBar, {
+          copiedName: "Helen Cho",
+          notice: showNotice ? { kind: "error" as const, text: "That time is outside shop hours." } : null,
+          onOverride: () => undefined,
+          onReason: () => undefined,
+          onDismiss: () => setShowNotice(false),
+        }),
+        createElement(AppointmentCalendar, {
+          appointments: rows,
+          day: friday,
+          techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+          selectedId: null,
+          onSelect: () => undefined,
+          onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+          onMove: () => undefined,
+          onWrite: () => undefined,
+          onEdit: () => undefined,
+          onPasteSlot: (techId: string, time: string) => bookings.push(`paste|${techId}|${time}`),
+          canPaste: true,
+          slotOpen: true,
+          slotError: (time: string) => slotGestureError({ actor: "advisor", day: friday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+          onSlotAccepted: () => {
+            setShowNotice(false);
+            window.scrollTo(0, Math.max(0, window.scrollY - 80));
+            window.dispatchEvent(new Event("scroll"));
+          },
+          longPressMs: 550,
+          label: () => "Helen",
+          summary: () => ({ name: "Helen", vehicle: "Ford", advisor: "Megan", tech: "Elena", when: "9:00", lane: "Waiter", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
+          hoursFor: () => 1,
+        }),
+      );
+    }
+    flushSync(() => root.render(createElement(FridayBoard)));
+    try {
+      assert.match(host.querySelector("[data-paste-notice]")?.textContent ?? "", /outside shop hours/);
+      const before = host.querySelectorAll("[data-appt]").length;
+      const pointer = window.PointerEvent;
+      const column = host.querySelector<HTMLElement>("[data-tech='elena']");
+      assert.ok(column);
+      column.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+      document.body.style.minHeight = "2400px";
+      window.scrollTo(0, 400);
+      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 831 }));
+      advance(clock, 200);
+      act(() => {
+        window.scrollTo(0, 520);
+        window.dispatchEvent(new Event("scroll"));
+      });
+      advance(clock, 400);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 0);
+      assert.deepEqual(bookings, []);
+      assert.equal(host.querySelectorAll("[data-appt]").length, before);
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 831 }));
+      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 832 }));
+      advance(clock, 550);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      assert.equal(host.querySelector("[data-paste-notice]"), null);
+      assert.deepEqual(bookings, []);
+      assert.equal(host.querySelectorAll("[data-appt]").length, before);
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 832 }));
+      assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+    } finally {
+      window.scrollTo(0, 0);
+      document.body.style.minHeight = "";
+      root.unmount();
+      host.remove();
+      restoreFakeTimers?.();
+    }
+  });
+
   it("a non-primary pointer does not arm a hold", async () => {
     pinClock(when);
     HTMLElement.prototype.setPointerCapture = () => undefined;
@@ -2579,23 +2824,27 @@ describe("round 26 copy bar stays under the header", () => {
   });
 
   it("keeps the copied bar off the top card at phone, tablet, and desktop", async () => {
-    const pageHtml = await copiedScheduleHtml();
+    const rendered = await copiedScheduleHtml();
+    const pageHtml = rendered.html;
     const css = await appCss(pageHtml);
     const browser = await chromium.launch({ headless: true });
     try {
       const page = await browser.newPage();
       await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${pageHtml}</body></html>`);
+      await page.evaluate((style) => {
+        document.documentElement.setAttribute("style", style);
+      }, rendered.rootStyle);
       const headerBottom = { 1400: 69, 820: 169, 390: 297 } as const;
       for (const [width, height] of [[1400, 700], [820, 700], [390, 700]] as const) {
         await page.setViewportSize({ width, height });
         await pinHeader(page);
-        await page.evaluate(() => {
-          const barNode = document.querySelector("[data-copy-bar]");
-          if (!barNode) return;
-          const barHeight = Math.ceil(barNode.getBoundingClientRect().height);
-          document.documentElement.style.setProperty("--copy-bar-height", `${barHeight}px`);
-          document.documentElement.style.scrollPaddingTop = `calc(var(--app-header-height, 0px) + ${barHeight}px)`;
-        });
+        const padding = await page.evaluate(() => ({
+          bar: document.documentElement.style.getPropertyValue("--copy-bar-height").trim(),
+          padding: document.documentElement.style.scrollPaddingTop.trim(),
+        }));
+        assert.notEqual(padding.bar, "", `${width} the rendered app has no --copy-bar-height`);
+        assert.notEqual(padding.padding, "", `${width} the rendered app has no scroll-padding-top`);
+        assert.notEqual(padding.bar, "0px", `${width} the rendered app left the copied bar height at 0`);
         assert.equal(await page.locator("[data-board-scroll]").count(), 0, `${width} the board has its own scroller`);
         const friday = await page.evaluate(() => {
           const label = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
@@ -2629,6 +2878,16 @@ describe("round 26 copy bar stays under the header", () => {
         await page.evaluate(() => new Promise<void>((resolve) => {
           requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
         }));
+        const atTop = await page.evaluate(() => {
+          const card = document.querySelector("[data-appt]");
+          const barNode = document.querySelector("[data-copy-bar]");
+          if (!card || !barNode) return null;
+          const cardBox = card.getBoundingClientRect();
+          const barBox = barNode.getBoundingClientRect();
+          return { intersects: cardBox.left < barBox.right && cardBox.right > barBox.left && cardBox.top < barBox.bottom && cardBox.bottom > barBox.top };
+        });
+        assert.ok(atTop, `${width} missing the top card at scroll 0`);
+        assert.equal(atTop.intersects, false, `${width} the top card is under the copied bar at scroll 0`);
         const rested = await page.evaluate(() => {
           const card = document.querySelector("[data-appt]");
           card?.scrollIntoView({ block: "start", behavior: "instant" });
@@ -2678,7 +2937,7 @@ describe("round 26 copy bar stays under the header", () => {
   });
 
   it("a press on the copied bar opens nothing and leaves the appointments", async () => {
-    const pageHtml = await copiedScheduleHtml();
+    const pageHtml = (await copiedScheduleHtml()).html;
     const css = await appCss(pageHtml);
     const browser = await chromium.launch({ headless: true });
     try {
@@ -2781,6 +3040,14 @@ async function copiedScheduleHtml() {
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
+  const realRect = HTMLElement.prototype.getBoundingClientRect;
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    if (this instanceof HTMLElement && this.hasAttribute("data-copy-bar")) {
+      const height = 200;
+      return { x: 0, y: 0, top: 0, left: 0, right: 800, bottom: height, width: 800, height, toJSON() { return {}; } };
+    }
+    return realRect.call(this);
+  };
   try {
     flushSync(() => {
       root.render(createElement(RouterProvider, { router }));
@@ -2808,8 +3075,14 @@ async function copiedScheduleHtml() {
     assert.ok(host.querySelector("[data-copy-bar]"), "the real schedule did not render the copied bar");
     assert.ok(host.querySelector("[data-dismiss]"), "the real schedule did not render Dismiss");
     assert.equal(host.querySelector("[data-board-scroll]"), null, "the board still has an inner scroller");
-    return host.innerHTML;
+    const copyBarHeight = document.documentElement.style.getPropertyValue("--copy-bar-height").trim();
+    const scrollPaddingTop = document.documentElement.style.scrollPaddingTop.trim();
+    assert.notEqual(copyBarHeight, "", "CopyBarFrame did not set --copy-bar-height while the route was mounted");
+    assert.notEqual(copyBarHeight, "0px", "CopyBarFrame measured the copied bar as 0px");
+    assert.notEqual(scrollPaddingTop, "", "CopyBarFrame did not set scroll-padding-top while the route was mounted");
+    return { html: host.innerHTML, rootStyle: document.documentElement.getAttribute("style") ?? "" };
   } finally {
+    HTMLElement.prototype.getBoundingClientRect = realRect;
     flushSync(() => root.unmount());
     host.remove();
     useShop.setState({ ...createEmptyShop(), focusOrderId: null, dataset: "sample" });
