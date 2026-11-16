@@ -539,6 +539,7 @@ export function AppointmentCalendar({
                   suppressSlotClick.current = false;
                   foreignPointers.current.clear();
                 }
+                if (!primary) return;
                 if (event.button !== 0 && event.pointerType !== "touch") return;
                 if ((event.target as HTMLElement).closest("[data-appt]")) return;
                 const startX = event.clientX;
@@ -555,17 +556,26 @@ export function AppointmentCalendar({
                     if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 8) window.clearTimeout(timer);
                   };
                   let end: (ev: PointerEvent) => void = () => undefined;
+                  let onScroll: () => void = () => undefined;
                   const disarm = () => {
                     window.clearTimeout(timer);
                     window.removeEventListener("pointermove", move);
                     window.removeEventListener("pointerup", end);
                     window.removeEventListener("pointercancel", end);
+                    window.removeEventListener("scroll", onScroll, true);
+                    window.removeEventListener("wheel", onScroll, true);
                     windowCleanups.current.delete(disarm);
                     if (disarmHold.current === disarm) disarmHold.current = null;
                     if (heldPointerId.current === pointerId) {
                       heldPointerId.current = null;
                       heldPointerActive.current = false;
                     }
+                  };
+                  onScroll = () => {
+                    if (heldPointerId.current !== pointerId) return;
+                    suppressSlotClick.current = true;
+                    disarm();
+                    setMenu(null);
                   };
                   end = (ev: PointerEvent) => {
                     if (ev.pointerId !== pointerId) return;
@@ -576,6 +586,8 @@ export function AppointmentCalendar({
                   window.addEventListener("pointermove", move);
                   window.addEventListener("pointerup", end);
                   window.addEventListener("pointercancel", end);
+                  window.addEventListener("scroll", onScroll, true);
+                  window.addEventListener("wheel", onScroll, true);
                 };
                 const claimHold = () => {
                   suppressSlotClick.current = true;

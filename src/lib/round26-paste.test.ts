@@ -937,7 +937,7 @@ describe("round 26 empty slot opens book", () => {
     async function hold(pointerType: "mouse" | "touch", clientY: number, waitMs: number) {
       const lane = column();
       const pointer = window.PointerEvent;
-      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, clientX: 8, clientY, pointerId: 11 }));
+      lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, isPrimary: true, clientX: 8, clientY, pointerId: 11 }));
       await new Promise((resolve) => setTimeout(resolve, waitMs));
       return lane;
     }
@@ -1016,12 +1016,12 @@ describe("round 26 empty slot opens book", () => {
       assert.ok(column);
       column.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
       const pointer = window.PointerEvent;
-      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", clientX: 8, clientY: 18 * 32, pointerId: 21 }));
-      column.dispatchEvent(new pointer("pointercancel", { bubbles: true, button: 0, pointerType: "touch", clientX: 8, clientY: 18 * 32, pointerId: 21 }));
+      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 18 * 32, pointerId: 21 }));
+      column.dispatchEvent(new pointer("pointercancel", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 18 * 32, pointerId: 21 }));
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert.deepEqual(bookings, []);
       assert.equal(host.querySelector("[data-paste]"), null);
-      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", clientX: 8, clientY: 6 * 32, pointerId: 22 }));
+      column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 22 }));
       column.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", clientX: 8, clientY: 6 * 32, pointerId: 22 }));
       column.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 8, clientY: 6 * 32 }));
       assert.deepEqual(bookings, ["elena|10:00"]);
@@ -1079,7 +1079,7 @@ describe("round 26 empty slot opens book", () => {
             refusals.length = 0;
             draw(canPaste);
             const lane = column();
-            lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, clientX: 8, clientY: 18 * 32, pointerId: 31 }));
+            lane.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType, isPrimary: true, clientX: 8, clientY: 18 * 32, pointerId: 31 }));
             await new Promise((resolve) => setTimeout(resolve, 60));
             assert.match(refusals.join(" "), /outside shop hours/, `${pointerType} ${ending} ${canPaste}`);
             assert.equal(host.querySelector("[data-paste]"), null);
@@ -1596,11 +1596,15 @@ describe("round 26 empty slot opens book", () => {
           assert.ok(node);
           return node;
         };
+        const onClock = (run: () => void) => {
+          window.setTimeout(run, 0);
+          advance(clock, 0);
+        };
         column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 601 }));
         advance(clock, phase === "armed" ? 120 : 550);
-        visit().dispatchEvent(new pointer("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 20, clientY: 4 * 32, pointerId: 602 }));
-        visit().dispatchEvent(new pointer("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 20, clientY: 4 * 32, pointerId: 602 }));
-        pointerClick(visit(), { pointerId: 602, pointerType: "touch", clientX: 20, clientY: 4 * 32 });
+        onClock(() => visit().dispatchEvent(new pointer("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 20, clientY: 4 * 32, pointerId: 602 })));
+        onClock(() => visit().dispatchEvent(new pointer("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 20, clientY: 4 * 32, pointerId: 602 })));
+        onClock(() => pointerClick(visit(), { pointerId: 602, pointerType: "touch", clientX: 20, clientY: 4 * 32 }));
         assert.deepEqual(selected, [], phase);
         assert.equal(host.querySelector("[data-hover-summary]"), null, phase);
         assert.deepEqual(bookings, [], phase);
@@ -1611,9 +1615,9 @@ describe("round 26 empty slot opens book", () => {
         pointerClick(column(), { pointerId: 601, pointerType: "touch", clientX: 8, clientY: 6 * 32 });
         assert.deepEqual(bookings, [], phase);
         assert.equal(host.querySelectorAll("[data-paste]").length, 1, phase);
-        visit().dispatchEvent(new pointer("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 603 }));
-        window.dispatchEvent(new pointer("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 603 }));
-        pointerClick(visit(), { pointerId: 603, pointerType: "touch", clientX: 20, clientY: 4 * 32 });
+        onClock(() => visit().dispatchEvent(new pointer("pointerdown", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 603 })));
+        onClock(() => window.dispatchEvent(new pointer("pointerup", { bubbles: true, cancelable: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 20, clientY: 4 * 32, pointerId: 603 })));
+        onClock(() => pointerClick(visit(), { pointerId: 603, pointerType: "touch", clientX: 20, clientY: 4 * 32 }));
         assert.deepEqual(selected, ["oil"], phase);
         assert.deepEqual(bookings, [], phase);
         assert.equal(host.querySelectorAll("[data-paste]").length, 1, phase);
@@ -1622,6 +1626,143 @@ describe("round 26 empty slot opens book", () => {
         host.remove();
         restoreFakeTimers?.();
       }
+    }
+  });
+
+  it("a scroll while a hold is armed or active opens nothing and writes nothing", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const pointer = window.PointerEvent;
+    const card = {
+      id: "oil", date: saturday, time: "09:00", minutes: 60, customerId: "c", vehicleId: "v", advisorId: "megan",
+      concern: "Oil", lines: [{ id: "oil-a", code: "A", concern: "Oil" }],
+      vin: "", laborOpIds: [] as string[], techId: "elena", lane: "waiter" as const, status: "scheduled" as const, orderId: null,
+    };
+    for (const phase of ["armed", "active"] as const) {
+      const clock = fakeWindowTimers();
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      const bookings: string[] = [];
+      flushSync(() => root.render(createElement(AppointmentCalendar, {
+        appointments: [card],
+        day: saturday,
+        techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+        selectedId: null,
+        onSelect: () => undefined,
+        onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+        onMove: () => undefined,
+        onWrite: () => undefined,
+        onEdit: () => undefined,
+        onPasteSlot: () => bookings.push("paste-save"),
+        canPaste: true,
+        slotOpen: true,
+        slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+        longPressMs: 550,
+        label: () => "Oil",
+        summary: () => ({ name: "Pat", vehicle: "Ford", advisor: "Megan", tech: "Elena", when: "9:00", lane: "Waiter", concern: "Oil", vin: "", ops: "", status: "Scheduled", canWrite: false }),
+        hoursFor: () => 1,
+      })));
+      try {
+        const before = host.querySelectorAll("[data-appt]").length;
+        const column = () => {
+          const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+          assert.ok(node);
+          node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+          return node;
+        };
+        document.body.style.minHeight = "2400px";
+        column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 801 }));
+        advance(clock, phase === "armed" ? 120 : 550);
+        if (phase === "active") assert.equal(host.querySelectorAll("[data-paste]").length, 1, phase);
+        act(() => {
+          if (phase === "armed") {
+            column().dispatchEvent(new window.WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 120 }));
+            window.scrollTo(0, 180);
+            assert.ok(window.scrollY >= 180, phase);
+            window.dispatchEvent(new Event("scroll"));
+          } else {
+            const scroller = column().closest(".overflow-x-auto");
+            assert.ok(scroller instanceof HTMLElement, phase);
+            scroller.style.height = "140px";
+            scroller.style.overflow = "auto";
+            scroller.scrollTop = 48;
+            assert.ok(scroller.scrollTop > 0, phase);
+            scroller.dispatchEvent(new Event("scroll"));
+          }
+        });
+        if (phase === "armed") advance(clock, 500);
+        assert.equal(host.querySelectorAll("[data-context-menu]").length, 0, phase);
+        assert.equal(host.querySelectorAll("[data-paste]").length, 0, phase);
+        assert.equal(host.querySelectorAll("[data-appt]").length, before, phase);
+        window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 801 }));
+        pointerClick(column(), { pointerId: 801, pointerType: "touch", clientX: 8, clientY: 6 * 32 });
+        assert.deepEqual(bookings, [], phase);
+        assert.equal(host.querySelectorAll("[data-appt]").length, before, phase);
+      } finally {
+        window.scrollTo(0, 0);
+        document.body.style.minHeight = "";
+        root.unmount();
+        host.remove();
+        restoreFakeTimers?.();
+      }
+    }
+  });
+
+  it("a non-primary pointer does not arm a hold", async () => {
+    pinClock(when);
+    HTMLElement.prototype.setPointerCapture = () => undefined;
+    const clock = fakeWindowTimers();
+    const scheduling = shop("megan").getState().settings.scheduling;
+    const saturday = "2026-11-14";
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const bookings: string[] = [];
+    flushSync(() => root.render(createElement(AppointmentCalendar, {
+      appointments: [],
+      day: saturday,
+      techs: [{ id: "elena", number: "2", name: "Elena", board: "express" as const }],
+      selectedId: null,
+      onSelect: () => undefined,
+      onSlot: (techId: string, time: string) => bookings.push(`book|${techId}|${time}`),
+      onMove: () => undefined,
+      onWrite: () => undefined,
+      onEdit: () => undefined,
+      onPasteSlot: () => bookings.push("paste-save"),
+      canPaste: true,
+      slotOpen: true,
+      slotError: (time: string) => slotGestureError({ actor: "advisor", day: saturday, time, scheduling, userStoreId: "grand-coulee", activeStoreId: "grand-coulee" }),
+      longPressMs: 550,
+      label: () => "",
+      summary: () => ({ name: "", vehicle: "", advisor: "", tech: "", when: "", lane: "", concern: "", vin: "", ops: "", status: "", canWrite: false }),
+      hoursFor: () => 0,
+    })));
+    try {
+      const pointer = window.PointerEvent;
+      const column = () => {
+        const node = host.querySelector<HTMLElement>("[data-tech='elena']");
+        assert.ok(node);
+        node.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+        return node;
+      };
+      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 8, clientY: 6 * 32, pointerId: 901 }));
+      advance(clock, 550);
+      assert.equal(host.querySelectorAll("[data-context-menu]").length, 0);
+      assert.equal(host.querySelectorAll("[data-paste]").length, 0);
+      assert.deepEqual(bookings, []);
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: false, clientX: 8, clientY: 6 * 32, pointerId: 901 }));
+      column().dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 902 }));
+      window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "mouse", isPrimary: true, clientX: 48, clientY: 8 * 32, pointerId: 902 }));
+      pointerClick(column(), { pointerId: 902, pointerType: "mouse", clientX: 48, clientY: 8 * 32 });
+      assert.deepEqual(bookings, ["book|elena|11:00"]);
+      assert.equal(host.querySelector("[data-paste]"), null);
+    } finally {
+      root.unmount();
+      host.remove();
+      restoreFakeTimers?.();
     }
   });
 
@@ -2438,43 +2579,13 @@ describe("round 26 copy bar stays under the header", () => {
   });
 
   it("keeps the copied bar off the top card at phone, tablet, and desktop", async () => {
-    const header = (await scheduleShellHtml()).header;
-    const bar = renderToStaticMarkup(createElement(CopyBar, {
-      copiedName: "Helen Cho",
-      notice: null,
-      onOverride: () => undefined,
-      onReason: () => undefined,
-      onDismiss: () => undefined,
-    }));
-    const isaac = {
-      id: "isaac", date: friday, time: "07:30", minutes: 150, customerId: "c1", vehicleId: "v1", advisorId: "megan",
-      concern: "Brake pulsation", lines: [{ id: "isaac-a", code: "A", concern: "Brake" }],
-      vin: "", laborOpIds: [] as string[], techId: "marcus", lane: "drop" as const, status: "scheduled" as const, orderId: null,
-    };
-    const board = renderToStaticMarkup(createElement(AppointmentCalendar, {
-      appointments: [isaac],
-      day: friday,
-      techs: [
-        { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
-        { id: "elena", number: "2", name: "Elena", board: "express" as const },
-      ],
-      selectedId: null,
-      onSelect: () => undefined,
-      onSlot: () => undefined,
-      onMove: () => undefined,
-      onWrite: () => undefined,
-      onEdit: () => undefined,
-      label: () => "Isaac Feldman",
-      summary: () => ({ name: "Isaac Feldman", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "7:30 AM", lane: "Drop-off", concern: "Brake", vin: "", ops: "", status: "Scheduled", canWrite: false }),
-      hoursFor: () => 2.5,
-    }));
-    const boardScroll = `<div data-board-scroll style="position:sticky;top:calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px));max-height:calc(100vh - var(--app-header-height, 0px) - var(--copy-bar-height, 0px))"><div style="overflow:auto;max-height:inherit">${board}</div></div>`;
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor class="contents" style="display:contents">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:8rem"><h1 class="font-display text-5xl">Friday</h1></div>${boardScroll}</div><footer class="pb-8 text-xs text-muted"><p>This visit is the sample month. Grand Coulee and Pullman are separate stores, and this footer sits under the board on a phone.</p></footer><div data-sticky-tail style="height:calc(100vh - var(--app-header-height, 0px))"></div></main></div></div>`;
-    const css = await appCss(`${header}${bar}${board}${html}`);
+    const pageHtml = await copiedScheduleHtml();
+    const css = await appCss(pageHtml);
     const browser = await chromium.launch({ headless: true });
     try {
       const page = await browser.newPage();
-      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${pageHtml}</body></html>`);
+      const headerBottom = { 1400: 69, 820: 169, 390: 297 } as const;
       for (const [width, height] of [[1400, 700], [820, 700], [390, 700]] as const) {
         await page.setViewportSize({ width, height });
         await pinHeader(page);
@@ -2485,49 +2596,81 @@ describe("round 26 copy bar stays under the header", () => {
           document.documentElement.style.setProperty("--copy-bar-height", `${barHeight}px`);
           document.documentElement.style.scrollPaddingTop = `calc(var(--app-header-height, 0px) + ${barHeight}px)`;
         });
+        assert.equal(await page.locator("[data-board-scroll]").count(), 0, `${width} the board has its own scroller`);
+        const friday = await page.evaluate(() => {
+          const label = [...document.querySelectorAll("p")].find((node) => node.textContent === "5 PM");
+          const column = document.querySelector("[data-tech]");
+          if (!label || !column) return null;
+          const top = label.getBoundingClientRect().top + window.scrollY + 32;
+          return { top, scrollers: [...column.querySelectorAll("*"), column].some((node) => node instanceof HTMLElement && node.scrollTop > 0) };
+        });
+        assert.ok(friday, `${width} missing Friday 5:00 PM`);
+        await page.evaluate((top) => window.scrollTo({ top: Math.max(0, top - 220), left: 0, behavior: "instant" }), friday.top);
+        await page.waitForFunction((top) => Math.abs(window.scrollY - Math.max(0, top - 220)) < 1, friday.top);
+        await page.evaluate(() => new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        const reached = await page.evaluate((top) => {
+          const y = top - window.scrollY;
+          const column = document.querySelector("[data-tech]");
+          const clipped = column ? [...column.parentElement ? [column.parentElement] : [], column].some((node) => {
+            if (!(node instanceof HTMLElement)) return false;
+            const style = getComputedStyle(node);
+            return (style.overflowY === "auto" || style.overflowY === "scroll") && node.scrollTop === 0 && node.clientHeight + 8 < node.scrollHeight && y > node.getBoundingClientRect().bottom;
+          }) : true;
+          return { y, scrollY: window.scrollY, inView: y > 0 && y < window.innerHeight, clipped, boardScroll: Boolean(document.querySelector("[data-board-scroll]")) };
+        }, friday.top);
+        assert.ok(reached.scrollY > 40, `${width} Friday 5:30 PM did not move the window`);
+        assert.equal(reached.inView, true, `${width} Friday 5:30 PM is not in the window (y ${reached.y})`);
+        assert.equal(reached.clipped, false, `${width} Friday 5:30 PM is inside a board scroller`);
+        assert.equal(reached.boardScroll, false, `${width} the board scroller is back`);
+        await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: "instant" }));
+        await page.waitForFunction(() => window.scrollY < 1);
+        await page.evaluate(() => new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        const rested = await page.evaluate(() => {
+          const card = document.querySelector("[data-appt]");
+          card?.scrollIntoView({ block: "start", behavior: "instant" });
+          return window.scrollY;
+        });
+        await page.waitForFunction((top) => Math.abs(window.scrollY - top) < 2, rested);
+        await page.evaluate(() => new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        const clear = await page.evaluate(() => {
+          const card = document.querySelector("[data-appt]");
+          const barNode = document.querySelector("[data-copy-bar]");
+          if (!card || !barNode) return null;
+          const cardBox = card.getBoundingClientRect();
+          const barBox = barNode.getBoundingClientRect();
+          const intersects = cardBox.left < barBox.right && cardBox.right > barBox.left && cardBox.top < barBox.bottom && cardBox.bottom > barBox.top;
+          return { intersects, scrollY: window.scrollY };
+        });
+        assert.ok(clear, `${width} missing the top card at rest`);
+        assert.equal(clear.intersects, false, `${width} the top card rests under the copied bar`);
         const maxScroll = await page.evaluate(() => Math.max(0, document.documentElement.scrollHeight - window.innerHeight));
-        const depths = [0, 120, 240, 480, maxScroll];
-        for (const depth of depths) {
-          await page.evaluate((top) => window.scrollTo({ top, left: 0, behavior: "instant" }), depth);
-          await page.waitForFunction((top) => Math.abs(window.scrollY - top) < 1, depth);
-          await page.evaluate(() => new Promise<void>((resolve) => {
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-          }));
-          const hit = await page.evaluate(() => {
-            const card = document.querySelector("[data-appt]");
-            const barNode = document.querySelector("[data-copy-bar]");
-            const headerNode = document.querySelector("header.app-header");
-            if (!card || !barNode || !headerNode) return null;
-            const cardBox = card.getBoundingClientRect();
-            const barBox = barNode.getBoundingClientRect();
-            const headerBox = headerNode.getBoundingClientRect();
-            const intersects = cardBox.left < barBox.right && cardBox.right > barBox.left && cardBox.top < barBox.bottom && cardBox.bottom > barBox.top;
-            const cx = Math.min(Math.max(cardBox.left + cardBox.width / 2, 0), window.innerWidth - 1);
-            const cy = cardBox.top + cardBox.height / 2;
-            const onScreen = cy >= headerBox.bottom && cy < window.innerHeight;
-            const target = onScreen ? document.elementFromPoint(cx, cy) : null;
-            return {
-              intersects,
-              onScreen,
-              card: Boolean(target?.closest("[data-appt]")),
-              bar: Boolean(target?.closest("[data-copy-bar]")),
-              who: target ? `${target.tagName}.${String(target.className).slice(0, 80)}` : "none",
-              y: cy,
-              barTop: barBox.top,
-              headerBottom: headerBox.bottom,
-              scrollY: window.scrollY,
-            };
+        await page.evaluate((top) => window.scrollTo({ top, left: 0, behavior: "instant" }), maxScroll);
+        await page.waitForFunction((top) => Math.abs(window.scrollY - top) < 1, maxScroll);
+        await page.evaluate(() => new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }));
+        const bottom = await page.evaluate(() => {
+          const barNode = document.querySelector("[data-copy-bar]");
+          const headerNode = document.querySelector("header.app-header");
+          if (!barNode || !headerNode) return null;
+          const barBox = barNode.getBoundingClientRect();
+          const headerBox = headerNode.getBoundingClientRect();
+          const cards = [...document.querySelectorAll("[data-appt]")].map((card) => {
+            const box = card.getBoundingClientRect();
+            return box.left < barBox.right && box.right > barBox.left && box.top < barBox.bottom && box.bottom > barBox.top;
           });
-          assert.ok(hit, `${width} missing the top card at scroll ${depth}`);
-          assert.equal(hit.intersects, false, `${width} the copied bar intersects the top card at scroll ${hit.scrollY}`);
-          if (hit.onScreen) {
-            assert.equal(hit.card, true, `${width} the top card is not the hit at scroll ${hit.scrollY} (${hit.who} y ${hit.y})`);
-            assert.equal(hit.bar, false, `${width} the copied bar covers the top card at scroll ${hit.scrollY}`);
-          }
-          if (depth === maxScroll) {
-            assert.ok(Math.abs(hit.barTop - hit.headerBottom) <= 1, `${width} bar left the header at max scroll (top ${hit.barTop}, header ${hit.headerBottom})`);
-          }
-        }
+          return { barTop: barBox.top, headerBottom: headerBox.bottom, covered: cards.some(Boolean), scrollY: window.scrollY };
+        });
+        assert.ok(bottom, `${width} missing the bar at max scroll`);
+        assert.equal(bottom.covered, false, `${width} a card sits under the copied bar at max scroll`);
+        assert.ok(Math.abs(bottom.barTop - bottom.headerBottom) <= 1, `${width} bar left the header at max scroll (top ${bottom.barTop}, header ${bottom.headerBottom})`);
+        assert.ok(Math.abs(bottom.headerBottom - headerBottom[width]) <= 1, `${width} header bottom ${bottom.headerBottom} is not ${headerBottom[width]}`);
       }
     } finally {
       await browser.close();
@@ -2535,49 +2678,20 @@ describe("round 26 copy bar stays under the header", () => {
   });
 
   it("a press on the copied bar opens nothing and leaves the appointments", async () => {
-    const header = (await scheduleShellHtml()).header;
-    const bar = renderToStaticMarkup(createElement(CopyBar, {
-      copiedName: "Helen Cho",
-      notice: { kind: "error", text: "That time is outside shop hours." },
-      onOverride: () => undefined,
-      onReason: () => undefined,
-      onDismiss: () => undefined,
-    }));
-    const isaac = {
-      id: "isaac", date: friday, time: "07:30", minutes: 150, customerId: "c1", vehicleId: "v1", advisorId: "megan",
-      concern: "Brake pulsation", lines: [{ id: "isaac-a", code: "A", concern: "Brake" }],
-      vin: "", laborOpIds: [] as string[], techId: "marcus", lane: "drop" as const, status: "scheduled" as const, orderId: null,
-    };
-    const board = renderToStaticMarkup(createElement(AppointmentCalendar, {
-      appointments: [isaac],
-      day: friday,
-      techs: [
-        { id: "marcus", number: "1", name: "Marcus", board: "main" as const },
-        { id: "elena", number: "2", name: "Elena", board: "express" as const },
-      ],
-      selectedId: null,
-      onSelect: () => undefined,
-      onSlot: () => undefined,
-      onMove: () => undefined,
-      onWrite: () => undefined,
-      onEdit: () => undefined,
-      label: () => "Isaac Feldman",
-      summary: () => ({ name: "Isaac Feldman", vehicle: "Ford", advisor: "Megan", tech: "Marcus", when: "7:30 AM", lane: "Drop-off", concern: "Brake", vin: "", ops: "", status: "Scheduled", canWrite: false }),
-      hoursFor: () => 2.5,
-    }));
-    const boardScroll = `<div data-board-scroll style="position:sticky;top:calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px));max-height:calc(100vh - var(--app-header-height, 0px) - var(--copy-bar-height, 0px))"><div style="overflow:auto;max-height:inherit">${board}</div></div>`;
-    const html = `<div class="min-h-screen bg-bg text-ink"><div class="md:pl-60">${header}<main class="mx-auto w-full max-w-6xl px-4 py-5"><div data-copy-anchor class="contents" style="display:contents">${bar}<div data-desk-heading class="flex flex-wrap gap-3" style="min-height:8rem"><h1 class="font-display text-5xl">Friday</h1></div>${boardScroll}</div><footer class="pb-8 text-xs text-muted"><p>This visit is the sample month.</p></footer><div data-sticky-tail style="height:calc(100vh - var(--app-header-height, 0px))"></div></main></div></div>`;
-    const css = await appCss(`${header}${bar}${board}${html}`);
+    const pageHtml = await copiedScheduleHtml();
+    const css = await appCss(pageHtml);
     const browser = await chromium.launch({ headless: true });
     try {
       const page = await browser.newPage();
-      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${html}<script>
-        window.__hits = [];
-        const note = (kind) => (event) => {
+      await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${pageHtml}</body></html>`);
+      await page.evaluate(() => {
+        const hits: string[] = [];
+        (window as unknown as { __hits: string[] }).__hits = hits;
+        const note = (kind: string) => (event: Event) => {
           const node = event.target;
           if (!(node instanceof Element)) return;
           if (node.closest("[data-copy-bar]")) return;
-          window.__hits.push(kind);
+          hits.push(kind);
         };
         document.addEventListener("pointerdown", note("down"), true);
         document.addEventListener("pointerup", note("up"), true);
@@ -2586,7 +2700,7 @@ describe("round 26 copy bar stays under the header", () => {
         document.querySelector("[data-dismiss]")?.addEventListener("click", () => {
           document.querySelector("[data-paste-notice]")?.remove();
         });
-      </script></body></html>`);
+      });
       for (const [width, height] of [[390, 700], [820, 700], [1400, 700]] as const) {
         await page.setViewportSize({ width, height });
         await pinHeader(page);
@@ -2607,7 +2721,7 @@ describe("round 26 copy bar stays under the header", () => {
           return { x, y, barTop: barBox.top, barBottom: barBox.bottom };
         }, width === 390);
         assert.ok(point, `${width} missing the copied bar`);
-        assert.ok(point.y > point.barTop && point.y < point.barBottom, `${width} press missed the bar (${point.barTop}-${point.barBottom} y ${point.y})`);
+        assert.ok(point.y > point.barTop && point.y < point.barBottom, `${width} press missed the bar`);
         if (width === 390) assert.ok(point.y > 297 && point.y < 374, `${width} press y ${point.y} is outside 297-374 (bar ${point.barTop}-${point.barBottom})`);
         const press = async (button?: "left" | "right", hold = false) => {
           await page.mouse.move(point.x, point.y);
@@ -2637,6 +2751,70 @@ describe("round 26 copy bar stays under the header", () => {
     }
   });
 });
+
+
+async function copiedScheduleHtml() {
+  pinClock("2026-11-13T20:00:00.000Z");
+  const data = createSeed();
+  useShop.setState({
+    ...data,
+    dataset: "sample",
+    focusOrderId: null,
+    activeStoreId: "grand-coulee",
+    userStoreId: "grand-coulee",
+    workingAsId: "megan",
+    stores: {
+      "grand-coulee": { ...data, dataset: "sample" },
+      pullman: createEmptyShop(),
+    },
+  });
+  const router = createRouter({
+    routeTree,
+    history: createMemoryHistory({ initialEntries: ["/schedule"] }),
+    rewrite: deskLocationRewrite(),
+    caseSensitive: false,
+    trailingSlash: "never",
+    defaultErrorComponent: AppErrorComponent,
+  });
+  await router.load();
+  (router as { _rendered?: unknown[] })._rendered = [];
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => {
+      root.render(createElement(RouterProvider, { router }));
+    });
+    for (let i = 0; i < 25 && !host.querySelector("[data-appt]"); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const working = host.querySelector<HTMLSelectElement>("[aria-label='Working as']");
+    assert.ok(working, "the schedule page has no Working as control");
+    flushSync(() => {
+      working.value = "megan";
+      working.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const card = host.querySelector<HTMLElement>("[data-appt]");
+    assert.ok(card, "Friday has no appointment to copy");
+    flushSync(() => card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 24, clientY: 24 })));
+    const copy = host.querySelector<HTMLButtonElement>("[data-copy]");
+    assert.ok(copy, "the real schedule did not open Copy");
+    flushSync(() => copy.click());
+    assert.ok(host.querySelector("[data-copied]"), "CopyBarFrame did not render the copied line");
+    const column = host.querySelector<HTMLElement>("[data-tech]");
+    assert.ok(column);
+    column.getBoundingClientRect = () => ({ top: 0, left: 0, right: 160, bottom: 900, width: 160, height: 900, x: 0, y: 0, toJSON() { return {}; } });
+    flushSync(() => column.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2, clientX: 12, clientY: 0 })));
+    assert.ok(host.querySelector("[data-copy-bar]"), "the real schedule did not render the copied bar");
+    assert.ok(host.querySelector("[data-dismiss]"), "the real schedule did not render Dismiss");
+    assert.equal(host.querySelector("[data-board-scroll]"), null, "the board still has an inner scroller");
+    return host.innerHTML;
+  } finally {
+    flushSync(() => root.unmount());
+    host.remove();
+    useShop.setState({ ...createEmptyShop(), focusOrderId: null, dataset: "sample" });
+  }
+}
 
 async function scheduleShellHtml() {
   useShop.setState({

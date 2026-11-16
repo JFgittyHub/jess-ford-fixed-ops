@@ -358,18 +358,6 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
       {board.length === 0 ? (
         <p className="card mt-4 text-muted">No technicians are on a board yet. The day columns show up when a technician is on Express, Main shop, or Internals.</p>
       ) : (
-      <div
-        data-board-scroll={copiedName || pasteNotice ? "" : undefined}
-        style={copiedName || pasteNotice ? {
-          position: "sticky",
-          top: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))",
-          maxHeight: "calc(100vh - var(--app-header-height, 0px) - var(--copy-bar-height, 0px))",
-        } : undefined}
-      >
-      <div
-        className={copiedName || pasteNotice ? "overflow-auto" : undefined}
-        style={copiedName || pasteNotice ? { maxHeight: "inherit" } : undefined}
-      >
       <AppointmentCalendar
         appointments={onBoard}
         day={day}
@@ -464,8 +452,6 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           };
         }}
       />
-      </div>
-      </div>
       )}
 
       {selected ? (
