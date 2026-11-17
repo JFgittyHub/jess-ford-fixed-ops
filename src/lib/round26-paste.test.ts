@@ -1,6 +1,8 @@
 import "./test-dom.ts";
 import assert from "node:assert/strict";
+import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { afterEach, describe, it } from "node:test";
 import { act, createElement, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -3181,6 +3183,320 @@ async function measure(page: Page) {
       coversHeader: covers("[aria-label='Working as']") || covers("[aria-label='Viewing as']") || covers("[aria-label='Store settings']"),
     };
   });
+}
+
+describe("round 26 live scroll anchoring", () => {
+  it("keeps Friday Paste open after the notice shrinks, and a real scroll or a 6 px nudge still closes it", async () => {
+    const port = 25000 + (process.pid % 10000);
+    const root = new URL("../..", import.meta.url).pathname;
+    const server = spawn(process.execPath, ["scripts/with-app-env.mjs", "vite", "dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
+      cwd: root,
+      env: { ...process.env, VITE_DEMO_MODE: "true", PATH: `${root}/node_modules/.bin:${process.env.PATH ?? ""}` },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let serverLog = "";
+    server.stdout?.on("data", (chunk) => { serverLog += String(chunk); });
+    server.stderr?.on("data", (chunk) => { serverLog += String(chunk); });
+    const browser = await chromium.launch({ headless: true });
+    try {
+      await waitForPort(port);
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "networkidle" });
+      await page.locator("[data-tech]").first().waitFor({ timeout: 20000 });
+      await page.clock.install();
+      await page.locator("[aria-label='Working as']").selectOption("megan");
+      await page.locator("[data-appt]").first().click({ button: "right" });
+      await page.locator("[data-copy]").click();
+      await page.locator("[data-copied]").waitFor();
+      for (let step = 0; step < 6 && !/\bFri\b/.test(await page.locator("[data-desk-heading] h1").innerText()); step += 1) {
+        await page.getByRole("button", { name: "Next", exact: true }).click();
+      }
+      assert.match(await page.locator("[data-desk-heading] h1").innerText(), /\bFri\b/);
+      const outside = await page.evaluate(() => {
+        const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+        for (const column of columns) {
+          const top = column.getBoundingClientRect().top + window.scrollY + 21 * 32 + 16;
+          return { top };
+        }
+        return null;
+      });
+      assert.ok(outside, "no technician column");
+      await page.evaluate((top) => window.scrollTo({ top: Math.max(0, top - 280), left: 0, behavior: "instant" }), outside.top);
+      const outsidePoint = await page.evaluate(() => {
+        const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+        for (const column of columns) {
+          const rect = column.getBoundingClientRect();
+          const y = rect.top + 21 * 32 + 16;
+          const x = rect.left + Math.min(36, rect.width / 2);
+          if (y < 80 || y > window.innerHeight - 20) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (hit?.closest("[data-appt], [data-copy-bar], header")) continue;
+          return { x, y };
+        }
+        return null;
+      });
+      assert.ok(outsidePoint, "17:30 is not an empty slot in view");
+      await page.mouse.click(outsidePoint.x, outsidePoint.y, { button: "right" });
+      const noticed = await page.locator("[data-paste-notice]").waitFor({ timeout: 3000 }).then(() => true, () => false);
+      if (!noticed) {
+        const debug = await page.evaluate((point) => {
+          const hit = document.elementFromPoint(point.x, point.y);
+          return {
+            point,
+            hit: hit ? `${hit.tagName}.${String(hit.className).slice(0, 80)}` : "none",
+            menu: document.querySelector("[data-context-menu]")?.textContent ?? "",
+            bar: document.querySelector("[data-copy-bar]")?.textContent?.slice(0, 180) ?? "",
+            heading: document.querySelector("[data-desk-heading] h1")?.textContent ?? "",
+          };
+        }, outsidePoint);
+        assert.fail(`17:30 did not raise the notice ${JSON.stringify(debug)}`);
+      }
+      assert.match(await page.locator("[data-paste-notice]").innerText(), /outside shop hours/);
+      if ((await page.evaluate(() => window.scrollY)) < 40) {
+        await page.evaluate(() => window.scrollBy(0, 220));
+      }
+      assert.ok(await page.evaluate(() => window.scrollY > 0), "the page is still at the top");
+
+      for (const width of [360, 390, 820, 1400]) {
+        await page.setViewportSize({ width, height: 800 });
+        await raiseOutsideNotice(page);
+        await page.clock.fastForward(50);
+        const before = await page.locator("[data-appt]").count();
+        let spot: { x: number; y: number; time: string; scrollY: number } | null = null;
+        for (let attempt = 0; attempt < 4 && !spot; attempt += 1) {
+          await page.evaluate(() => {
+            const column = document.querySelector("[data-tech]");
+            if (!column) return;
+            const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 300;
+            const target = column.getBoundingClientRect().top + window.scrollY + 8 * 32 + 16;
+            window.scrollTo({ top: Math.max(40, target - (bar + 180)), left: 0, behavior: "instant" });
+          });
+          spot = await pressInHours(page);
+        }
+        assert.ok(spot, `${width} has no in-hours slot in view`);
+        assert.ok(spot.scrollY > 0, `${width} scrolled to the top`);
+        // Step the clock so the notice-clear settle timer runs during this hold.
+        for (let step = 0; step < 20; step += 1) await page.clock.fastForward(100);
+        const held = await page.evaluate(() => ({
+          scrollY: window.scrollY,
+          paste: document.querySelectorAll("[data-paste]").length,
+          time: document.querySelector("[data-context-menu]")?.getAttribute("data-menu-time") ?? "",
+          count: document.querySelectorAll("[data-appt]").length,
+        }));
+        await releaseHold(page, spot);
+        assert.equal(held.paste, 1, `${width} Paste did not stay open ${JSON.stringify({ spot, held })}`);
+        assert.ok(Math.abs(held.scrollY - spot.scrollY) <= 8, `${width} scroll jumped ${held.scrollY - spot.scrollY} ${JSON.stringify(held)}`);
+        assert.equal(held.time, spot.time, `${width} Paste used ${held.time} instead of ${spot.time}`);
+        assert.equal(held.count, before, `${width} the hold wrote a visit`);
+        await page.keyboard.press("Escape");
+      }
+
+      await page.setViewportSize({ width: 1400, height: 800 });
+      await raiseOutsideNotice(page);
+      await page.evaluate(() => {
+        const column = document.querySelector("[data-tech]");
+        if (!column) return;
+        const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 300;
+        const target = column.getBoundingClientRect().top + window.scrollY + 8 * 32 + 16;
+        window.scrollTo({ top: Math.max(40, target - (bar + 140)), left: 0, behavior: "instant" });
+      });
+      const blocked = await pressInHours(page);
+      assert.ok(blocked, "no slot for the real-scroll check");
+      const beforeScroll = await page.locator("[data-appt]").count();
+      await page.clock.fastForward(200);
+      await page.evaluate(() => {
+        window.scrollBy(0, 240);
+        // The page clock holds the scroll event until the next frame.
+        document.dispatchEvent(new Event("scroll"));
+      });
+      await page.clock.fastForward(1600);
+      const disarmed = await page.evaluate(() => ({
+        paste: document.querySelectorAll("[data-paste]").length,
+        count: document.querySelectorAll("[data-appt]").length,
+      }));
+      await releaseHold(page, blocked);
+      assert.equal(disarmed.paste, 0, "a real scroll left Paste open");
+      assert.equal(disarmed.count, beforeScroll, "a real scroll wrote a visit");
+
+      const line = await page.evaluate(() => {
+        const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
+        if (scroller) scroller.scrollLeft = 0;
+        const column = document.querySelector<HTMLElement>("[data-tech]");
+        if (!column) return null;
+        const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 200;
+        const absolute = column.getBoundingClientRect().top + window.scrollY + 11 * 32 - 3;
+        window.scrollTo({ top: Math.max(40, absolute - (bar + 36)), left: 0, behavior: "instant" });
+        const next = column.getBoundingClientRect();
+        const y = next.top + 11 * 32 - 3;
+        const x = Math.min(window.innerWidth - 12, Math.max(12, next.left + 24));
+        const hit = document.elementFromPoint(x, y);
+        const onColumn = Boolean(hit?.closest("[data-tech]")) && !hit?.closest("[data-appt], [data-copy-bar], header");
+        if (onColumn && hit) {
+          hit.dispatchEvent(new PointerEvent("pointerdown", {
+            bubbles: true, cancelable: true, clientX: x, clientY: y,
+            button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
+          }));
+        }
+        return {
+          x,
+          y,
+          scrollY: window.scrollY,
+          hit: hit ? `${hit.tagName}.${String(hit.className).slice(0, 40)}` : "none",
+          onColumn,
+        };
+      });
+      assert.ok(line?.onColumn, `the 12:30 line is not an empty slot ${JSON.stringify(line)}`);
+      const beforeNudge = await page.locator("[data-appt]").count();
+      await page.clock.fastForward(900);
+      await releaseHold(page, line);
+      await page.clock.fastForward(50);
+      const opened = await page.evaluate(() => ({
+        paste: document.querySelectorAll("[data-paste]").length,
+        time: document.querySelector("[data-context-menu]")?.getAttribute("data-menu-time") ?? "",
+        bar: document.querySelector("[data-copy-bar]")?.textContent?.slice(0, 80) ?? "",
+      }));
+      assert.equal(opened.paste, 1, `the 12:00 hold did not open Paste ${JSON.stringify({ line, opened })}`);
+      assert.equal(await page.locator("[data-context-menu]").getAttribute("data-menu-time"), "12:00");
+      const nudged = await page.evaluate(() => {
+        const before = window.scrollY;
+        window.scrollTo(0, before + 6);
+        window.dispatchEvent(new Event("scroll"));
+        return { before, after: window.scrollY, menu: document.querySelectorAll("[data-context-menu]").length };
+      });
+      assert.equal(nudged.menu, 0, `a 6 px scroll left Paste open ${JSON.stringify(nudged)}`);
+      assert.equal(await page.locator("[data-appt]").count(), beforeNudge);
+    } finally {
+      await browser.close();
+      stopServer(server);
+      if (server.exitCode == null) {
+        await new Promise((resolve) => server.once("exit", resolve));
+      }
+      if (serverLog.includes("error") && server.exitCode && server.exitCode !== 0) {
+        console.log(serverLog.slice(-2000));
+      }
+    }
+  });
+});
+
+function stopServer(server: ChildProcess) {
+  if (server.exitCode != null) return;
+  server.kill("SIGTERM");
+  setTimeout(() => {
+    if (server.exitCode == null) server.kill("SIGKILL");
+  }, 2000);
+}
+
+function waitForPort(port: number) {
+  const started = Date.now();
+  return new Promise<void>((resolve, reject) => {
+    const attempt = () => {
+      const socket = createConnection({ port, host: "127.0.0.1" }, () => {
+        socket.end();
+        resolve();
+      });
+      socket.on("error", () => {
+        socket.destroy();
+        if (Date.now() - started > 90000) reject(new Error(`vite did not listen on ${port}`));
+        else setTimeout(attempt, 300);
+      });
+    };
+    attempt();
+  });
+}
+
+async function raiseOutsideNotice(page: Page) {
+  if (await page.locator("[data-paste-notice]").count()) return;
+  await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
+    if (scroller) scroller.scrollLeft = 0;
+    const column = document.querySelector("[data-tech]");
+    if (!column) return;
+    const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 220;
+    const top = column.getBoundingClientRect().top + window.scrollY + 21 * 32 + 16;
+    window.scrollTo({ top: Math.max(0, top - (bar + 48)), left: 0, behavior: "instant" });
+  });
+  const point = await page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
+    if (scroller) scroller.scrollLeft = 0;
+    const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+    for (const column of columns) {
+      const rect = column.getBoundingClientRect();
+      if (rect.right < 24 || rect.left > window.innerWidth - 24) continue;
+      const y = rect.top + 21 * 32 + 16;
+      const x = Math.min(window.innerWidth - 12, Math.max(12, rect.left + 24));
+      if (y < 80 || y > window.innerHeight - 20) continue;
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+      return { x, y };
+    }
+    return null;
+  });
+  if (!point) {
+    const debug = await page.evaluate(() => ({
+      height: window.innerHeight,
+      width: window.innerWidth,
+      scrollY: window.scrollY,
+      columns: [...document.querySelectorAll<HTMLElement>("[data-tech]")].map((column) => {
+        const rect = column.getBoundingClientRect();
+        return { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, y: rect.top + 21 * 32 + 16 };
+      }),
+    }));
+    assert.fail(`17:30 is not an empty slot in view ${JSON.stringify(debug)}`);
+  }
+  await page.mouse.click(point.x, point.y, { button: "right" });
+  const appeared = await page.locator("[data-paste-notice]").waitFor({ timeout: 4000 }).then(() => true, () => false);
+  if (!appeared) {
+    const debug = await page.evaluate((spot) => {
+      const hit = document.elementFromPoint(spot.x, spot.y);
+      return {
+        spot,
+        hit: hit ? `${hit.tagName}.${String(hit.className).slice(0, 60)}` : "none",
+        menu: document.querySelector("[data-context-menu]")?.getAttribute("data-menu-time") ?? document.querySelector("[data-context-menu]")?.textContent ?? "",
+        bar: document.querySelector("[data-copy-bar]")?.textContent?.slice(0, 120) ?? "",
+      };
+    }, point);
+    assert.fail(`could not raise the 17:30 notice ${JSON.stringify(debug)}`);
+  }
+  await page.keyboard.press("Escape");
+}
+
+async function pressInHours(page: Page) {
+  return page.evaluate(() => {
+    const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
+    if (scroller) scroller.scrollLeft = 0;
+    const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+    const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0;
+    const header = document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0;
+    const topLimit = Math.max(bar, header) + 96;
+    for (const column of columns) {
+      const rect = column.getBoundingClientRect();
+      if (rect.right < 24 || rect.left > window.innerWidth - 24) continue;
+      for (let slots = 1; slots <= 19; slots += 1) {
+        const y = rect.top + slots * 32 + 16;
+        const x = Math.min(window.innerWidth - 12, Math.max(12, rect.left + 24));
+        if (y <= topLimit || y >= window.innerHeight - 16) continue;
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || hit.closest("[data-appt], [data-copy-bar], header, [data-context-menu]")) continue;
+        hit.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, clientX: x, clientY: y,
+          button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
+        }));
+        const mins = 7 * 60 + slots * 30;
+        const time = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+        return { x, y, time, scrollY: window.scrollY };
+      }
+    }
+    return null;
+  });
+}
+
+async function releaseHold(page: Page, spot: { x: number; y: number }) {
+  await page.evaluate(({ x, y }) => {
+    document.dispatchEvent(new PointerEvent("pointerup", {
+      bubbles: true, cancelable: true, clientX: x, clientY: y,
+      button: 0, buttons: 0, pointerId: 7, pointerType: "mouse", isPrimary: true,
+    }));
+  }, spot);
 }
 
 async function appCss(markup: string) {

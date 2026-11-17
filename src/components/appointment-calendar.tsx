@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { flushSync } from "react-dom";
 import { Meter } from "@/components/ui";
 import { lengthLabel, today } from "@/lib/format";
@@ -262,6 +262,8 @@ export function AppointmentCalendar({
   const heldPointerId = useRef<number | null>(null);
   const heldPointerActive = useRef(false);
   const foreignPointers = useRef(new Set<number>());
+  const ignoreMenuScroll = useRef(false);
+  const menuScrollOrigin = useRef(new Map<EventTarget, { x: number; y: number }>());
   const windowCleanups = useRef(new Set<() => void>());
   const disarmHold = useRef<(() => void) | null>(null);
   const [menu, setMenu] = useState<
@@ -293,7 +295,7 @@ export function AppointmentCalendar({
     };
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!menu) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenu(null);
@@ -305,7 +307,8 @@ export function AppointmentCalendar({
       if (event.pointerType === "mouse" && event.button !== 0) return;
       setMenu(null);
     };
-    const origin = new Map<EventTarget, { x: number; y: number }>();
+    const origin = menuScrollOrigin.current;
+    origin.clear();
     const remember = (node: EventTarget, x: number, y: number) => origin.set(node, { x, y });
     remember(window, window.scrollX, window.scrollY);
     remember(document, window.scrollX, window.scrollY);
@@ -323,15 +326,29 @@ export function AppointmentCalendar({
       }
       return { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
     };
+    let menuTop = document.querySelector("[data-tech]")?.getBoundingClientRect().top ?? 0;
     const onScroll = (event: Event) => {
-      const now = pointOf(event.target);
+      const target = event.target;
+      const viewport = target == null || target === window || target === document || target === document.documentElement || target === document.body;
+      const now = pointOf(target);
       const then = origin.get(now.node) ?? (now.node === window ? origin.get(window) : undefined);
-      if (!then || (Math.abs(now.x - then.x) <= 8 && Math.abs(now.y - then.y) <= 8)) return;
-      setMenu(null);
+      if (viewport && ignoreMenuScroll.current) {
+        const top = document.querySelector("[data-tech]")?.getBoundingClientRect().top ?? menuTop;
+        const scrolledY = window.scrollY - (origin.get(window)?.y ?? window.scrollY);
+        const shifted = top - menuTop;
+        const follows = Math.abs(scrolledY) >= 1 && Math.abs(shifted + scrolledY) <= 8;
+        if (!follows) {
+          origin.set(now.node, { x: now.x, y: now.y });
+          if (Math.abs(scrolledY) < 1) menuTop = top;
+          return;
+        }
+      }
+      if (!then || (Math.abs(now.x - then.x) < 1 && Math.abs(now.y - then.y) < 1)) return;
+      flushSync(() => { setMenu(null); });
     };
     const onWheel = (event: WheelEvent) => {
       if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 8) return;
-      setMenu(null);
+      flushSync(() => { setMenu(null); });
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointer);
@@ -583,6 +600,9 @@ export function AppointmentCalendar({
                 const heldTime = slotAt();
                 const hoursBlock = slotError?.(heldTime) ?? null;
                 const ignoreHoldScroll = { current: false };
+                const lockedScroll = { x: window.scrollX, y: window.scrollY, restoring: false };
+                let lockedTop = column.getBoundingClientRect().top;
+                let settle = 0;
                 const scrollOrigin = new Map<EventTarget, { x: number; y: number }>();
                 const rememberScroll = (node: EventTarget, x: number, y: number) => scrollOrigin.set(node, { x, y });
                 rememberScroll(window, window.scrollX, window.scrollY);
@@ -603,7 +623,10 @@ export function AppointmentCalendar({
                   let end: (ev: PointerEvent) => void = () => undefined;
                   let onScroll: (event: Event) => void = () => undefined;
                   const disarm = () => {
+                    ignoreHoldScroll.current = false;
+                    ignoreMenuScroll.current = false;
                     window.clearTimeout(timer);
+                    window.clearTimeout(settle);
                     window.removeEventListener("pointermove", move);
                     window.removeEventListener("pointerup", end);
                     window.removeEventListener("pointercancel", end);
@@ -617,8 +640,30 @@ export function AppointmentCalendar({
                     }
                   };
                   onScroll = (event: Event) => {
-                    if (ignoreHoldScroll.current || heldPointerId.current !== pointerId) return;
+                    if (heldPointerId.current !== pointerId) return;
                     const target = event.target;
+                    const viewport = target == null || target === window || target === document || target === document.documentElement || target === document.body;
+                    if (ignoreHoldScroll.current && viewport) {
+                      if (lockedScroll.restoring) return;
+                      const scrolledY = window.scrollY - lockedScroll.y;
+                      const shifted = column.getBoundingClientRect().top - lockedTop;
+                      // A finger scroll moves the column with the page. The notice
+                      // shrinking does not: the column reflows, or the browser
+                      // re-anchors scroll while the column stays visually put.
+                      if (Math.abs(scrolledY) >= 1 && Math.abs(shifted + scrolledY) <= 8) {
+                        suppressSlotClick.current = true;
+                        disarm();
+                        setMenu(null);
+                        return;
+                      }
+                      if (window.scrollX !== lockedScroll.x || window.scrollY !== lockedScroll.y) {
+                        lockedScroll.restoring = true;
+                        window.scrollTo(lockedScroll.x, lockedScroll.y);
+                        lockedScroll.restoring = false;
+                      }
+                      lockedTop = column.getBoundingClientRect().top;
+                      return;
+                    }
                     const now = target instanceof HTMLElement && target !== document.body && target !== document.documentElement
                       ? { node: target as EventTarget, x: target.scrollLeft, y: target.scrollTop }
                       : { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
@@ -631,6 +676,8 @@ export function AppointmentCalendar({
                   end = (ev: PointerEvent) => {
                     if (ev.pointerId !== pointerId) return;
                     disarm();
+                    ignoreHoldScroll.current = false;
+                    ignoreMenuScroll.current = false;
                   };
                   disarmHold.current = disarm;
                   windowCleanups.current.add(disarm);
@@ -654,14 +701,47 @@ export function AppointmentCalendar({
                 }
                 if (!onPasteSlot || !canPaste) return;
                 arm(window.setTimeout(() => {
+                  const scrollX = window.scrollX;
+                  const scrollY = window.scrollY;
+                  lockedScroll.x = scrollX;
+                  lockedScroll.y = scrollY;
+                  const root = document.documentElement;
+                  const previousAnchor = root.style.overflowAnchor;
+                  const rebase = () => {
+                    lockedTop = column.getBoundingClientRect().top;
+                    rememberScroll(window, window.scrollX, window.scrollY);
+                    rememberScroll(document, window.scrollX, window.scrollY);
+                    rememberScroll(document.documentElement, document.documentElement.scrollLeft, document.documentElement.scrollTop);
+                    let node: HTMLElement | null = column;
+                    while (node) {
+                      rememberScroll(node, node.scrollLeft, node.scrollTop);
+                      node = node.parentElement;
+                    }
+                  };
+                  root.style.overflowAnchor = "none";
                   ignoreHoldScroll.current = true;
+                  ignoreMenuScroll.current = true;
                   try {
                     flushSync(() => { onSlotAccepted?.(); });
+                    if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
+                    rebase();
                   } finally {
-                    ignoreHoldScroll.current = false;
+                    claimHold();
+                    flushSync(() => {
+                      setMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY });
+                    });
                   }
-                  claimHold();
-                  setMenu({ kind: "paste", techId: tech.id, time: slotAt(), x: startX, y: startY });
+                  settle = window.setTimeout(() => {
+                    if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
+                    rebase();
+                    const menuOrigin = menuScrollOrigin.current;
+                    menuOrigin.set(window, { x: window.scrollX, y: window.scrollY });
+                    menuOrigin.set(document, { x: window.scrollX, y: window.scrollY });
+                    menuOrigin.set(document.documentElement, { x: document.documentElement.scrollLeft, y: document.documentElement.scrollTop });
+                    root.style.overflowAnchor = previousAnchor;
+                    ignoreHoldScroll.current = false;
+                    ignoreMenuScroll.current = false;
+                  }, 400);
                 }, longPressMs));
               }}
             >
@@ -805,7 +885,7 @@ export function AppointmentCalendar({
       </div>
       {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onCancel={onCancel} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
       {menu ? (
-        <div data-context-menu role="menu" className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
+        <div data-context-menu role="menu" data-menu-time={menu.kind === "paste" ? menu.time : undefined} className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
           {menu.kind === "copy" ? (
             <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { onCopy?.(menu.id); setMenu(null); }}>Copy</button>
           ) : canPaste ? (

@@ -166,6 +166,8 @@ function OpenDesk({ children }: { children: ReactNode }) {
     if (!header || typeof document === "undefined") return;
     const apply = () => {
       document.documentElement.style.setProperty("--app-header-height", `${Math.ceil(header.getBoundingClientRect().height)}px`);
+      document.documentElement.style.overflowAnchor = "none";
+      document.body.style.overflowAnchor = "none";
     };
     apply();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(apply);
