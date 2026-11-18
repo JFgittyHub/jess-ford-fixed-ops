@@ -266,11 +266,50 @@ export function AppointmentCalendar({
   const menuScrollOrigin = useRef(new Map<EventTarget, { x: number; y: number }>());
   const windowCleanups = useRef(new Set<() => void>());
   const disarmHold = useRef<(() => void) | null>(null);
-  const [menu, setMenu] = useState<
+  type SlotMenu =
     | { kind: "copy"; id: string; x: number; y: number }
-    | { kind: "paste"; techId: string; time: string; x: number; y: number }
-    | null
-  >(null);
+    | { kind: "paste"; techId: string; time: string; x: number; y: number };
+  const [menu, setMenu] = useState<SlotMenu | null>(null);
+  const menuRef = useRef<SlotMenu | null>(null);
+  const releaseNotice = useRef(false);
+  const anchorPinned = useRef(false);
+  const dismissingMenu = useRef(false);
+  function syncAnchor() {
+    const pin = heldPointerActive.current || menuRef.current !== null;
+    if (pin === anchorPinned.current) return;
+    anchorPinned.current = pin;
+    const value = pin ? "none" : "";
+    document.documentElement.style.overflowAnchor = value;
+    document.body.style.overflowAnchor = value;
+  }
+  function openMenu(next: SlotMenu, acceptOnClose: boolean) {
+    menuRef.current = next;
+    if (acceptOnClose) releaseNotice.current = true;
+    flushSync(() => setMenu(next));
+    syncAnchor();
+  }
+  const dismissMenuRef = useRef<(commit?: () => void) => void>(() => undefined);
+  function dismissMenu(commit?: () => void) {
+    if (dismissingMenu.current) {
+      commit?.();
+      return;
+    }
+    dismissingMenu.current = true;
+    try {
+      const release = releaseNotice.current && menuRef.current?.kind === "paste";
+      releaseNotice.current = false;
+      menuRef.current = null;
+      flushSync(() => {
+        if (release) onSlotAccepted?.();
+        commit?.();
+        setMenu(null);
+      });
+      syncAnchor();
+    } finally {
+      dismissingMenu.current = false;
+    }
+  }
+  dismissMenuRef.current = dismissMenu;
   const hours = Array.from({ length: (END - START) / 60 }, (_, index) => START + index * 60);
   const height = ((END - START) / SNAP) * SLOT;
   const [now, setNow] = useState(() => new Date());
@@ -292,20 +331,25 @@ export function AppointmentCalendar({
       suppressSlotClick.current = false;
       heldPointerId.current = null;
       heldPointerActive.current = false;
+      menuRef.current = null;
+      releaseNotice.current = false;
+      anchorPinned.current = false;
+      document.documentElement.style.overflowAnchor = "";
+      document.body.style.overflowAnchor = "";
     };
   }, []);
 
   useLayoutEffect(() => {
     if (!menu) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenu(null);
+      if (event.key === "Escape") dismissMenuRef.current();
     };
     const onPointer = (event: PointerEvent) => {
       if ((event.target as HTMLElement | null)?.closest?.("[data-context-menu]")) return;
       if (heldPointerActive.current && event.pointerId !== heldPointerId.current) return;
       if (event.isPrimary === false) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      setMenu(null);
+      dismissMenuRef.current();
     };
     const origin = menuScrollOrigin.current;
     origin.clear();
@@ -344,11 +388,11 @@ export function AppointmentCalendar({
         }
       }
       if (!then || (Math.abs(now.x - then.x) < 1 && Math.abs(now.y - then.y) < 1)) return;
-      flushSync(() => { setMenu(null); });
+      dismissMenuRef.current();
     };
     const onWheel = (event: WheelEvent) => {
       if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 8) return;
-      flushSync(() => { setMenu(null); });
+      dismissMenuRef.current();
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointer);
@@ -555,11 +599,11 @@ export function AppointmentCalendar({
                   onSlotRefused?.(block);
                   return;
                 }
-                onSlotAccepted?.();
                 if (canPaste && onPasteSlot) {
-                  setMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY });
+                  openMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY }, true);
                   return;
                 }
+                onSlotAccepted?.();
                 onSlot(tech.id, time);
               }}
               onPointerDown={(event) => {
@@ -599,10 +643,6 @@ export function AppointmentCalendar({
                 const slotAt = () => fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
                 const heldTime = slotAt();
                 const hoursBlock = slotError?.(heldTime) ?? null;
-                const ignoreHoldScroll = { current: false };
-                const lockedScroll = { x: window.scrollX, y: window.scrollY, restoring: false };
-                let lockedTop = column.getBoundingClientRect().top;
-                let settle = 0;
                 const scrollOrigin = new Map<EventTarget, { x: number; y: number }>();
                 const rememberScroll = (node: EventTarget, x: number, y: number) => scrollOrigin.set(node, { x, y });
                 rememberScroll(window, window.scrollX, window.scrollY);
@@ -623,10 +663,8 @@ export function AppointmentCalendar({
                   let end: (ev: PointerEvent) => void = () => undefined;
                   let onScroll: (event: Event) => void = () => undefined;
                   const disarm = () => {
-                    ignoreHoldScroll.current = false;
                     ignoreMenuScroll.current = false;
                     window.clearTimeout(timer);
-                    window.clearTimeout(settle);
                     window.removeEventListener("pointermove", move);
                     window.removeEventListener("pointerup", end);
                     window.removeEventListener("pointercancel", end);
@@ -638,49 +676,27 @@ export function AppointmentCalendar({
                       heldPointerId.current = null;
                       heldPointerActive.current = false;
                     }
+                    syncAnchor();
                   };
                   onScroll = (event: Event) => {
                     if (heldPointerId.current !== pointerId) return;
                     const target = event.target;
-                    const viewport = target == null || target === window || target === document || target === document.documentElement || target === document.body;
-                    if (ignoreHoldScroll.current && viewport) {
-                      if (lockedScroll.restoring) return;
-                      const scrolledY = window.scrollY - lockedScroll.y;
-                      const shifted = column.getBoundingClientRect().top - lockedTop;
-                      // A finger scroll moves the column with the page. The notice
-                      // shrinking does not: the column reflows, or the browser
-                      // re-anchors scroll while the column stays visually put.
-                      if (Math.abs(scrolledY) >= 1 && Math.abs(shifted + scrolledY) <= 8) {
-                        suppressSlotClick.current = true;
-                        disarm();
-                        setMenu(null);
-                        return;
-                      }
-                      if (window.scrollX !== lockedScroll.x || window.scrollY !== lockedScroll.y) {
-                        lockedScroll.restoring = true;
-                        window.scrollTo(lockedScroll.x, lockedScroll.y);
-                        lockedScroll.restoring = false;
-                      }
-                      lockedTop = column.getBoundingClientRect().top;
-                      return;
-                    }
                     const now = target instanceof HTMLElement && target !== document.body && target !== document.documentElement
                       ? { node: target as EventTarget, x: target.scrollLeft, y: target.scrollTop }
                       : { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
                     const then = scrollOrigin.get(now.node) ?? scrollOrigin.get(window);
                     if (!then || (Math.abs(now.x - then.x) <= 8 && Math.abs(now.y - then.y) <= 8)) return;
                     suppressSlotClick.current = true;
+                    dismissMenu();
                     disarm();
-                    setMenu(null);
                   };
                   end = (ev: PointerEvent) => {
                     if (ev.pointerId !== pointerId) return;
                     disarm();
-                    ignoreHoldScroll.current = false;
-                    ignoreMenuScroll.current = false;
                   };
                   disarmHold.current = disarm;
                   windowCleanups.current.add(disarm);
+                  syncAnchor();
                   window.addEventListener("pointermove", move);
                   window.addEventListener("pointerup", end);
                   window.addEventListener("pointercancel", end);
@@ -701,47 +717,8 @@ export function AppointmentCalendar({
                 }
                 if (!onPasteSlot || !canPaste) return;
                 arm(window.setTimeout(() => {
-                  const scrollX = window.scrollX;
-                  const scrollY = window.scrollY;
-                  lockedScroll.x = scrollX;
-                  lockedScroll.y = scrollY;
-                  const root = document.documentElement;
-                  const previousAnchor = root.style.overflowAnchor;
-                  const rebase = () => {
-                    lockedTop = column.getBoundingClientRect().top;
-                    rememberScroll(window, window.scrollX, window.scrollY);
-                    rememberScroll(document, window.scrollX, window.scrollY);
-                    rememberScroll(document.documentElement, document.documentElement.scrollLeft, document.documentElement.scrollTop);
-                    let node: HTMLElement | null = column;
-                    while (node) {
-                      rememberScroll(node, node.scrollLeft, node.scrollTop);
-                      node = node.parentElement;
-                    }
-                  };
-                  root.style.overflowAnchor = "none";
-                  ignoreHoldScroll.current = true;
-                  ignoreMenuScroll.current = true;
-                  try {
-                    flushSync(() => { onSlotAccepted?.(); });
-                    if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
-                    rebase();
-                  } finally {
-                    claimHold();
-                    flushSync(() => {
-                      setMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY });
-                    });
-                  }
-                  settle = window.setTimeout(() => {
-                    if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
-                    rebase();
-                    const menuOrigin = menuScrollOrigin.current;
-                    menuOrigin.set(window, { x: window.scrollX, y: window.scrollY });
-                    menuOrigin.set(document, { x: window.scrollX, y: window.scrollY });
-                    menuOrigin.set(document.documentElement, { x: document.documentElement.scrollLeft, y: document.documentElement.scrollTop });
-                    root.style.overflowAnchor = previousAnchor;
-                    ignoreHoldScroll.current = false;
-                    ignoreMenuScroll.current = false;
-                  }, 400);
+                  claimHold();
+                  openMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY }, true);
                 }, longPressMs));
               }}
             >
@@ -766,6 +743,7 @@ export function AppointmentCalendar({
                     data-appt-id={row.id}
                     data-drag="move"
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
+                    data-appt-time={row.time}
                     style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
                     onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
                     onContextMenu={(event) => {
@@ -776,7 +754,7 @@ export function AppointmentCalendar({
                       if (!onCopy) return;
                       event.preventDefault();
                       event.stopPropagation();
-                      setMenu({ kind: "copy", id: row.id, x: event.clientX, y: event.clientY });
+                      openMenu({ kind: "copy", id: row.id, x: event.clientX, y: event.clientY }, false);
                     }}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
@@ -887,9 +865,9 @@ export function AppointmentCalendar({
       {menu ? (
         <div data-context-menu role="menu" data-menu-time={menu.kind === "paste" ? menu.time : undefined} className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
           {menu.kind === "copy" ? (
-            <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { onCopy?.(menu.id); setMenu(null); }}>Copy</button>
-          ) : canPaste ? (
-            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" onClick={() => { onPasteSlot?.(menu.techId, menu.time); setMenu(null); }}>Paste</button>
+            <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { const id = menu.kind === "copy" ? menu.id : ""; dismissMenu(() => { if (id) onCopy?.(id); }); }}>Copy</button>
+          ) : canPaste && menu.kind === "paste" ? (
+            <button type="button" role="menuitem" data-paste className="btn btn-ghost min-h-11 w-full" onClick={() => { const techId = menu.techId; const time = menu.time; dismissMenu(() => { onPasteSlot?.(techId, time); }); }}>Paste</button>
           ) : null}
         </div>
       ) : null}

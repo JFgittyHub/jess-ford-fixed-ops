@@ -2,7 +2,7 @@ import "./test-dom.ts";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { afterEach, describe, it } from "node:test";
 import { act, createElement, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
@@ -873,9 +873,15 @@ describe("round 26 empty slot opens book", () => {
         assert.ok(open);
         open.getBoundingClientRect = () => ({ top: 0, left: 0, right: 120, bottom: 900, width: 120, height: 900, x: 0, y: 0, toJSON() { return {}; } });
         flushSync(() => open.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 8, clientY: 6 * 32 })));
-        assert.equal((host.querySelector("[data-copy-bar]")?.textContent ?? "").includes("outside shop hours"), false);
-        if (canPaste) assert.ok(host.querySelector("[data-paste]"));
-        else assert.deepEqual(bookings, ["elena|10:00"]);
+        if (canPaste) {
+          assert.match(host.querySelector("[data-copy-bar]")?.textContent ?? "", /outside shop hours/);
+          assert.ok(host.querySelector("[data-paste]"));
+          flushSync(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+          assert.equal((host.querySelector("[data-copy-bar]")?.textContent ?? "").includes("outside shop hours"), false);
+        } else {
+          assert.equal((host.querySelector("[data-copy-bar]")?.textContent ?? "").includes("outside shop hours"), false);
+          assert.deepEqual(bookings, ["elena|10:00"]);
+        }
       }
     } finally {
       root.unmount();
@@ -1941,14 +1947,19 @@ describe("round 26 empty slot opens book", () => {
       assert.deepEqual(bookings, []);
       assert.equal(host.querySelectorAll("[data-appt]").length, before);
       window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 831 }));
+      const parked = window.scrollY;
       column.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 832 }));
       advance(clock, 550);
       assert.equal(host.querySelectorAll("[data-paste]").length, 1);
-      assert.equal(host.querySelector("[data-paste-notice]"), null);
+      assert.match(host.querySelector("[data-paste-notice]")?.textContent ?? "", /outside shop hours/);
+      assert.equal(window.scrollY, parked);
       assert.deepEqual(bookings, []);
       assert.equal(host.querySelectorAll("[data-appt]").length, before);
       window.dispatchEvent(new pointer("pointerup", { bubbles: true, button: 0, pointerType: "touch", isPrimary: true, clientX: 8, clientY: 6 * 32, pointerId: 832 }));
       assert.equal(host.querySelectorAll("[data-paste]").length, 1);
+      assert.equal(window.scrollY, parked);
+      flushSync(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      assert.equal(host.querySelector("[data-paste-notice]"), null);
     } finally {
       window.scrollTo(0, 0);
       document.body.style.minHeight = "";
@@ -3187,8 +3198,16 @@ async function measure(page: Page) {
 
 describe("round 26 live scroll anchoring", () => {
   it("keeps Friday Paste open after the notice shrinks, and a real scroll or a 6 px nudge still closes it", async () => {
-    const port = 25000 + (process.pid % 10000);
     const root = new URL("../..", import.meta.url).pathname;
+    const port = await new Promise<number>((resolve, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const address = probe.address();
+        const chosen = typeof address === "object" && address ? address.port : 0;
+        probe.close(() => resolve(chosen));
+      });
+    });
     const server = spawn(process.execPath, ["scripts/with-app-env.mjs", "vite", "dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
       cwd: root,
       env: { ...process.env, VITE_DEMO_MODE: "true", PATH: `${root}/node_modules/.bin:${process.env.PATH ?? ""}` },
@@ -3199,7 +3218,11 @@ describe("round 26 live scroll anchoring", () => {
     server.stderr?.on("data", (chunk) => { serverLog += String(chunk); });
     const browser = await chromium.launch({ headless: true });
     try {
-      await waitForPort(port);
+      const listening = await Promise.race([
+        waitForPort(port).then(() => true),
+        new Promise<boolean>((resolve) => server.once("exit", () => resolve(false))),
+      ]);
+      assert.ok(listening, `the schedule server stopped\n${serverLog.slice(-800)}`);
       const page = await browser.newPage();
       await page.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "networkidle" });
       await page.locator("[data-tech]").first().waitFor({ timeout: 20000 });
@@ -3207,7 +3230,7 @@ describe("round 26 live scroll anchoring", () => {
       await page.locator("[aria-label='Working as']").selectOption("megan");
       await page.locator("[data-appt]").first().click({ button: "right" });
       await page.locator("[data-copy]").click();
-      await page.locator("[data-copied]").waitFor();
+      assert.ok(await waitForSelector(page, "[data-copied]"), "the copied line did not appear");
       for (let step = 0; step < 6 && !/\bFri\b/.test(await page.locator("[data-desk-heading] h1").innerText()); step += 1) {
         await page.getByRole("button", { name: "Next", exact: true }).click();
       }
@@ -3237,7 +3260,7 @@ describe("round 26 live scroll anchoring", () => {
       });
       assert.ok(outsidePoint, "17:30 is not an empty slot in view");
       await page.mouse.click(outsidePoint.x, outsidePoint.y, { button: "right" });
-      const noticed = await page.locator("[data-paste-notice]").waitFor({ timeout: 3000 }).then(() => true, () => false);
+      const noticed = await waitForSelector(page, "[data-paste-notice]");
       if (!noticed) {
         const debug = await page.evaluate((point) => {
           const hit = document.elementFromPoint(point.x, point.y);
@@ -3365,6 +3388,142 @@ describe("round 26 live scroll anchoring", () => {
       });
       assert.equal(nudged.menu, 0, `a 6 px scroll left Paste open ${JSON.stringify(nudged)}`);
       assert.equal(await page.locator("[data-appt]").count(), beforeNudge);
+
+      await raiseOutsideNotice(page);
+      const fine = await page.evaluate(() => {
+        const column = document.querySelector<HTMLElement>("[data-tech]");
+        if (!column) return null;
+        const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 200;
+        const absolute = column.getBoundingClientRect().top + window.scrollY + 10 * 32 + 16;
+        window.scrollTo({ top: Math.max(40, absolute - (bar + 160)), left: 0, behavior: "instant" });
+        return true;
+      });
+      assert.ok(fine);
+      const pixel = await pressInHours(page);
+      assert.ok(pixel, "no slot for the 1 px check");
+      const beforePixel = await page.locator("[data-appt]").count();
+      await page.clock.fastForward(2000);
+      await releaseHold(page, pixel);
+      assert.equal(await page.locator("[data-paste]").count(), 1, "the 1 px hold did not open Paste");
+      const pixelNudge = await page.evaluate(() => {
+        const before = window.scrollY;
+        window.scrollTo(0, before + 1);
+        window.dispatchEvent(new Event("scroll"));
+        return { before, after: window.scrollY, menu: document.querySelectorAll("[data-context-menu]").length };
+      });
+      assert.equal(pixelNudge.menu, 0, `a 1 px scroll left Paste open ${JSON.stringify(pixelNudge)}`);
+      assert.ok(Math.abs(pixelNudge.after - pixelNudge.before) >= 1, "the page did not move by 1 px");
+      assert.equal(await page.locator("[data-appt]").count(), beforePixel);
+
+      for (const person of ["megan", "derek"] as const) {
+        await page.locator("[aria-label='Working as']").selectOption(person);
+        for (let step = 0; step < 8 && (await page.locator("[data-appt]").count()) === 0; step += 1) {
+          await page.getByRole("button", { name: "Previous", exact: true }).click();
+        }
+        const copied = await page.evaluate(() => {
+          const cards = [...document.querySelectorAll<HTMLElement>("[data-appt]")];
+          cards.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height);
+          const card = cards[0];
+          if (!card) return false;
+          const rect = card.getBoundingClientRect();
+          card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: rect.left + 12, clientY: rect.top + 8, button: 2 }));
+          return true;
+        });
+        assert.ok(copied, `${person} has no card to copy`);
+        await page.locator("[data-copy]").click();
+        assert.ok(await waitForSelector(page, "[data-copied]"), "the copied line did not appear");
+        for (let step = 0; step < 8 && !/\bFri\b/.test(await page.locator("[data-desk-heading] h1").innerText()); step += 1) {
+          await page.getByRole("button", { name: "Next", exact: true }).click();
+        }
+        assert.match(await page.locator("[data-desk-heading] h1").innerText(), /\bFri\b/);
+        for (const width of [1400, 820]) {
+          await page.setViewportSize({ width, height: 800 });
+          for (const mode of ["0", "40", "mid"] as const) {
+            for (const pointerType of ["mouse", "touch"] as const) {
+              await raiseOutsideNotice(page);
+              await page.evaluate((mode) => {
+                const column = document.querySelector("[data-tech]");
+                const morning = column ? column.getBoundingClientRect().top + window.scrollY + 4 * 32 : 400;
+                const top = mode === "0" ? 0 : mode === "40" ? 40 : Math.max(80, morning - 160);
+                window.scrollTo({ top, left: 0, behavior: "instant" });
+              }, mode);
+              const latest = width === 1400 && mode === "0" ? "11:00" : "17:00";
+              let spot = await pressInHours(page, pointerType, latest);
+              if (!spot && mode !== "mid") {
+                await page.evaluate(() => {
+                  const column = document.querySelector("[data-tech]");
+                  const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 200;
+                  if (!column) return;
+                  const target = column.getBoundingClientRect().top + window.scrollY + 2 * 32 + 16;
+                  window.scrollTo({ top: Math.max(0, target - (bar + 80)), left: 0, behavior: "instant" });
+                });
+                spot = await pressInHours(page, pointerType, latest);
+              }
+              if (!spot) {
+                const debug = await page.evaluate(() => ({
+                  scrollY: window.scrollY,
+                  height: window.innerHeight,
+                  bar: document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0,
+                  columns: [...document.querySelectorAll<HTMLElement>("[data-tech]")].slice(0, 3).map((column) => {
+                    const rect = column.getBoundingClientRect();
+                    return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+                  }),
+                }));
+                assert.fail(`${person} ${width} scroll ${mode} ${pointerType} has no in-hours slot ${JSON.stringify(debug)}`);
+              }
+              if (width === 1400 && mode === "0") assert.equal(spot.scrollY, 0, "1400 did not hold at the top");
+              if (width === 1400 && mode === "40") assert.ok(Math.abs(spot.scrollY - 40) <= 2, `1400 scroll 40 landed at ${spot.scrollY}`);
+              const before = await page.locator("[data-appt]").count();
+              const beforeTime = await page.locator(`[data-appt-time="${spot.time}"]`).count();
+              await page.clock.fastForward(2000);
+              const held = await page.evaluate(() => {
+                const menu = document.querySelector("[data-context-menu]");
+                const button = menu?.querySelector("[data-paste]");
+                const rect = button?.getBoundingClientRect();
+                const point = rect ? { x: rect.left + 4, y: rect.top + 4 } : null;
+                let under = "";
+                if (point) {
+                  for (const column of document.querySelectorAll<HTMLElement>("[data-tech]")) {
+                    const box = column.getBoundingClientRect();
+                    if (point.x < box.left || point.x > box.right || point.y < box.top || point.y > box.bottom) continue;
+                    const mins = 7 * 60 + Math.floor((point.y - box.top) / 32) * 30;
+                    under = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+                    break;
+                  }
+                }
+                const column = document.querySelector("[data-tech]");
+                return {
+                  paste: document.querySelectorAll("[data-paste]").length,
+                  time: menu?.getAttribute("data-menu-time") ?? "",
+                  under,
+                  scrollY: window.scrollY,
+                  columnTop: column?.getBoundingClientRect().top ?? 0,
+                  count: document.querySelectorAll("[data-appt]").length,
+                };
+              });
+              assert.equal(held.paste, 1, `${person} ${width} ${mode} ${pointerType} Paste did not stay open ${JSON.stringify({ spot, held })}`);
+              assert.equal(held.time, spot.time, `${person} ${width} ${mode} ${pointerType} Paste used ${held.time} instead of ${spot.time}`);
+              assert.equal(held.under, held.time, `${person} ${width} ${mode} ${pointerType} the button sits over ${held.under} but saves ${held.time}`);
+              assert.ok(Math.abs(held.scrollY - spot.scrollY) <= 8, `${person} ${width} ${mode} ${pointerType} scroll jumped ${held.scrollY - spot.scrollY}`);
+              assert.ok(Math.abs(held.columnTop - spot.columnTop) <= 2, `${person} ${width} ${mode} ${pointerType} the column moved ${held.columnTop - spot.columnTop}`);
+              assert.equal(held.count, before, `${person} ${width} ${mode} ${pointerType} the hold wrote a visit`);
+              await releaseHold(page, spot);
+              if (width === 1400 && mode === "0") {
+                await page.evaluate(() => document.querySelector<HTMLButtonElement>("[data-paste]")?.click());
+                const savedCount = await page.locator("[data-appt]").count();
+                if (savedCount !== before + 1) {
+                  const notice = await page.locator("[data-paste-notice]").innerText().catch(() => "");
+                  assert.equal(savedCount, before + 1, `${person} ${width} ${mode} ${pointerType} Paste did not save ${notice}`);
+                }
+                assert.equal(await page.locator(`[data-appt-time="${spot.time}"]`).count(), beforeTime + 1, `${person} ${width} ${mode} ${pointerType} saved a different time`);
+              } else {
+                await page.keyboard.press("Escape");
+                assert.equal(await page.locator("[data-appt]").count(), before, `${person} ${width} ${mode} ${pointerType} closing Paste wrote a visit`);
+              }
+            }
+          }
+        }
+      }
     } finally {
       await browser.close();
       stopServer(server);
@@ -3384,6 +3543,15 @@ function stopServer(server: ChildProcess) {
   setTimeout(() => {
     if (server.exitCode == null) server.kill("SIGKILL");
   }, 2000);
+}
+
+async function waitForSelector(page: Page, selector: string, timeoutMs = 4000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await page.evaluate((selector) => Boolean(document.querySelector(selector)), selector)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
 }
 
 function waitForPort(port: number) {
@@ -3406,31 +3574,38 @@ function waitForPort(port: number) {
 
 async function raiseOutsideNotice(page: Page) {
   if (await page.locator("[data-paste-notice]").count()) return;
-  await page.evaluate(() => {
-    const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
-    if (scroller) scroller.scrollLeft = 0;
-    const column = document.querySelector("[data-tech]");
-    if (!column) return;
-    const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 220;
-    const top = column.getBoundingClientRect().top + window.scrollY + 21 * 32 + 16;
-    window.scrollTo({ top: Math.max(0, top - (bar + 48)), left: 0, behavior: "instant" });
-  });
-  const point = await page.evaluate(() => {
+  let point: { x: number; y: number } | null = null;
+  for (let attempt = 0; attempt < 4 && !point; attempt += 1) {
+    await page.evaluate((attempt) => {
+      const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
+      if (scroller) scroller.scrollLeft = 0;
+      const column = document.querySelector("[data-tech]");
+      if (!column) return;
+      const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 220;
+      const header = document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0;
+      const top = column.getBoundingClientRect().top + window.scrollY + 21 * 32 + 16;
+      window.scrollTo({ top: Math.max(0, top - (Math.max(bar, header) + 80 + attempt * 70)), left: 0, behavior: "instant" });
+    }, attempt);
+    point = await page.evaluate(() => {
     const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
     if (scroller) scroller.scrollLeft = 0;
     const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
     for (const column of columns) {
       const rect = column.getBoundingClientRect();
-      if (rect.right < 24 || rect.left > window.innerWidth - 24) continue;
+      const visibleLeft = Math.max(rect.left, 8);
+      const visibleRight = Math.min(rect.right, window.innerWidth - 8);
+      if (visibleRight - visibleLeft < 40) continue;
       const y = rect.top + 21 * 32 + 16;
-      const x = Math.min(window.innerWidth - 12, Math.max(12, rect.left + 24));
+      const x = visibleLeft + 20;
       if (y < 80 || y > window.innerHeight - 20) continue;
       const hit = document.elementFromPoint(x, y);
-      if (!hit || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+      if (!hit || !hit.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+      hit.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
       return { x, y };
     }
     return null;
   });
+  }
   if (!point) {
     const debug = await page.evaluate(() => ({
       height: window.innerHeight,
@@ -3443,8 +3618,7 @@ async function raiseOutsideNotice(page: Page) {
     }));
     assert.fail(`17:30 is not an empty slot in view ${JSON.stringify(debug)}`);
   }
-  await page.mouse.click(point.x, point.y, { button: "right" });
-  const appeared = await page.locator("[data-paste-notice]").waitFor({ timeout: 4000 }).then(() => true, () => false);
+  const appeared = await waitForSelector(page, "[data-paste-notice]");
   if (!appeared) {
     const debug = await page.evaluate((spot) => {
       const hit = document.elementFromPoint(spot.x, spot.y);
@@ -3460,34 +3634,37 @@ async function raiseOutsideNotice(page: Page) {
   await page.keyboard.press("Escape");
 }
 
-async function pressInHours(page: Page) {
-  return page.evaluate(() => {
+async function pressInHours(page: Page, pointerType: "mouse" | "touch" = "mouse", latest = "17:00") {
+  return page.evaluate(({ pointerType, latest }) => {
     const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
     if (scroller) scroller.scrollLeft = 0;
     const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
     const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0;
     const header = document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0;
-    const topLimit = Math.max(bar, header) + 96;
+    const topLimit = Math.max(bar, header) + 8;
     for (const column of columns) {
       const rect = column.getBoundingClientRect();
-      if (rect.right < 24 || rect.left > window.innerWidth - 24) continue;
+      const visibleLeft = Math.max(rect.left, 8);
+      const visibleRight = Math.min(rect.right, window.innerWidth - 8);
+      if (visibleRight - visibleLeft < 40) continue;
       for (let slots = 1; slots <= 19; slots += 1) {
         const y = rect.top + slots * 32 + 16;
-        const x = Math.min(window.innerWidth - 12, Math.max(12, rect.left + 24));
+        const x = visibleLeft + 20;
         if (y <= topLimit || y >= window.innerHeight - 16) continue;
-        const hit = document.elementFromPoint(x, y);
-        if (!hit || hit.closest("[data-appt], [data-copy-bar], header, [data-context-menu]")) continue;
-        hit.dispatchEvent(new PointerEvent("pointerdown", {
-          bubbles: true, cancelable: true, clientX: x, clientY: y,
-          button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
-        }));
         const mins = 7 * 60 + slots * 30;
         const time = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
-        return { x, y, time, scrollY: window.scrollY };
+        if (time > latest) continue;
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || !hit.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-context-menu]")) continue;
+        hit.dispatchEvent(new PointerEvent("pointerdown", {
+          bubbles: true, cancelable: true, clientX: x, clientY: y,
+          button: 0, buttons: 1, pointerId: 7, pointerType, isPrimary: true,
+        }));
+        return { x, y, time, scrollY: window.scrollY, columnTop: rect.top };
       }
     }
     return null;
-  });
+  }, { pointerType, latest });
 }
 
 async function releaseHold(page: Page, spot: { x: number; y: number }) {
