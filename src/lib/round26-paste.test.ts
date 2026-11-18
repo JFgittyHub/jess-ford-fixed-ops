@@ -3208,9 +3208,10 @@ describe("round 26 live scroll anchoring", () => {
         probe.close(() => resolve(chosen));
       });
     });
+    const fixedClock = "2026-11-16T20:00:00.000Z";
     const server = spawn(process.execPath, ["scripts/with-app-env.mjs", "vite", "dev", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
       cwd: root,
-      env: { ...process.env, VITE_DEMO_MODE: "true", PATH: `${root}/node_modules/.bin:${process.env.PATH ?? ""}` },
+      env: { ...process.env, VITE_DEMO_MODE: "true", JF_PIN_CLOCK: fixedClock, PATH: `${root}/node_modules/.bin:${process.env.PATH ?? ""}` },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let serverLog = "";
@@ -3224,9 +3225,9 @@ describe("round 26 live scroll anchoring", () => {
       ]);
       assert.ok(listening, `the schedule server stopped\n${serverLog.slice(-800)}`);
       const page = await browser.newPage();
-      await page.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "networkidle" });
-      await page.locator("[data-tech]").first().waitFor({ timeout: 20000 });
-      await page.clock.install();
+      await page.clock.install({ time: new Date(fixedClock) });
+      await page.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "domcontentloaded" });
+      assert.ok(await waitForSelector(page, "[data-tech]", 20000), "the board did not load");
       await page.locator("[aria-label='Working as']").selectOption("megan");
       await page.locator("[data-appt]").first().click({ button: "right" });
       await page.locator("[data-copy]").click();
@@ -3415,6 +3416,37 @@ describe("round 26 live scroll anchoring", () => {
       assert.ok(Math.abs(pixelNudge.after - pixelNudge.before) >= 1, "the page did not move by 1 px");
       assert.equal(await page.locator("[data-appt]").count(), beforePixel);
 
+      await page.setViewportSize({ width: 1400, height: 800 });
+      await raiseOutsideNotice(page);
+      const showMorning = () => page.evaluate(() => {
+        const column = document.querySelector("[data-tech]");
+        const bar = document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 200;
+        if (!column) return;
+        const target = column.getBoundingClientRect().top + window.scrollY + 4 * 32 + 16;
+        window.scrollTo({ top: Math.max(40, target - (bar + 120)), left: 0, behavior: "instant" });
+      });
+      await showMorning();
+      const turned = await pressInHours(page);
+      assert.ok(turned, "no slot for the orientation check");
+      const beforeTurn = await page.locator("[data-appt]").count();
+      await page.clock.fastForward(2000);
+      await releaseHold(page, turned);
+      assert.equal(await page.locator("[data-paste]").count(), 1, "Paste was not open for the orientation change");
+      await page.evaluate(() => window.dispatchEvent(new Event("orientationchange")));
+      assert.equal(await page.locator("[data-context-menu]").count(), 0, "orientationchange left Paste open");
+      assert.equal(await page.locator("[data-appt]").count(), beforeTurn, "orientationchange wrote a visit");
+      await raiseOutsideNotice(page);
+      await showMorning();
+      const resized = await pressInHours(page);
+      assert.ok(resized, "no slot for the resize check");
+      await page.clock.fastForward(2000);
+      await releaseHold(page, resized);
+      assert.equal(await page.locator("[data-paste]").count(), 1, "Paste was not open for the resize");
+      await page.setViewportSize({ width: 1100, height: 720 });
+      await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+      assert.equal(await page.locator("[data-context-menu]").count(), 0, "resize left Paste open");
+      assert.equal(await page.locator("[data-appt]").count(), beforeTurn, "resize wrote a visit");
+
       for (const person of ["megan", "derek"] as const) {
         await page.locator("[aria-label='Working as']").selectOption(person);
         for (let step = 0; step < 8 && (await page.locator("[data-appt]").count()) === 0; step += 1) {
@@ -3436,7 +3468,7 @@ describe("round 26 live scroll anchoring", () => {
           await page.getByRole("button", { name: "Next", exact: true }).click();
         }
         assert.match(await page.locator("[data-desk-heading] h1").innerText(), /\bFri\b/);
-        for (const width of [1400, 820]) {
+        for (const width of [1400, 820, 390, 360]) {
           await page.setViewportSize({ width, height: 800 });
           for (const mode of ["0", "40", "mid"] as const) {
             for (const pointerType of ["mouse", "touch"] as const) {
@@ -3480,12 +3512,15 @@ describe("round 26 live scroll anchoring", () => {
                 const menu = document.querySelector("[data-context-menu]");
                 const button = menu?.querySelector("[data-paste]");
                 const rect = button?.getBoundingClientRect();
-                const point = rect ? { x: rect.left + 4, y: rect.top + 4 } : null;
+                const point = rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
                 let under = "";
                 if (point) {
-                  for (const column of document.querySelectorAll<HTMLElement>("[data-tech]")) {
+                  const stack = document.elementsFromPoint(point.x, point.y);
+                  for (const node of stack) {
+                    if (!(node instanceof Element) || node.closest("[data-context-menu]")) continue;
+                    const column = node.closest("[data-tech]");
+                    if (!column) continue;
                     const box = column.getBoundingClientRect();
-                    if (point.x < box.left || point.x > box.right || point.y < box.top || point.y > box.bottom) continue;
                     const mins = 7 * 60 + Math.floor((point.y - box.top) / 32) * 30;
                     under = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
                     break;
@@ -3508,6 +3543,14 @@ describe("round 26 live scroll anchoring", () => {
               assert.ok(Math.abs(held.columnTop - spot.columnTop) <= 2, `${person} ${width} ${mode} ${pointerType} the column moved ${held.columnTop - spot.columnTop}`);
               assert.equal(held.count, before, `${person} ${width} ${mode} ${pointerType} the hold wrote a visit`);
               await releaseHold(page, spot);
+              const late = await page.evaluate(() => ({
+                paste: document.querySelectorAll("[data-paste]").length,
+                bar: document.querySelector("[data-copy-bar]")?.getBoundingClientRect().height ?? 0,
+                columnTop: document.querySelector("[data-tech]")?.getBoundingClientRect().top ?? 0,
+              }));
+              assert.equal(late.paste, 1, `${person} ${width} ${mode} ${pointerType} Paste closed when the finger lifted`);
+              assert.ok(Math.abs(late.bar - spot.barHeight) <= 2, `${person} ${width} ${mode} ${pointerType} the bar changed after release`);
+              assert.ok(Math.abs(late.columnTop - spot.columnTop) <= 2, `${person} ${width} ${mode} ${pointerType} the column moved after release`);
               if (width === 1400 && mode === "0") {
                 await page.evaluate(() => document.querySelector<HTMLButtonElement>("[data-paste]")?.click());
                 const savedCount = await page.locator("[data-appt]").count();
@@ -3660,7 +3703,10 @@ async function pressInHours(page: Page, pointerType: "mouse" | "touch" = "mouse"
           bubbles: true, cancelable: true, clientX: x, clientY: y,
           button: 0, buttons: 1, pointerId: 7, pointerType, isPrimary: true,
         }));
-        return { x, y, time, scrollY: window.scrollY, columnTop: rect.top };
+        return {
+          x, y, time, scrollY: window.scrollY, columnTop: rect.top,
+          barHeight: document.querySelector("[data-copy-bar]")?.getBoundingClientRect().height ?? 0,
+        };
       }
     }
     return null;

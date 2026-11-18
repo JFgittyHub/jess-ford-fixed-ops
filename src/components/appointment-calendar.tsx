@@ -8,6 +8,14 @@ const START = 7 * 60;
 const END = 18 * 60;
 const SNAP = 30;
 const SLOT = 32;
+
+/** Vertical center of the 32px row under the pointer, in client coordinates. */
+function slotRowCenter(column: HTMLElement, clientY: number) {
+  const top = column.getBoundingClientRect().top;
+  const rows = (END - START) / SNAP;
+  const index = Math.min(rows - 1, Math.max(0, Math.floor((clientY - top) / SLOT)));
+  return top + index * SLOT + SLOT / 2;
+}
 const HANDLE = 10;
 /** Prior help box was 44px. 34px is about 23% smaller and still a usable touch target. */
 const SUMMARY_MARK = 34;
@@ -267,10 +275,11 @@ export function AppointmentCalendar({
   const windowCleanups = useRef(new Set<() => void>());
   const disarmHold = useRef<(() => void) | null>(null);
   type SlotMenu =
-    | { kind: "copy"; id: string; x: number; y: number }
-    | { kind: "paste"; techId: string; time: string; x: number; y: number };
+    | { kind: "copy"; id: string; x: number; y: number; rowCenter: number }
+    | { kind: "paste"; techId: string; time: string; x: number; y: number; rowCenter: number };
   const [menu, setMenu] = useState<SlotMenu | null>(null);
   const menuRef = useRef<SlotMenu | null>(null);
+  const menuNode = useRef<HTMLDivElement>(null);
   const releaseNotice = useRef(false);
   const anchorPinned = useRef(false);
   const dismissingMenu = useRef(false);
@@ -394,16 +403,40 @@ export function AppointmentCalendar({
       if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 8) return;
       dismissMenuRef.current();
     };
+    const onResize = () => dismissMenuRef.current();
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointer);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("wheel", onWheel, true);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointer);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("wheel", onWheel, true);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
     };
+  }, [menu]);
+
+  useLayoutEffect(() => {
+    const node = menuNode.current;
+    if (!node || !menu) return;
+    const button = node.querySelector("button");
+    if (!button) return;
+    const buttonRect = button.getBoundingClientRect();
+    if (buttonRect.height < 1) return;
+    const menuRect = node.getBoundingClientRect();
+    const buttonCenter = buttonRect.top + buttonRect.height / 2;
+    const chrome = Math.max(
+      document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0,
+      document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0,
+    );
+    const top = Math.min(Math.max(menuRect.top + (menu.rowCenter - buttonCenter), chrome), Math.max(chrome, window.innerHeight - menuRect.height));
+    const left = Math.min(Math.max(menuRect.left, 0), Math.max(0, window.innerWidth - menuRect.width));
+    node.style.top = `${top}px`;
+    node.style.left = `${left}px`;
   }, [menu]);
 
   const nowMins = pacificMinutes(now);
@@ -453,7 +486,7 @@ export function AppointmentCalendar({
         window.removeEventListener("pointerup", onUp);
         commitDraft(null);
         setHover(null);
-        setMenu({ kind: "copy", id: appt.id, x: origin.x, y: origin.y });
+        openMenu({ kind: "copy", id: appt.id, x: origin.x, y: origin.y, rowCenter: column ? slotRowCenter(column, origin.y) : origin.y }, false);
       }, longPressMs)
       : 0;
 
@@ -600,7 +633,7 @@ export function AppointmentCalendar({
                   return;
                 }
                 if (canPaste && onPasteSlot) {
-                  openMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY }, true);
+                  openMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY, rowCenter: slotRowCenter(event.currentTarget, event.clientY) }, true);
                   return;
                 }
                 onSlotAccepted?.();
@@ -718,7 +751,7 @@ export function AppointmentCalendar({
                 if (!onPasteSlot || !canPaste) return;
                 arm(window.setTimeout(() => {
                   claimHold();
-                  openMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY }, true);
+                  openMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY, rowCenter: slotRowCenter(column, startY) }, true);
                 }, longPressMs));
               }}
             >
@@ -754,7 +787,8 @@ export function AppointmentCalendar({
                       if (!onCopy) return;
                       event.preventDefault();
                       event.stopPropagation();
-                      openMenu({ kind: "copy", id: row.id, x: event.clientX, y: event.clientY }, false);
+                      const column = (event.currentTarget as HTMLElement).closest("[data-tech]");
+                      openMenu({ kind: "copy", id: row.id, x: event.clientX, y: event.clientY, rowCenter: column instanceof HTMLElement ? slotRowCenter(column, event.clientY) : event.clientY }, false);
                     }}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
@@ -863,7 +897,7 @@ export function AppointmentCalendar({
       </div>
       {hover && !draft ? <HoverCard hover={hover} appointments={appointments} summary={summary} onWrite={onWrite} onEdit={onEdit} onCancel={onCancel} onEnter={() => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }} onLeave={scheduleHide} /> : null}
       {menu ? (
-        <div data-context-menu role="menu" data-menu-time={menu.kind === "paste" ? menu.time : undefined} className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
+        <div ref={menuNode} data-context-menu role="menu" data-menu-time={menu.kind === "paste" ? menu.time : undefined} className="fixed z-50 rounded-md border border-line bg-surface p-1 shadow-card" style={{ left: menu.x, top: menu.y }}>
           {menu.kind === "copy" ? (
             <button type="button" role="menuitem" data-copy className="btn btn-ghost min-h-11 w-full" onClick={() => { const id = menu.kind === "copy" ? menu.id : ""; dismissMenu(() => { if (id) onCopy?.(id); }); }}>Copy</button>
           ) : canPaste && menu.kind === "paste" ? (
