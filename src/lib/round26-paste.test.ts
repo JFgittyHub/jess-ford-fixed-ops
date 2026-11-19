@@ -3228,6 +3228,7 @@ describe("round 26 live scroll anchoring", () => {
       await page.clock.install({ time: new Date(fixedClock) });
       await page.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "domcontentloaded" });
       assert.ok(await waitForSelector(page, "[data-tech]", 20000), "the board did not load");
+      assert.ok(await waitForSelector(page, "[data-appt]", 20000), "no visit to copy");
       await page.locator("[aria-label='Working as']").selectOption("megan");
       await page.locator("[data-appt]").first().click({ button: "right" });
       await page.locator("[data-copy]").click();
@@ -3442,10 +3443,140 @@ describe("round 26 live scroll anchoring", () => {
       await page.clock.fastForward(2000);
       await releaseHold(page, resized);
       assert.equal(await page.locator("[data-paste]").count(), 1, "Paste was not open for the resize");
+      await page.setViewportSize({ width: 1400, height: 720 });
+      await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+      assert.equal(await page.locator("[data-context-menu]").count(), 1, "a height-only resize closed Paste");
+      assert.equal(await page.locator("[data-appt]").count(), beforeTurn, "a height-only resize wrote a visit");
       await page.setViewportSize({ width: 1100, height: 720 });
       await page.evaluate(() => window.dispatchEvent(new Event("resize")));
       assert.equal(await page.locator("[data-context-menu]").count(), 0, "resize left Paste open");
       assert.equal(await page.locator("[data-appt]").count(), beforeTurn, "resize wrote a visit");
+
+      await page.setViewportSize({ width: 1400, height: 800 });
+      await raiseOutsideNotice(page);
+      await showMorning();
+      const shifted = await pressInHours(page);
+      assert.ok(shifted, "no slot for the 6 px hold");
+      const beforeShift = await page.locator("[data-appt]").count();
+      await page.clock.fastForward(120);
+      await page.evaluate(() => {
+        window.scrollBy(0, 6);
+        document.dispatchEvent(new Event("scroll"));
+      });
+      await page.clock.fastForward(2000);
+      const shiftedMenu = await page.evaluate(() => {
+        const menu = document.querySelector("[data-context-menu]");
+        const button = menu?.querySelector("[data-paste]");
+        const rect = button?.getBoundingClientRect();
+        if (!rect || !menu) return { paste: 0, time: "", under: "" };
+        const y = rect.top + rect.height / 2;
+        const x = rect.left + rect.width / 2;
+        let under = "";
+        for (const node of document.elementsFromPoint(x, y)) {
+          if (!(node instanceof Element) || node.closest("[data-context-menu]")) continue;
+          const column = node.closest("[data-tech]");
+          if (!column) continue;
+          const mins = 7 * 60 + Math.floor((y - column.getBoundingClientRect().top) / 32) * 30;
+          under = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+          break;
+        }
+        return { paste: 1, time: menu.getAttribute("data-menu-time") ?? "", under };
+      });
+      assert.equal(shiftedMenu.paste, 1, "a 6 px scroll during the hold closed Paste");
+      assert.equal(shiftedMenu.time, shifted.time, "a 6 px scroll changed the saved time");
+      assert.equal(shiftedMenu.under, shifted.time, `a 6 px scroll moved the button center to ${shiftedMenu.under}`);
+      await releaseHold(page, shifted);
+      await page.keyboard.press("Escape");
+      assert.equal(await page.locator("[data-appt]").count(), beforeShift, "a 6 px scroll wrote a visit");
+
+      for (const width of [360, 820, 1400]) {
+        await page.setViewportSize({ width, height: 800 });
+        await raiseOutsideNotice(page);
+        for (const edge of ["top", "bottom"] as const) {
+          const slotIndex = edge === "top" ? 2 : 19;
+          const expected = edge === "top" ? "08:00" : "16:30";
+          const spot = await page.evaluate(({ slotIndex, edge }) => {
+            const scroller = document.querySelector<HTMLElement>(".overflow-x-auto");
+            if (scroller) scroller.scrollLeft = 0;
+            const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+            const bar = Math.max(
+              document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0,
+              document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0,
+            );
+            const anchorColumn = columns.find((node) => node.getBoundingClientRect().width > 40) ?? columns[0];
+            if (!anchorColumn) return null;
+            const anchor = anchorColumn.getBoundingClientRect().top + window.scrollY + slotIndex * 32 + (edge === "top" ? 0 : 32);
+            window.scrollTo({ top: Math.max(0, anchor - (edge === "top" ? bar + 6 : window.innerHeight - 4)), left: 0, behavior: "instant" });
+            let last = "";
+            for (const column of columns) {
+              const rect = column.getBoundingClientRect();
+              const visibleLeft = Math.max(rect.left, 8);
+              const visibleRight = Math.min(rect.right, window.innerWidth - 8);
+              if (visibleRight - visibleLeft < 40) continue;
+              const x = visibleLeft + 16;
+              const y = rect.top + slotIndex * 32 + (edge === "top" ? 6 : 28);
+              if (y < 0 || y > window.innerHeight - 1) continue;
+              const hit = document.elementFromPoint(x, y);
+              last = `${Math.round(x)},${Math.round(y)} ${hit ? hit.tagName : "none"} bar ${Math.round(bar)}`;
+              if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+              hit.dispatchEvent(new PointerEvent("pointerdown", {
+                bubbles: true, cancelable: true, clientX: x, clientY: y,
+                button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
+              }));
+              return { x, y, blocked: false };
+            }
+            return { x: 0, y: 0, blocked: true, last };
+          }, { slotIndex, edge });
+          assert.ok(spot && !spot.blocked, `${width} ${edge} row is not an empty slot ${JSON.stringify(spot)}`);
+          const beforeEdge = await page.locator("[data-appt]").count();
+          const beforeTime = await page.locator(`[data-appt-time="${expected}"]`).count();
+          await page.clock.fastForward(2000);
+          const placed = await page.evaluate(() => {
+            const menu = document.querySelector("[data-context-menu]");
+            const button = menu?.querySelector("[data-paste]");
+            const rect = button?.getBoundingClientRect();
+            if (!rect || !menu) return { paste: 0, time: "", under: "", offset: -1 };
+            const y = rect.top + rect.height / 2;
+            const x = rect.left + rect.width / 2;
+            let under = "";
+            let offset = -1;
+            for (const node of document.elementsFromPoint(x, y)) {
+              if (!(node instanceof Element) || node.closest("[data-context-menu]")) continue;
+              const column = node.closest("[data-tech]");
+              if (!column) continue;
+              const rel = y - column.getBoundingClientRect().top;
+              const index = Math.floor(rel / 32);
+              const mins = 7 * 60 + index * 30;
+              under = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+              offset = rel - index * 32;
+              break;
+            }
+            return { paste: 1, time: menu.getAttribute("data-menu-time") ?? "", under, offset };
+          });
+          assert.equal(placed.paste, 1, `${width} ${edge} Paste did not open`);
+          assert.equal(placed.time, expected, `${width} ${edge} saved ${placed.time}`);
+          assert.equal(placed.under, expected, `${width} ${edge} center is on ${placed.under}`);
+          assert.ok(placed.offset >= 10 && placed.offset <= 22, `${width} ${edge} center is ${placed.offset}px into the row`);
+          await releaseHold(page, spot);
+          await page.evaluate(() => document.querySelector<HTMLButtonElement>("[data-paste]")?.click());
+          assert.equal(await page.locator("[data-appt]").count(), beforeEdge + 1, `${width} ${edge} Paste did not save`);
+          assert.equal(await page.locator(`[data-appt-time="${expected}"]`).count(), beforeTime + 1, `${width} ${edge} saved a different time`);
+        }
+      }
+
+      await page.setViewportSize({ width: 1400, height: 800 });
+      await raiseOutsideNotice(page);
+      await showMorning();
+      const armed = await pressInHours(page);
+      assert.ok(armed, "no slot for the resize-while-held check");
+      const beforeArmed = await page.locator("[data-appt]").count();
+      await page.clock.fastForward(150);
+      await page.setViewportSize({ width: 1000, height: 800 });
+      await page.evaluate(() => window.dispatchEvent(new Event("resize")));
+      await page.clock.fastForward(2000);
+      assert.equal(await page.locator("[data-paste]").count(), 0, "a resize while the finger was down still opened Paste");
+      assert.equal(await page.locator("[data-appt]").count(), beforeArmed, "a resize while the finger was down wrote a visit");
+      await releaseHold(page, armed);
 
       for (const person of ["megan", "derek"] as const) {
         await page.locator("[aria-label='Working as']").selectOption(person);
@@ -3534,9 +3665,11 @@ describe("round 26 live scroll anchoring", () => {
                   scrollY: window.scrollY,
                   columnTop: column?.getBoundingClientRect().top ?? 0,
                   count: document.querySelectorAll("[data-appt]").length,
+                  heldSlot: document.querySelectorAll("[data-held-slot]").length,
                 };
               });
               assert.equal(held.paste, 1, `${person} ${width} ${mode} ${pointerType} Paste did not stay open ${JSON.stringify({ spot, held })}`);
+              assert.equal(held.heldSlot, pointerType === "touch" ? 1 : 0, `${person} ${width} ${mode} ${pointerType} held-cell outline`);
               assert.equal(held.time, spot.time, `${person} ${width} ${mode} ${pointerType} Paste used ${held.time} instead of ${spot.time}`);
               assert.equal(held.under, held.time, `${person} ${width} ${mode} ${pointerType} the button sits over ${held.under} but saves ${held.time}`);
               assert.ok(Math.abs(held.scrollY - spot.scrollY) <= 8, `${person} ${width} ${mode} ${pointerType} scroll jumped ${held.scrollY - spot.scrollY}`);

@@ -9,12 +9,16 @@ const END = 18 * 60;
 const SNAP = 30;
 const SLOT = 32;
 
-/** Vertical center of the 32px row under the pointer, in client coordinates. */
-function slotRowCenter(column: HTMLElement, clientY: number) {
+/** Row index under the pointer, frozen at pointerdown so a later scroll cannot retarget it. */
+function slotRowIndex(column: HTMLElement, clientY: number) {
   const top = column.getBoundingClientRect().top;
   const rows = (END - START) / SNAP;
-  const index = Math.min(rows - 1, Math.max(0, Math.floor((clientY - top) / SLOT)));
-  return top + index * SLOT + SLOT / 2;
+  return Math.min(rows - 1, Math.max(0, Math.floor((clientY - top) / SLOT)));
+}
+
+/** Vertical center of that row, in client coordinates, using the column's position right now. */
+function slotRowCenter(column: HTMLElement, clientY: number) {
+  return column.getBoundingClientRect().top + slotRowIndex(column, clientY) * SLOT + SLOT / 2;
 }
 const HANDLE = 10;
 /** Prior help box was 44px. 34px is about 23% smaller and still a usable touch target. */
@@ -276,7 +280,7 @@ export function AppointmentCalendar({
   const disarmHold = useRef<(() => void) | null>(null);
   type SlotMenu =
     | { kind: "copy"; id: string; x: number; y: number; rowCenter: number }
-    | { kind: "paste"; techId: string; time: string; x: number; y: number; rowCenter: number };
+    | { kind: "paste"; techId: string; time: string; x: number; y: number; rowCenter: number; pointerType: string };
   const [menu, setMenu] = useState<SlotMenu | null>(null);
   const menuRef = useRef<SlotMenu | null>(null);
   const menuNode = useRef<HTMLDivElement>(null);
@@ -403,20 +407,25 @@ export function AppointmentCalendar({
       if (Math.abs(event.deltaX) + Math.abs(event.deltaY) <= 8) return;
       dismissMenuRef.current();
     };
-    const onResize = () => dismissMenuRef.current();
+    const widthAtOpen = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth === widthAtOpen) return;
+      dismissMenuRef.current();
+    };
+    const onOrient = () => dismissMenuRef.current();
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onPointer);
     window.addEventListener("scroll", onScroll, true);
     window.addEventListener("wheel", onWheel, true);
     window.addEventListener("resize", onResize);
-    window.addEventListener("orientationchange", onResize);
+    window.addEventListener("orientationchange", onOrient);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onPointer);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("wheel", onWheel, true);
       window.removeEventListener("resize", onResize);
-      window.removeEventListener("orientationchange", onResize);
+      window.removeEventListener("orientationchange", onOrient);
     };
   }, [menu]);
 
@@ -429,11 +438,8 @@ export function AppointmentCalendar({
     if (buttonRect.height < 1) return;
     const menuRect = node.getBoundingClientRect();
     const buttonCenter = buttonRect.top + buttonRect.height / 2;
-    const chrome = Math.max(
-      document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0,
-      document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0,
-    );
-    const top = Math.min(Math.max(menuRect.top + (menu.rowCenter - buttonCenter), chrome), Math.max(chrome, window.innerHeight - menuRect.height));
+    // The center stays on the held row even when the menu overlaps the bar or the viewport edge.
+    const top = menuRect.top + (menu.rowCenter - buttonCenter);
     const left = Math.min(Math.max(menuRect.left, 0), Math.max(0, window.innerWidth - menuRect.width));
     node.style.top = `${top}px`;
     node.style.left = `${left}px`;
@@ -633,7 +639,7 @@ export function AppointmentCalendar({
                   return;
                 }
                 if (canPaste && onPasteSlot) {
-                  openMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY, rowCenter: slotRowCenter(event.currentTarget, event.clientY) }, true);
+                  openMenu({ kind: "paste", techId: tech.id, time, x: event.clientX, y: event.clientY, rowCenter: slotRowCenter(event.currentTarget, event.clientY), pointerType: "mouse" }, true);
                   return;
                 }
                 onSlotAccepted?.();
@@ -675,6 +681,8 @@ export function AppointmentCalendar({
                 const pointerId = event.pointerId;
                 const slotAt = () => fromMinutes(clamp(START + Math.floor((startY - column.getBoundingClientRect().top) / SLOT) * SNAP, START, END - 30));
                 const heldTime = slotAt();
+                const heldRow = slotRowIndex(column, startY);
+                const pointerKind = event.pointerType;
                 const hoursBlock = slotError?.(heldTime) ?? null;
                 const scrollOrigin = new Map<EventTarget, { x: number; y: number }>();
                 const rememberScroll = (node: EventTarget, x: number, y: number) => scrollOrigin.set(node, { x, y });
@@ -695,6 +703,13 @@ export function AppointmentCalendar({
                   };
                   let end: (ev: PointerEvent) => void = () => undefined;
                   let onScroll: (event: Event) => void = () => undefined;
+                  const widthAtArm = window.innerWidth;
+                  const onViewport = (viewportEvent: Event) => {
+                    if (viewportEvent.type === "resize" && window.innerWidth === widthAtArm) return;
+                    window.clearTimeout(timer);
+                    suppressSlotClick.current = true;
+                    disarm();
+                  };
                   const disarm = () => {
                     ignoreMenuScroll.current = false;
                     window.clearTimeout(timer);
@@ -703,6 +718,8 @@ export function AppointmentCalendar({
                     window.removeEventListener("pointercancel", end);
                     window.removeEventListener("scroll", onScroll, true);
                     window.removeEventListener("wheel", onScroll, true);
+                    window.removeEventListener("resize", onViewport);
+                    window.removeEventListener("orientationchange", onViewport);
                     windowCleanups.current.delete(disarm);
                     if (disarmHold.current === disarm) disarmHold.current = null;
                     if (heldPointerId.current === pointerId) {
@@ -735,6 +752,8 @@ export function AppointmentCalendar({
                   window.addEventListener("pointercancel", end);
                   window.addEventListener("scroll", onScroll, true);
                   window.addEventListener("wheel", onScroll, true);
+                  window.addEventListener("resize", onViewport);
+                  window.addEventListener("orientationchange", onViewport);
                 };
                 const claimHold = () => {
                   suppressSlotClick.current = true;
@@ -751,10 +770,32 @@ export function AppointmentCalendar({
                 if (!onPasteSlot || !canPaste) return;
                 arm(window.setTimeout(() => {
                   claimHold();
-                  openMenu({ kind: "paste", techId: tech.id, time: heldTime, x: startX, y: startY, rowCenter: slotRowCenter(column, startY) }, true);
+                  openMenu({
+                    kind: "paste",
+                    techId: tech.id,
+                    time: heldTime,
+                    x: startX,
+                    y: startY,
+                    rowCenter: column.getBoundingClientRect().top + heldRow * SLOT + SLOT / 2,
+                    pointerType: pointerKind,
+                  }, true);
                 }, longPressMs));
               }}
             >
+              {menu?.kind === "paste" && menu.techId === tech.id && menu.pointerType === "touch" ? (
+                <div
+                  data-held-slot
+                  aria-hidden
+                  className="pointer-events-none absolute z-30 rounded-sm"
+                  style={{
+                    left: 2,
+                    right: 2,
+                    top: ((toMinutes(menu.time) - START) / SNAP) * SLOT,
+                    height: SLOT - 2,
+                    boxShadow: "inset 0 0 0 3px #011b65",
+                  }}
+                />
+              ) : null}
               {rows.map(({ row, offset }) => {
                 const start = toMinutes(row.time);
                 const top = ((start - START) / SNAP) * SLOT;
