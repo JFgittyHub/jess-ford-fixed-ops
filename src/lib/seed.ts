@@ -166,6 +166,8 @@ const JOBS: Job[] = [
   { opcode: "WNOI", description: "Warranty noise diagnosis", hours: 1.4, payType: "warranty", techs: ["elena", "chris", "dana"], parts: [], weight: 3 },
   { opcode: "RECON", description: "Internal used-car recon", hours: 2.5, payType: "internal", techs: ["priya", "dana", "chris"], parts: [{ partId: "pads", qty: 1 }, { partId: "wiper", qty: 1 }], weight: 4 },
   { opcode: "PDI", description: "Internal new-vehicle prep", hours: 1.2, payType: "internal", techs: ["sam", "luis", "priya"], parts: [], weight: 3 },
+  // Demo stand-in. A Dealertrack (Opentrack) labor-op feed replaces this list; weight 0 keeps it out of random jobs.
+  { opcode: "MISC", description: "Miscellaneous labor", hours: 1, payType: "cp", techs: [], parts: [], weight: 0 },
 ];
 
 export const ADVISOR_NUMBERS: Record<string, string> = {
@@ -212,6 +214,7 @@ function pickJob(rng: () => number) {
   const total = JOBS.reduce((s, j) => s + j.weight, 0);
   let roll = rng() * total;
   for (const job of JOBS) {
+    if (job.weight <= 0) continue;
     roll -= job.weight;
     if (roll <= 0) return job;
   }

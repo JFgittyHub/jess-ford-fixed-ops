@@ -438,8 +438,22 @@ export function AppointmentCalendar({
     if (buttonRect.height < 1) return;
     const menuRect = node.getBoundingClientRect();
     const buttonCenter = buttonRect.top + buttonRect.height / 2;
-    // The center stays on the held row even when the menu overlaps the bar or the viewport edge.
-    const top = menuRect.top + (menu.rowCenter - buttonCenter);
+    // Keep the button center inside the visible slice of the held row. A row tucked under the
+    // sticky bar or past the window still saves that row; the center never jumps to the next one.
+    const rowTop = menu.rowCenter - SLOT / 2;
+    const rowBottom = menu.rowCenter + SLOT / 2;
+    const chrome = Math.max(
+      document.querySelector("[data-copy-bar]")?.getBoundingClientRect().bottom ?? 0,
+      document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0,
+    );
+    const visibleTop = Math.max(rowTop, chrome);
+    const visibleBottom = Math.min(rowBottom, window.innerHeight);
+    let center = menu.rowCenter;
+    if (visibleTop < visibleBottom) {
+      const pad = Math.min(4, (visibleBottom - visibleTop) / 2);
+      center = Math.min(Math.max(menu.rowCenter, visibleTop + pad), visibleBottom - pad);
+    }
+    const top = menuRect.top + (center - buttonCenter);
     const left = Math.min(Math.max(menuRect.left, 0), Math.max(0, window.innerWidth - menuRect.width));
     node.style.top = `${top}px`;
     node.style.left = `${left}px`;

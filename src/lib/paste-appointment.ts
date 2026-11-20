@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
 import { deskActor } from "./cancel";
 import { bookingDateMessage } from "./store";
+import { minutesFromLineHours } from "./labor-lines";
 import type { Appointment } from "./types";
 
 /** Fields Copy keeps. The slot supplies the day, the start, and the technician. */
@@ -13,11 +14,19 @@ export function copiedFrom(row: Appointment): CopiedAppointment {
     vehicleId: row.vehicleId,
     vin: row.vin,
     concern: row.concern,
-    lines: row.lines.map((line) => ({ id: "", code: line.code, concern: line.concern })),
-    minutes: row.minutes,
+    lines: row.lines.map((line) => ({
+      id: "",
+      code: line.code,
+      concern: line.concern,
+      laborOpId: line.laborOpId,
+      hours: line.hours,
+    })),
+    minutes: minutesFromLineHours(row.lines) ?? row.minutes,
     lane: row.lane,
     advisorId: row.advisorId,
-    laborOpIds: [...(row.laborOpIds ?? [])],
+    laborOpIds: row.lines.some((line) => line.laborOpId)
+      ? row.lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
+      : [...(row.laborOpIds ?? [])],
   };
 }
 
@@ -174,6 +183,7 @@ export function commitPaste(
       advisorId: booked.advisorId,
       techId: booked.techId,
       laborOpIds: booked.laborOpIds ?? [],
+      laborHours: minutesFromLineHours(booked.lines) !== null ? booked.minutes / 60 : undefined,
     },
   });
   if (judged.blocked) return { ok: false, error: judged.blocked, appointmentId: "", overrideId: null };

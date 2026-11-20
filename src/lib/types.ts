@@ -327,6 +327,10 @@ export interface AppointmentLine {
   id: string;
   code: string;
   concern: string;
+  /** One labor op for this concern. Missing on visits saved before line ops. */
+  laborOpId?: string;
+  /** Edited hours for that op. Misc cannot be stored below 1.0. */
+  hours?: number;
 }
 
 /** Who changed the visit, and when. `action` is missing on older cancel rows. */

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, type CapacityResult } from "./capacity";
+import { laborLineError, minutesFromLineHours } from "./labor-lines";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
@@ -3475,10 +3476,15 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                     id: line.id || uid("al"),
                     code: lineLetter(index),
                     concern: cleanFreeText(line.concern).trim().slice(0, 500),
+                    laborOpId: line.laborOpId,
+                    hours: line.hours,
                   })).filter((line) => line.concern)
                 : [];
               const currentConcerns = row.lines.map((line) => line.concern).filter(Boolean);
-              const sameLines = Array.isArray(patch.lines) && editedLines.length === currentConcerns.length && editedLines.every((line, index) => line.concern === currentConcerns[index]);
+              const sameLines = Array.isArray(patch.lines) && editedLines.length === currentConcerns.length && editedLines.every((line, index) => {
+                const current = row.lines.filter((item) => item.concern)[index];
+                return line.concern === currentConcerns[index] && line.laborOpId === current?.laborOpId && line.hours === current?.hours;
+              });
               const sameConcern = concernOnly !== null && (
                 concernOnly === row.concern
                 || concernOnly === row.lines[0]?.concern
@@ -3554,8 +3560,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
+        const lineError = laborLineError(input.lines ?? [], state.laborOps);
+        if (lineError) return "";
+        const lineSized = minutesFromLineHours(input.lines ?? []);
         if (Array.isArray(input.laborOpIds)) {
-          if (new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
+          if (lineSized === null && new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
           if (input.laborOpIds.some((opId) => !state.laborOps.some((op) => op.id === opId))) return "";
         }
         const appointmentId = id ?? uid("ap");
@@ -3569,7 +3578,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((state) => {
           const raw = input.lines?.length ? input.lines : [{ id: "", code: "A", concern: input.concern }];
           const lines = raw
-            .map((line, index) => ({ id: line.id || uid("al"), code: lineLetter(index), concern: cleanFreeText(line.concern).trim().slice(0, 500) }))
+            .map((line, index) => ({
+              id: line.id || uid("al"),
+              code: lineLetter(index),
+              concern: cleanFreeText(line.concern).trim().slice(0, 500),
+              laborOpId: line.laborOpId,
+              hours: line.hours,
+            }))
             .filter((line) => line.concern)
             .map((line, index) => ({ ...line, code: lineLetter(index) }));
           const kept = lines.length > 0 ? lines : [{ id: uid("al"), code: "A", concern: cleanFreeText(input.concern).trim().slice(0, 500) }];
@@ -3593,7 +3608,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             vehicleId,
             date: input.date || today(),
             time: input.time,
-            minutes: input.minutes === undefined ? 60 : input.minutes,
+            minutes: lineSized ?? (input.minutes === undefined ? 60 : input.minutes),
             lines: kept,
             concern: concernFromLines(kept),
             vin,
@@ -3645,6 +3660,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (Array.isArray(input.lines) && input.lines.length > 0 && !input.lines.some((line) => line.concern.trim())) {
           return { ok: false, appointmentId: "", overrideId: null, error: "Add a concern." };
         }
+        const lineError = laborLineError(input.lines ?? [], state.laborOps);
+        if (lineError) return { ok: false, appointmentId: "", overrideId: null, error: lineError };
+        const sized = minutesFromLineHours(input.lines ?? []);
+        if (sized !== null) {
+          input = {
+            ...input,
+            minutes: sized,
+            laborOpIds: (input.lines ?? []).map((line) => line.laborOpId).filter((id): id is string => Boolean(id)),
+          };
+        }
         if (visitLengthError(input.minutes)) {
           return { ok: false, appointmentId: "", overrideId: null, error: visitLengthError(input.minutes) ?? "That length is not on this desk." };
         }
@@ -3678,7 +3703,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return { ok: false, appointmentId: "", overrideId: null, error: "That lane is not on this store." };
         }
         if (Array.isArray(input.laborOpIds)) {
-          if (new Set(input.laborOpIds).size !== input.laborOpIds.length) {
+          if (sized === null && new Set(input.laborOpIds).size !== input.laborOpIds.length) {
             return { ok: false, appointmentId: "", overrideId: null, error: "That labor operation is listed twice." };
           }
           if (input.laborOpIds.some((opId) => !state.laborOps.some((op) => op.id === opId))) {
@@ -3699,6 +3724,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: input.advisorId,
             techId: input.techId,
             laborOpIds: input.laborOpIds ?? [],
+            laborHours: sized !== null ? sized / 60 : undefined,
             ignoreId: existingId,
           },
         });
@@ -3788,13 +3814,20 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const vinError = vinScheduleError(vinText);
         if (vinError) return fail(vinError);
         if (Array.isArray(input.lines) && !input.lines.some((line) => line.concern.trim()) && !input.concern?.trim()) return fail("Add a concern.");
+        const newLineError = laborLineError(input.lines ?? [], state.laborOps);
+        if (newLineError) return fail(newLineError);
+        const newSized = minutesFromLineHours(input.lines ?? []);
+        const minutes = newSized ?? input.minutes;
+        const laborOpIds = newSized !== null
+          ? (input.lines ?? []).map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
+          : input.laborOpIds ?? [];
         const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
         if (dateError) return fail(dateError);
         const timeError = visitTimeError(state.settings.scheduling, input.date || "", input.time || "");
         if (timeError) return fail(timeError);
-        const lengthError = visitLengthError(input.minutes);
+        const lengthError = visitLengthError(minutes);
         if (lengthError) return fail(lengthError);
-        const pastClose = visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
+        const pastClose = visitRunsPastClose(state.settings.scheduling, input.date, input.time, minutes);
         if (pastClose && deskActor(state) !== "service-manager") return fail(PAST_CLOSE_MESSAGE);
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return fail(PAST_CLOSE_REASON, { needsCloseReason: true });
@@ -3846,14 +3879,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const added = get().addAppointment({
             date: input.date,
             time: input.time,
-            minutes: input.minutes,
+            minutes,
             customerId,
             vehicleId,
             advisorId: input.advisorId,
             concern: input.concern,
             lines: input.lines?.length ? input.lines : [{ id: uid("al"), code: "A", concern: input.concern }],
             vin: vinText,
-            laborOpIds: input.laborOpIds ?? [],
+            laborOpIds,
             techId: input.techId,
             lane: input.lane,
           }, appointmentId, closeNote ?? undefined);

@@ -1,4 +1,5 @@
 import { addDays, daysBetween, now } from "./clock";
+import { minutesFromLineHours } from "./labor-lines";
 import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } from "./types";
 
 /**
@@ -64,18 +65,21 @@ export function laborHoursFor(laborOpIds: string[], minutes: number, laborOps: {
 }
 
 export function appointmentLoads(
-  appointments: Pick<Appointment, "id" | "date" | "time" | "minutes" | "advisorId" | "techId" | "laborOpIds" | "status">[],
+  appointments: (Pick<Appointment, "id" | "date" | "time" | "minutes" | "advisorId" | "techId" | "laborOpIds" | "status"> & { lines?: { hours?: number }[] })[],
   laborOps: { id: string; hours: number }[],
 ): CapacityLoad[] {
-  return appointments.map((row) => ({
-    id: row.id,
-    date: row.date,
-    time: row.time,
-    advisorId: row.advisorId,
-    techId: row.techId,
-    laborHours: laborHoursFor(row.laborOpIds, row.minutes, laborOps),
-    counts: row.status !== "no_show" && row.status !== "cancelled",
-  }));
+  return appointments.map((row) => {
+    const fromLines = minutesFromLineHours(row.lines ?? []);
+    return {
+      id: row.id,
+      date: row.date,
+      time: row.time,
+      advisorId: row.advisorId,
+      techId: row.techId,
+      laborHours: fromLines !== null ? round2(fromLines / 60) : laborHoursFor(row.laborOpIds, row.minutes, laborOps),
+      counts: row.status !== "no_show" && row.status !== "cancelled",
+    };
+  });
 }
 
 /** Pending online requests use this shape. Declined rows do not take capacity. */
@@ -145,6 +149,8 @@ export function assessAppointment(input: {
     techId: string;
     laborOpIds: string[];
     minutes: number;
+    /** Line-hour total. Set when concern lines carry hours, so an edited hour counts instead of the catalog hour. */
+    laborHours?: number;
     ignoreId?: string;
   };
 }): CapacityResult {
@@ -158,7 +164,7 @@ export function assessAppointment(input: {
       time: input.proposal.time,
       advisorId: input.proposal.advisorId,
       techId: input.proposal.techId,
-      laborHours: laborHoursFor(input.proposal.laborOpIds, input.proposal.minutes, input.laborOps),
+      laborHours: input.proposal.laborHours ?? laborHoursFor(input.proposal.laborOpIds, input.proposal.minutes, input.laborOps),
       ignoreId: input.proposal.ignoreId,
     },
   });

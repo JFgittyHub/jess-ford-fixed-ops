@@ -17,6 +17,7 @@ import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
 import { formatVisit, snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
+import { clampLaborHours, DEMO_MISC_OPCODE, minutesFromLineHours } from "@/lib/labor-lines";
 import { lookups } from "@/lib/metrics";
 import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
@@ -52,6 +53,8 @@ export function VisitLengthPicker({
 }
 
 function laborHours(row: Appointment, laborOps: { id: string; hours: number }[]) {
+  const fromLines = minutesFromLineHours(row.lines);
+  if (fromLines !== null) return fromLines / 60;
   const ids = Array.isArray(row.laborOpIds) ? row.laborOpIds : [];
   return ids.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
 }
@@ -187,7 +190,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     }
   }
 
-  function capacityFor(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }, ignoreId?: string) {
+  function capacityFor(draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; laborHours?: number }, ignoreId?: string) {
     const dateError = bookingDateMessage(draft.date, shop.settings.scheduling);
     if (dateError) return { blocked: dateError, warning: null };
     const result = assessAppointment({
@@ -600,7 +603,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           }}
           capacityFor={(draft) => capacityFor(draft)}
           onVisitChange={(next) => { setDate(next.date); setTime(next.time); }}
-          initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "" }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
+          initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "", laborOpId: shop.laborOps.find((op) => op.opcode === DEMO_MISC_OPCODE)?.id ?? "", hours: 1 }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value, confirmTransfer, transferReason, closeReason) => {
             const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason, closeReason);
             if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
@@ -848,7 +851,7 @@ export function AppointmentFields({
   showStatus?: boolean;
   manager?: boolean;
   scheduling?: SchedulingSettings;
-  capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[] }) => { blocked: string | null; warning: string | null };
+  capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; laborHours?: number }) => { blocked: string | null; warning: string | null };
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onDirty?: () => void;
@@ -861,9 +864,14 @@ export function AppointmentFields({
   const [vehicleId, setVehicleId] = useState(initial.vehicleId);
   const [advisorId, setAdvisorId] = useState(initial.advisorId);
   const [techId, setTechId] = useState(initial.techId);
-  const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern }]);
+  const miscOp = laborOps.find((op) => op.opcode === DEMO_MISC_OPCODE);
+  const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern, laborOpId: miscOp?.id ?? "", hours: 1 }]);
   const [vin, setVin] = useState(initial.vin);
-  const [laborOpIds, setLaborOpIds] = useState(initial.laborOpIds ?? []);
+  const [storedOpIds] = useState(initial.laborOpIds ?? []);
+  const drivenMinutes = minutesFromLineHours(lines);
+  const lineOpIds = lines.length > 0 && lines.every((line) => line.laborOpId)
+    ? lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
+    : null;
   const [lane, setLane] = useState(() => normalizeLane(initial.lane, transports));
   const [status, setStatus] = useState(initial.status);
   const [formError, setFormError] = useState<string | null>(null);
@@ -888,13 +896,15 @@ export function AppointmentFields({
   const formRef = useRef<HTMLFormElement>(null);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
-  const lengths = [...new Set([...LENGTHS, initial.minutes])].sort((a, b) => a - b);
+  const visitMinutes = drivenMinutes ?? minutes;
+  const laborOpIds = lineOpIds ?? storedOpIds;
+  const lengths = [...new Set([...LENGTHS, visitMinutes])].sort((a, b) => a - b);
   const pastVisit = showStatus === true && openedDate.current < today();
-  const scheduleMoved = date !== openedSchedule.current.date || time !== openedSchedule.current.time || minutes !== openedSchedule.current.minutes;
-  const selectedRunsPast = scheduling ? visitRunsPastClose(scheduling, date, time, minutes) : false;
+  const scheduleMoved = date !== openedSchedule.current.date || time !== openedSchedule.current.time || visitMinutes !== openedSchedule.current.minutes;
+  const selectedRunsPast = scheduling ? visitRunsPastClose(scheduling, date, time, visitMinutes) : false;
   const runsPastClose = !pastVisit && selectedRunsPast && (showStatus !== true || scheduleMoved);
-  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes, advisorId, techId, laborOpIds }) ?? { blocked: null, warning: null };
-  const gridStarts = scheduling && !manager ? fittingStartTimes(scheduling, date, minutes, STARTS) : STARTS;
+  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes: visitMinutes, advisorId, techId, laborOpIds, laborHours: drivenMinutes !== null ? drivenMinutes / 60 : undefined }) ?? { blocked: null, warning: null };
+  const gridStarts = scheduling && !manager ? fittingStartTimes(scheduling, date, visitMinutes, STARTS) : STARTS;
   const starts = gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts];
   const clock = shopMinutes(now());
   const pastToday = !pastVisit && date === clock.date && time < `${String(Math.floor(clock.minutes / 60)).padStart(2, "0")}:${String(clock.minutes % 60).padStart(2, "0")}`;
@@ -935,7 +945,7 @@ export function AppointmentFields({
             plate: newPlate,
             date,
             time,
-            minutes,
+            minutes: visitMinutes,
             advisorId,
             techId,
             lane,
@@ -966,7 +976,7 @@ export function AppointmentFields({
           setFormError(PAST_CLOSE_REASON);
           return;
         }
-        const result = onSubmit({ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
+        const result = onSubmit({ date, time, minutes: visitMinutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsTransfer) {
           setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
@@ -985,7 +995,8 @@ export function AppointmentFields({
           </select>
         </Field>
         <Field label="Length">
-          <VisitLengthPicker minutes={minutes} lengths={lengths} disabled={pastVisit} onChange={setMinutes} />
+          <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || drivenMinutes !== null} onChange={setMinutes} />
+          {drivenMinutes !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
         </Field>
         <Field label="Lane">
           <select className="field" disabled={pastVisit} value={lane} onChange={(event) => setLane(event.target.value)}>
@@ -1095,34 +1106,6 @@ export function AppointmentFields({
           </div>
         </div>
       ) : null}
-      <Field label="Labor op">
-        <select
-          className="field"
-          disabled={pastVisit}
-          value=""
-          onChange={(event) => {
-            const id = event.target.value;
-            if (!id || laborOpIds.includes(id)) return;
-            setLaborOpIds((rows) => [...rows, id]);
-          }}
-        >
-          <option value="">Add a labor op</option>
-          {laborOps.map((op) => <option key={op.id} value={op.id}>{op.opcode} · {op.description} · {op.hours} hr</option>)}
-        </select>
-      </Field>
-      {laborOpIds.length > 0 ? (
-        <ul className="grid gap-1">
-          {laborOpIds.map((id) => {
-            const op = laborOps.find((row) => row.id === id);
-            return (
-              <li key={id} className="flex items-center justify-between gap-2 text-sm">
-                <span>{op ? `${op.opcode} · ${op.description}` : id}</span>
-                <Button small type="button" onClick={() => setLaborOpIds((rows) => rows.filter((row) => row !== id))}>Remove</Button>
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
       <Field label="Technician">
         <select className="field" disabled={pastVisit} value={techId} onChange={(event) => setTechId(event.target.value)}>
           {techs.map((tech) => <option key={tech.id} value={tech.id}>#{tech.number} · {tech.name}</option>)}
@@ -1134,21 +1117,62 @@ export function AppointmentFields({
         </select>
       </Field>
       <div className="grid gap-3">
-        {lines.map((line, index) => (
-          <div key={line.id} className="grid gap-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold">Line {lineLetter(index)}</p>
-              {lines.length > 1 && !pastVisit ? (
-                <Button small type="button" onClick={() => setLines((rows) => rows.filter((row) => row.id !== line.id))}>Remove</Button>
-              ) : null}
+        <p data-demo-labor className="text-sm text-muted">Demo labor ops. Dealertrack (Opentrack) can replace this list.</p>
+        {lines.map((line, index) => {
+          const opcode = laborOps.find((op) => op.id === line.laborOpId)?.opcode ?? "";
+          return (
+            <div key={line.id} className="grid gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">Line {lineLetter(index)}</p>
+                {lines.length > 1 && !pastVisit ? (
+                  <Button small type="button" onClick={() => setLines((rows) => rows.filter((row) => row.id !== line.id))}>Remove</Button>
+                ) : null}
+              </div>
+              <Field label="Labor op">
+                <select
+                  className="field"
+                  aria-label={`Labor op for line ${lineLetter(index)}`}
+                  disabled={pastVisit}
+                  value={line.laborOpId ?? ""}
+                  onChange={(event) => {
+                    const laborOpId = event.target.value;
+                    const next = laborOps.find((op) => op.id === laborOpId);
+                    const hours = clampLaborHours(next?.opcode ?? "", next?.hours ?? 1);
+                    setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, laborOpId, hours } : row));
+                    if (next?.opcode === DEMO_MISC_OPCODE) setFormError(null);
+                  }}
+                >
+                  <option value="">Choose a labor op</option>
+                  {laborOps.map((op) => <option key={op.id} value={op.id}>{op.opcode} · {op.description} · {op.hours} hr</option>)}
+                </select>
+              </Field>
+              <Field label="Hours">
+                <input
+                  className="field"
+                  type="number"
+                  inputMode="decimal"
+                  step={0.1}
+                  min={opcode === DEMO_MISC_OPCODE ? 1 : 0.1}
+                  aria-label={`Hours for line ${lineLetter(index)}`}
+                  disabled={pastVisit}
+                  value={line.hours ?? ""}
+                  onChange={(event) => {
+                    const typed = Number(event.target.value);
+                    const hours = clampLaborHours(opcode, typed);
+                    if (opcode === DEMO_MISC_OPCODE && typed < 1) setFormError("Misc labor is at least 1.0 hr.");
+                    else setFormError((current) => current === "Misc labor is at least 1.0 hr." ? null : current);
+                    setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, hours } : row));
+                  }}
+                />
+              </Field>
+              <Field label="Concern">
+                <input className="field" disabled={pastVisit} value={line.concern} onChange={(event) => setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, concern: event.target.value } : row))} />
+              </Field>
             </div>
-            <Field label="Concern">
-              <input className="field" disabled={pastVisit} value={line.concern} onChange={(event) => setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, concern: event.target.value } : row))} />
-            </Field>
-          </div>
-        ))}
+          );
+        })}
         <div>
-          {pastVisit ? null : <Button small type="button" onClick={() => setLines((rows) => [...rows, { id: `new-${rows.length}-${lineLetter(rows.length)}`, code: lineLetter(rows.length), concern: "" }])}>Add line</Button>}
+          {pastVisit ? null : <Button small type="button" onClick={() => setLines((rows) => [...rows, { id: `new-${rows.length}-${lineLetter(rows.length)}`, code: lineLetter(rows.length), concern: "", laborOpId: miscOp?.id ?? "", hours: 1 }])}>Add line</Button>}
         </div>
       </div>
       {showStatus ? (
