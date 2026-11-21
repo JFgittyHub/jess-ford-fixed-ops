@@ -110,7 +110,7 @@ describe("round 24 override and advisor checks", () => {
     const other = store.getState().addAppointment({ ...base, advisorId: "derek", time: "10:00" });
     assert.notEqual(other, "");
     assert.equal(store.getState().appointments.find((row) => row.id === other)?.advisorId, "derek");
-    const saved = store.getState().saveAdvisorAppointment({ ...base, advisorId: "derek", time: "10:30" });
+    const saved = store.getState().saveAdvisorAppointment({ ...base, status: "scheduled", advisorId: "derek", time: "10:30" });
     assert.equal(saved.ok, true, saved.error ?? "");
     assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.advisorId, "derek");
   });
