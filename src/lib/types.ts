@@ -351,6 +351,11 @@ export interface Appointment {
   date: string;
   time: string;
   minutes: number;
+  /**
+   * Set when a drag or resize chose the block length.
+   * Line hours stay as entered. Absent means the block follows the line-hour total.
+   */
+  lengthOverrideMinutes?: number | null;
   customerId: string;
   vehicleId: string;
   advisorId: string;

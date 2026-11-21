@@ -9,8 +9,8 @@ import { NoShowMark } from "@/components/no-show-mark";
 import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
-import { VEHICLE_MISSING, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, shopMinutes, visitRunsPastClose } from "@/lib/capacity";
+import { VEHICLE_MISSING, bookingAdvisorId, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
+import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, shopMinutes, visitRunsPastClose, visitTimeError } from "@/lib/capacity";
 import { filterDeskCustomers, tenDigitPhone } from "@/lib/desk-customers";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
@@ -140,7 +140,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     setPasteNotice(null);
     setArrivedGate(null);
   }
-  const { customerId, vehicleId, advisorId, techId, serviceId: servicePick, onlineTechId } = liveSeed;
+  const { customerId, vehicleId, techId, serviceId: servicePick, onlineTechId } = liveSeed;
   const patchSeed = (patch: Partial<DeskSeed>) => setSeed((current) => ({ ...deskSeedOnStore(current, shop), ...patch }));
   const vehicles = shop.vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = vehicles.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : vehicles[0]?.id ?? "";
@@ -603,7 +603,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           }}
           capacityFor={(draft) => capacityFor(draft)}
           onVisitChange={(next) => { setDate(next.date); setTime(next.time); }}
-          initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "", laborOpId: shop.laborOps.find((op) => op.opcode === DEMO_MISC_OPCODE)?.id ?? "", hours: 1 }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
+          initial={{ date, time, minutes, customerId, vehicleId: resolvedVehicle, advisorId: bookingAdvisorId(shop.workingAsId, shop.advisors), techId, concern: "", lines: [{ id: "new-a", code: "A", concern: "", laborOpId: shop.laborOps.find((op) => op.opcode === DEMO_MISC_OPCODE)?.id ?? "", hours: 1 }], vin: shop.vehicles.find((vehicle) => vehicle.id === resolvedVehicle)?.vin ?? "", laborOpIds: [], lane, status: "scheduled" }}
           onSubmit={(value, confirmTransfer, transferReason, closeReason) => {
             const result = shop.saveAdvisorAppointment(value, undefined, confirmTransfer, transferReason, closeReason);
             if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
@@ -840,7 +840,7 @@ export function AppointmentFields({
   onDirty,
   onVisitChange,
 }: {
-  initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">;
+  initial: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status"> & { lengthOverrideMinutes?: number | null };
   customers: { id: string; name: string; phone?: string; noShows?: number }[];
   vehicles: { id: string; customerId: string; year: number; model: string; vin: string }[];
   advisors: { id: string; number: string; name: string }[];
@@ -852,7 +852,7 @@ export function AppointmentFields({
   manager?: boolean;
   scheduling?: SchedulingSettings;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; laborHours?: number }) => { blocked: string | null; warning: string | null };
-  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status" | "lengthOverrideMinutes">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
@@ -863,6 +863,8 @@ export function AppointmentFields({
   const [customerId, setCustomerId] = useState(initial.customerId);
   const [vehicleId, setVehicleId] = useState(initial.vehicleId);
   const [advisorId, setAdvisorId] = useState(initial.advisorId);
+  const [blockOverride] = useState<number | null>(typeof initial.lengthOverrideMinutes === "number" ? initial.lengthOverrideMinutes : null);
+  const editedHours = useRef(new Set<string>());
   const [techId, setTechId] = useState(initial.techId);
   const miscOp = laborOps.find((op) => op.opcode === DEMO_MISC_OPCODE);
   const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern, laborOpId: miscOp?.id ?? "", hours: 1 }]);
@@ -896,16 +898,17 @@ export function AppointmentFields({
   const formRef = useRef<HTMLFormElement>(null);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
-  const visitMinutes = drivenMinutes ?? minutes;
+  const visitMinutes = blockOverride ?? drivenMinutes ?? minutes;
   const laborOpIds = lineOpIds ?? storedOpIds;
   const lengths = [...new Set([...LENGTHS, visitMinutes])].sort((a, b) => a - b);
   const pastVisit = showStatus === true && openedDate.current < today();
   const scheduleMoved = date !== openedSchedule.current.date || time !== openedSchedule.current.time || visitMinutes !== openedSchedule.current.minutes;
   const selectedRunsPast = scheduling ? visitRunsPastClose(scheduling, date, time, visitMinutes) : false;
   const runsPastClose = !pastVisit && selectedRunsPast && (showStatus !== true || scheduleMoved);
-  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes: visitMinutes, advisorId, techId, laborOpIds, laborHours: drivenMinutes !== null ? drivenMinutes / 60 : undefined }) ?? { blocked: null, warning: null };
-  const gridStarts = scheduling && !manager ? fittingStartTimes(scheduling, date, visitMinutes, STARTS) : STARTS;
-  const starts = gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts];
+  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes: visitMinutes, advisorId, techId, laborOpIds, laborHours: drivenMinutes !== null || blockOverride !== null ? visitMinutes / 60 : undefined }) ?? { blocked: null, warning: null };
+  const openStarts = scheduling ? STARTS.filter((item) => visitTimeError(scheduling, date, item) === null) : STARTS;
+  const gridStarts = !scheduling ? STARTS : manager ? openStarts : fittingStartTimes(scheduling, date, visitMinutes, STARTS);
+  const starts = gridStarts.includes(time) || pastVisit || !manager ? (gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts]) : gridStarts;
   const clock = shopMinutes(now());
   const pastToday = !pastVisit && date === clock.date && time < `${String(Math.floor(clock.minutes / 60)).padStart(2, "0")}:${String(clock.minutes % 60).padStart(2, "0")}`;
   const matches = filterDeskCustomers(customers, vehicles, customerQuery);
@@ -920,6 +923,10 @@ export function AppointmentFields({
       className="grid gap-3"
       onSubmit={(event) => {
         event.preventDefault();
+        if (!advisorId) {
+          setFormError("Choose an advisor.");
+          return;
+        }
         if (capacity.blocked) {
           setFormError(capacity.blocked);
           return;
@@ -976,7 +983,7 @@ export function AppointmentFields({
           setFormError(PAST_CLOSE_REASON);
           return;
         }
-        const result = onSubmit({ date, time, minutes: visitMinutes, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
+        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsTransfer) {
           setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
@@ -995,8 +1002,10 @@ export function AppointmentFields({
           </select>
         </Field>
         <Field label="Length">
-          <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || drivenMinutes !== null} onChange={setMinutes} />
-          {drivenMinutes !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
+          <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || drivenMinutes !== null || blockOverride !== null} onChange={setMinutes} />
+          {blockOverride !== null && drivenMinutes !== null && blockOverride !== drivenMinutes ? (
+            <p data-length-compare className="text-sm text-muted">Labor hours {flagHours(drivenMinutes / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
+          ) : drivenMinutes !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
         </Field>
         <Field label="Lane">
           <select className="field" disabled={pastVisit} value={lane} onChange={(event) => setLane(event.target.value)}>
@@ -1112,7 +1121,8 @@ export function AppointmentFields({
         </select>
       </Field>
       <Field label="Advisor">
-        <select className="field" disabled={pastVisit} value={advisorId} onChange={(event) => setAdvisorId(event.target.value)}>
+        <select className="field" aria-label="Advisor" disabled={pastVisit} value={advisorId} onChange={(event) => setAdvisorId(event.target.value)} required>
+          <option value="">Choose an advisor</option>
           {advisors.map((advisor) => <option key={advisor.id} value={advisor.id}>#{advisor.number} {advisor.name}</option>)}
         </select>
       </Field>
@@ -1137,7 +1147,10 @@ export function AppointmentFields({
                   onChange={(event) => {
                     const laborOpId = event.target.value;
                     const next = laborOps.find((op) => op.id === laborOpId);
-                    const hours = clampLaborHours(next?.opcode ?? "", next?.hours ?? 1);
+                    const bookHours = next?.hours ?? 1;
+                    const hours = editedHours.current.has(line.id)
+                      ? clampLaborHours(next?.opcode ?? "", line.hours ?? bookHours)
+                      : clampLaborHours(next?.opcode ?? "", bookHours);
                     setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, laborOpId, hours } : row));
                     if (next?.opcode === DEMO_MISC_OPCODE) setFormError(null);
                   }}
@@ -1157,6 +1170,7 @@ export function AppointmentFields({
                   disabled={pastVisit}
                   value={line.hours ?? ""}
                   onChange={(event) => {
+                    editedHours.current.add(line.id);
                     const typed = Number(event.target.value);
                     const hours = clampLaborHours(opcode, typed);
                     if (opcode === DEMO_MISC_OPCODE && typed < 1) setFormError("Misc labor is at least 1.0 hr.");

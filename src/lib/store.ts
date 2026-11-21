@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, type CapacityResult } from "./capacity";
-import { laborLineError, minutesFromLineHours } from "./labor-lines";
+import { blockMinutes, minutesFromLineHours, roundLaborHours, storedLaborLines } from "./labor-lines";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
@@ -241,9 +241,9 @@ function closedDateLabel(iso: string) {
   return new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }).format(stamp);
 }
 
-const UPDATE_FIELDS = ["time", "date", "techId", "advisorId", "customerId", "concern", "lines", "vin", "minutes", "vehicleId", "lane", "laborOpIds", "status"];
+const UPDATE_FIELDS = ["time", "date", "techId", "advisorId", "customerId", "concern", "lines", "vin", "minutes", "vehicleId", "lane", "laborOpIds", "status", "lengthOverrideMinutes"];
 const MOVE_FIELDS = ["time", "date", "techId", "minutes"];
-const ADD_FIELDS = ["date", "time", "minutes", "customerId", "vehicleId", "advisorId", "concern", "lines", "vin", "laborOpIds", "techId", "lane"];
+const ADD_FIELDS = ["date", "time", "minutes", "customerId", "vehicleId", "advisorId", "concern", "lines", "vin", "laborOpIds", "techId", "lane", "lengthOverrideMinutes"];
 
 function foreignField(value: object, allowed: string[]) {
   return Object.keys(value).find((key) => !allowed.includes(key)) ?? "";
@@ -1326,7 +1326,13 @@ export function migrateSavedShop(persisted: unknown): ShopState {
           const vehicle = vehicleList.find((item) => item.id === row.vehicleId);
           const rawLines = Array.isArray(row.lines) ? row.lines.filter((line) => line && typeof line === "object") : [];
           const lines = rawLines.length > 0
-            ? rawLines.map((line, index) => ({ id: line.id || `${row.id}-l${index}`, code: lineLetter(index), concern: line.concern ?? "" }))
+            ? rawLines.map((line, index) => ({
+                id: line.id || `${row.id}-l${index}`,
+                code: lineLetter(index),
+                concern: line.concern ?? "",
+                laborOpId: typeof line.laborOpId === "string" ? line.laborOpId : undefined,
+                hours: typeof line.hours === "number" && Number.isFinite(line.hours) ? roundLaborHours(line.hours) : undefined,
+              }))
             : [{ id: `${row.id}-a`, code: "A", concern: row.concern ?? "" }];
           const fallback: Record<string, string> = { a1: "luis", a2: "chris", a3: "priya", a4: "sam", a5: "elena", a6: "marcus", a7: "andre", a8: "marcus", a9: "luis", a10: "chris" };
           const known = techList.some((tech) => tech && tech.id === row.techId) ? row.techId : "";
@@ -1341,6 +1347,7 @@ export function migrateSavedShop(persisted: unknown): ShopState {
             concern: concernFromLines(lines) || row.concern,
             vin: row.vin || vehicle?.vin || "",
             laborOpIds: Array.isArray(row.laborOpIds) ? row.laborOpIds : [],
+            lengthOverrideMinutes: typeof row.lengthOverrideMinutes === "number" && Number.isFinite(row.lengthOverrideMinutes) ? row.lengthOverrideMinutes : undefined,
             techId: known || fallback[row.id] || techList[0]?.id || "",
             cancelHistory: normalizeCancelHistory(row.cancelHistory),
           };
@@ -3323,6 +3330,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (pastClose && deskActor(state) !== "service-manager") return { ok: false, error: PAST_CLOSE_MESSAGE };
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return { ok: false, error: PAST_CLOSE_REASON, needsCloseReason: true };
+        const lineBlock = minutesFromLineHours(current.lines);
+        const useBlock = minutes !== current.minutes || typeof current.lengthOverrideMinutes === "number" || lineBlock !== null;
         const capacity = assessAppointment({
           scheduling: state.settings.scheduling,
           advisors: state.advisors,
@@ -3336,6 +3345,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: current.advisorId,
             techId,
             laborOpIds: current.laborOpIds ?? [],
+            laborHours: useBlock ? minutes / 60 : undefined,
             ignoreId: id,
           },
         });
@@ -3356,7 +3366,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         set((next) => ({
           appointments: next.appointments.map((row) => {
             if (row.id !== id || row.status === "cancelled") return row;
-            return { ...row, minutes, time, date, techId };
+            const dragged = minutes !== row.minutes;
+            const matchesLines = lineBlock !== null && minutes === lineBlock;
+            return {
+              ...row,
+              minutes,
+              time,
+              date,
+              techId,
+              lengthOverrideMinutes: dragged ? (matchesLines ? null : minutes) : row.lengthOverrideMinutes,
+            };
           }),
           settingsLog: logged.length === 0 ? next.settingsLog : [...(next.settingsLog ?? []), ...logged],
         }));
@@ -3383,7 +3402,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return { ok: false, error: "That lane is not on this store." };
         }
         if (Array.isArray(patch.laborOpIds)) {
-          if (new Set(patch.laborOpIds).size !== patch.laborOpIds.length) return { ok: false, error: "That labor operation is listed twice." };
+          const linesOwnOps = Array.isArray(patch.lines) && minutesFromLineHours(patch.lines) !== null;
+          if (!linesOwnOps && new Set(patch.laborOpIds).size !== patch.laborOpIds.length) return { ok: false, error: "That labor operation is listed twice." };
           if (patch.laborOpIds.some((opId) => !state.laborOps.some((op) => op.id === opId))) {
             return { ok: false, error: "That labor operation is not on this store." };
           }
@@ -3394,6 +3414,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (Array.isArray(patch.lines)) {
           const concerns = patch.lines.map((line) => cleanFreeText(line.concern).trim()).filter(Boolean);
           if (concerns.length === 0) return { ok: false, error: "Add a concern." };
+          const stored = storedLaborLines(patch.lines, state.laborOps);
+          if (!stored.ok) return { ok: false, error: stored.error };
+          patch = { ...patch, lines: stored.lines };
         }
         if (patch.date && patch.date !== current.date) {
           const dateError = appointmentDateError(patch.date, state.settings.scheduling);
@@ -3465,7 +3488,19 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           appointments: state.appointments
             .map((row) => {
               if (row.id !== id) return row;
-              const minutes = patch.minutes === undefined || visitLengthError(patch.minutes) ? row.minutes : patch.minutes;
+              const sized = minutesFromLineHours(Array.isArray(patch.lines) ? patch.lines : row.lines);
+              const keptOverride = typeof patch.lengthOverrideMinutes === "number"
+                ? patch.lengthOverrideMinutes
+                : patch.lengthOverrideMinutes === null
+                  ? null
+                  : row.lengthOverrideMinutes;
+              const minutes = typeof keptOverride === "number"
+                ? keptOverride
+                : typeof patch.minutes === "number" && !visitLengthError(patch.minutes)
+                  ? patch.minutes
+                  : sized !== null && Array.isArray(patch.lines)
+                    ? sized
+                    : row.minutes;
               const time = patch.time && /^\d{2}:(00|30)$/.test(patch.time) ? patch.time : row.time;
               const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : row.date;
               const concernOnly = typeof patch.concern === "string" && !(Array.isArray(patch.lines) && patch.lines.length > 0)
@@ -3477,7 +3512,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
                     code: lineLetter(index),
                     concern: cleanFreeText(line.concern).trim().slice(0, 500),
                     laborOpId: line.laborOpId,
-                    hours: line.hours,
+                    hours: typeof line.hours === "number" && Number.isFinite(line.hours) ? roundLaborHours(line.hours) : line.hours,
                   })).filter((line) => line.concern)
                 : [];
               const currentConcerns = row.lines.map((line) => line.concern).filter(Boolean);
@@ -3510,6 +3545,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               return {
                 ...row,
                 minutes,
+                lengthOverrideMinutes: typeof keptOverride === "number" ? keptOverride : null,
                 time,
                 date,
                 lines: kept,
@@ -3553,15 +3589,17 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!owned || owned.customerId !== input.customerId) return "";
         if (appointmentDateError(input.date || "", state.settings.scheduling)) return "";
         if (ownStoreError(state)) return "";
+        const prepared = storedLaborLines(input.lines ?? [], state.laborOps);
+        if (!prepared.ok) return "";
+        input = { ...input, lines: prepared.lines };
+        const finalMinutes = blockMinutes(input) ?? 60;
         if (visitTimeError(state.settings.scheduling, input.date || "", input.time || "")) return "";
-        if (input.minutes !== undefined && visitLengthError(input.minutes)) return "";
-        const pastClose = visitRunsPastClose(state.settings.scheduling, input.date || "", input.time || "", input.minutes ?? 60);
+        if (visitLengthError(finalMinutes)) return "";
+        const pastClose = visitRunsPastClose(state.settings.scheduling, input.date || "", input.time || "", finalMinutes);
         if (pastClose && deskActor(state) !== "service-manager") return "";
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
-        const lineError = laborLineError(input.lines ?? [], state.laborOps);
-        if (lineError) return "";
         const lineSized = minutesFromLineHours(input.lines ?? []);
         if (Array.isArray(input.laborOpIds)) {
           if (lineSized === null && new Set(input.laborOpIds).size !== input.laborOpIds.length) return "";
@@ -3608,7 +3646,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             vehicleId,
             date: input.date || today(),
             time: input.time,
-            minutes: lineSized ?? (input.minutes === undefined ? 60 : input.minutes),
+            minutes: finalMinutes,
+            lengthOverrideMinutes: typeof input.lengthOverrideMinutes === "number" ? input.lengthOverrideMinutes : null,
             lines: kept,
             concern: concernFromLines(kept),
             vin,
@@ -3660,16 +3699,21 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (Array.isArray(input.lines) && input.lines.length > 0 && !input.lines.some((line) => line.concern.trim())) {
           return { ok: false, appointmentId: "", overrideId: null, error: "Add a concern." };
         }
-        const lineError = laborLineError(input.lines ?? [], state.laborOps);
-        if (lineError) return { ok: false, appointmentId: "", overrideId: null, error: lineError };
-        const sized = minutesFromLineHours(input.lines ?? []);
-        if (sized !== null) {
-          input = {
-            ...input,
-            minutes: sized,
-            laborOpIds: (input.lines ?? []).map((line) => line.laborOpId).filter((id): id is string => Boolean(id)),
-          };
-        }
+        const storedLines = storedLaborLines(input.lines ?? [], state.laborOps);
+        if (!storedLines.ok) return { ok: false, appointmentId: "", overrideId: null, error: storedLines.error };
+        const sized = minutesFromLineHours(storedLines.lines);
+        const override = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes)
+          ? input.lengthOverrideMinutes
+          : null;
+        input = {
+          ...input,
+          lines: storedLines.lines,
+          minutes: override ?? sized ?? input.minutes,
+          lengthOverrideMinutes: override,
+          laborOpIds: sized !== null
+            ? storedLines.lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
+            : input.laborOpIds,
+        };
         if (visitLengthError(input.minutes)) {
           return { ok: false, appointmentId: "", overrideId: null, error: visitLengthError(input.minutes) ?? "That length is not on this desk." };
         }
@@ -3724,7 +3768,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: input.advisorId,
             techId: input.techId,
             laborOpIds: input.laborOpIds ?? [],
-            laborHours: sized !== null ? sized / 60 : undefined,
+            laborHours: override !== null || sized !== null ? (override ?? sized ?? input.minutes) / 60 : undefined,
             ignoreId: existingId,
           },
         });
@@ -3770,6 +3814,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               date: input.date,
               time: input.time,
               minutes: input.minutes,
+              lengthOverrideMinutes: input.lengthOverrideMinutes,
               customerId: input.customerId,
               vehicleId,
               advisorId: input.advisorId,
@@ -3814,12 +3859,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const vinError = vinScheduleError(vinText);
         if (vinError) return fail(vinError);
         if (Array.isArray(input.lines) && !input.lines.some((line) => line.concern.trim()) && !input.concern?.trim()) return fail("Add a concern.");
-        const newLineError = laborLineError(input.lines ?? [], state.laborOps);
-        if (newLineError) return fail(newLineError);
-        const newSized = minutesFromLineHours(input.lines ?? []);
-        const minutes = newSized ?? input.minutes;
-        const laborOpIds = newSized !== null
-          ? (input.lines ?? []).map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
+        const preparedLines = storedLaborLines(input.lines ?? [], state.laborOps);
+        if (!preparedLines.ok) return fail(preparedLines.error);
+        const newSized = minutesFromLineHours(preparedLines.lines);
+        const newOverride = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes) ? input.lengthOverrideMinutes : null;
+        const minutes = newOverride ?? newSized ?? input.minutes;
+        const laborOpIds = preparedLines.lines.some((line) => line.laborOpId)
+          ? preparedLines.lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
           : input.laborOpIds ?? [];
         const dateError = appointmentDateError(input.date || "", state.settings.scheduling);
         if (dateError) return fail(dateError);
@@ -3884,9 +3930,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             vehicleId,
             advisorId: input.advisorId,
             concern: input.concern,
-            lines: input.lines?.length ? input.lines : [{ id: uid("al"), code: "A", concern: input.concern }],
+            lines: preparedLines.lines.length ? preparedLines.lines : [{ id: uid("al"), code: "A", concern: input.concern }],
             vin: vinText,
             laborOpIds,
+            lengthOverrideMinutes: newOverride,
             techId: input.techId,
             lane: input.lane,
           }, appointmentId, closeNote ?? undefined);

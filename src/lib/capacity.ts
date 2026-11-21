@@ -65,18 +65,19 @@ export function laborHoursFor(laborOpIds: string[], minutes: number, laborOps: {
 }
 
 export function appointmentLoads(
-  appointments: (Pick<Appointment, "id" | "date" | "time" | "minutes" | "advisorId" | "techId" | "laborOpIds" | "status"> & { lines?: { hours?: number }[] })[],
+  appointments: (Pick<Appointment, "id" | "date" | "time" | "minutes" | "advisorId" | "techId" | "laborOpIds" | "status"> & { lines?: { hours?: number }[]; lengthOverrideMinutes?: number | null })[],
   laborOps: { id: string; hours: number }[],
 ): CapacityLoad[] {
   return appointments.map((row) => {
     const fromLines = minutesFromLineHours(row.lines ?? []);
+    const block = typeof row.lengthOverrideMinutes === "number" ? row.lengthOverrideMinutes : fromLines;
     return {
       id: row.id,
       date: row.date,
       time: row.time,
       advisorId: row.advisorId,
       techId: row.techId,
-      laborHours: fromLines !== null ? round2(fromLines / 60) : laborHoursFor(row.laborOpIds, row.minutes, laborOps),
+      laborHours: block !== null ? round2(block / 60) : laborHoursFor(row.laborOpIds, row.minutes, laborOps),
       counts: row.status !== "no_show" && row.status !== "cancelled",
     };
   });
@@ -420,9 +421,9 @@ export function nextOpenVisit(scheduling: SchedulingSettings, selected: string, 
   return { date: clock.date, time: formatTime(shopDay(scheduling, clock.date).openMinutes || 8 * 60) };
 }
 
-/** Lengths are 30-minute steps. 24 hours does not fit a visit, so 1440 is refused. */
+/** At least 30 minutes and under 24 hours. Line hours may land off the 30-minute grid, so 246 (4.1 hr) is allowed. 1440 is refused. */
 export function visitLengthError(minutes: unknown): string | null {
-  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440 || minutes % 30 !== 0) {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440) {
     return "That length is not on this desk.";
   }
   return null;

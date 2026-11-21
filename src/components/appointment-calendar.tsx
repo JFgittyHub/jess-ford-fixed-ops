@@ -745,11 +745,22 @@ export function AppointmentCalendar({
                   onScroll = (event: Event) => {
                     if (heldPointerId.current !== pointerId) return;
                     const target = event.target;
-                    const now = target instanceof HTMLElement && target !== document.body && target !== document.documentElement
+                    // A touch scroll's target is the element under the finger. That node usually
+                    // does not scroll; comparing its scrollTop of 0 with the window's scrollY
+                    // looked like a jump and cancelled a 6px hold.
+                    const elementScrolls = target instanceof HTMLElement
+                      && target !== document.body
+                      && target !== document.documentElement
+                      && target.scrollHeight > target.clientHeight + 1;
+                    const now = elementScrolls
                       ? { node: target as EventTarget, x: target.scrollLeft, y: target.scrollTop }
                       : { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
-                    const then = scrollOrigin.get(now.node) ?? scrollOrigin.get(window);
-                    if (!then || (Math.abs(now.x - then.x) <= 8 && Math.abs(now.y - then.y) <= 8)) return;
+                    const then = scrollOrigin.get(now.node);
+                    if (!then) {
+                      scrollOrigin.set(now.node, { x: now.x, y: now.y });
+                      return;
+                    }
+                    if (Math.abs(now.x - then.x) <= 8 && Math.abs(now.y - then.y) <= 8) return;
                     suppressSlotClick.current = true;
                     dismissMenu();
                     disarm();

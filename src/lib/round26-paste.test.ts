@@ -3597,7 +3597,7 @@ describe("round 26 live scroll anchoring", () => {
       assert.ok(noticeHold.bar - afterDismiss > 40, `clearing the notice only shrank the bar ${noticeHold.bar - afterDismiss}px`);
       await raiseOutsideNotice(page);
 
-      for (const delta of [-1, -6]) {
+      for (const delta of [-1, -6, 6]) {
         await page.evaluate(() => window.scrollTo({ top: 80, left: 0, behavior: "instant" }));
         const beforeNeg = await page.locator("[data-appt]").count();
         const neg = await pressInHours(page, "touch");
@@ -3605,7 +3605,8 @@ describe("round 26 live scroll anchoring", () => {
         await page.clock.fastForward(120);
         await page.evaluate((delta) => {
           window.scrollBy(0, delta);
-          document.dispatchEvent(new Event("scroll"));
+          const column = document.querySelector("[data-tech]");
+          (column ?? document).dispatchEvent(new Event("scroll", { bubbles: true }));
         }, delta);
         await page.clock.fastForward(2000);
         assert.equal(await page.locator("[data-paste]").count(), 1, `a ${delta}px scroll during the hold did not open Paste`);
@@ -3680,12 +3681,12 @@ describe("round 26 live scroll anchoring", () => {
           document.querySelector("header.app-header")?.getBoundingClientRect().bottom ?? 0,
         );
         if (!anchor) return { blocked: true, x: 0, y: 0, bar };
-        const rowTop = bar - 14;
+        const rowTop = bar - 26;
         window.scrollTo({ top: window.scrollY + (anchor.getBoundingClientRect().top + 4 * 32) - rowTop, left: 0, behavior: "instant" });
         for (const column of columns) {
           const rect = column.getBoundingClientRect();
           const x = Math.max(rect.left, 8) + 16;
-          const y = rect.top + 4 * 32 + 22;
+          const y = rect.top + 4 * 32 + 30;
           const hit = document.elementFromPoint(x, y);
           if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
           hit.dispatchEvent(new PointerEvent("pointerdown", {
@@ -3735,6 +3736,60 @@ describe("round 26 live scroll anchoring", () => {
       await releaseHold(page, tucked);
       await page.evaluate(() => document.querySelector<HTMLButtonElement>("[data-paste]")?.click());
       assert.equal(await page.locator(`[data-appt-time="09:00"]`).count(), beforeTucked + 1, "the tucked row saved a different slot");
+
+      const low = await page.evaluate(() => {
+        const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")].filter((node) => node.getBoundingClientRect().width > 40);
+        const anchor = columns[0];
+        if (!anchor) return { blocked: true, x: 0, y: 0 };
+        const rowTop = window.innerHeight - 6;
+        window.scrollTo({ top: window.scrollY + (anchor.getBoundingClientRect().top + 8 * 32) - rowTop, left: 0, behavior: "instant" });
+        for (const column of columns) {
+          const rect = column.getBoundingClientRect();
+          const x = Math.max(rect.left, 8) + 16;
+          const y = rect.top + 8 * 32 + 2;
+          if (y < 0 || y > window.innerHeight - 1) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+          hit.dispatchEvent(new PointerEvent("pointerdown", {
+            bubbles: true, cancelable: true, clientX: x, clientY: y,
+            button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
+          }));
+          return { blocked: false, x, y };
+        }
+        return { blocked: true, x: 0, y: 0 };
+      });
+      assert.ok(low && !low.blocked, `the low row is not pressable ${JSON.stringify(low)}`);
+      await page.clock.fastForward(2000);
+      const lowMenu = await page.evaluate(() => {
+        const menu = document.querySelector("[data-context-menu]");
+        const button = menu?.querySelector("[data-paste]");
+        const rect = button?.getBoundingClientRect();
+        if (!rect || !menu) return { paste: 0, time: "", under: "", center: 0, innerHeight: window.innerHeight, rowTop: 0, rowBottom: 0 };
+        const y = rect.top + rect.height / 2;
+        const x = rect.left + rect.width / 2;
+        let under = "";
+        let rowTop = 0;
+        let rowBottom = 0;
+        for (const node of document.elementsFromPoint(x, y)) {
+          if (!(node instanceof Element) || node.closest("[data-context-menu]")) continue;
+          const column = node.closest("[data-tech]");
+          if (!column) continue;
+          const top = column.getBoundingClientRect().top + 8 * 32;
+          rowTop = top;
+          rowBottom = top + 32;
+          const mins = 7 * 60 + Math.floor((y - column.getBoundingClientRect().top) / 32) * 30;
+          under = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+          break;
+        }
+        return { paste: 1, time: menu.getAttribute("data-menu-time") ?? "", under, center: y, innerHeight: window.innerHeight, rowTop, rowBottom };
+      });
+      assert.equal(lowMenu.paste, 1, "a row below the window did not open Paste");
+      assert.equal(lowMenu.time, "11:00");
+      assert.equal(lowMenu.under, "11:00");
+      assert.ok(lowMenu.center < lowMenu.innerHeight, `the center is off the window at ${lowMenu.center}`);
+      assert.ok(lowMenu.center >= lowMenu.rowTop && lowMenu.center <= lowMenu.rowBottom, "the low center left the held row");
+      await releaseHold(page, low);
+      await page.keyboard.press("Escape");
 
       for (const person of ["megan", "derek"] as const) {
         await page.locator("[aria-label='Working as']").selectOption(person);

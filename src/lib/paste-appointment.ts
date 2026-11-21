@@ -2,11 +2,11 @@ import { useRef, useState } from "react";
 import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
 import { deskActor } from "./cancel";
 import { bookingDateMessage } from "./store";
-import { minutesFromLineHours } from "./labor-lines";
+import { blockMinutes, minutesFromLineHours } from "./labor-lines";
 import type { Appointment } from "./types";
 
 /** Fields Copy keeps. The slot supplies the day, the start, and the technician. */
-export type CopiedAppointment = Pick<Appointment, "customerId" | "vehicleId" | "vin" | "concern" | "lines" | "minutes" | "lane" | "advisorId" | "laborOpIds">;
+export type CopiedAppointment = Pick<Appointment, "customerId" | "vehicleId" | "vin" | "concern" | "lines" | "minutes" | "lane" | "advisorId" | "laborOpIds" | "lengthOverrideMinutes">;
 
 export function copiedFrom(row: Appointment): CopiedAppointment {
   return {
@@ -21,7 +21,8 @@ export function copiedFrom(row: Appointment): CopiedAppointment {
       laborOpId: line.laborOpId,
       hours: line.hours,
     })),
-    minutes: minutesFromLineHours(row.lines) ?? row.minutes,
+    minutes: blockMinutes(row) ?? row.minutes,
+    lengthOverrideMinutes: typeof row.lengthOverrideMinutes === "number" ? row.lengthOverrideMinutes : null,
     lane: row.lane,
     advisorId: row.advisorId,
     laborOpIds: row.lines.some((line) => line.laborOpId)
@@ -183,7 +184,9 @@ export function commitPaste(
       advisorId: booked.advisorId,
       techId: booked.techId,
       laborOpIds: booked.laborOpIds ?? [],
-      laborHours: minutesFromLineHours(booked.lines) !== null ? booked.minutes / 60 : undefined,
+      laborHours: blockMinutes(booked) !== null && (typeof booked.lengthOverrideMinutes === "number" || minutesFromLineHours(booked.lines) !== null)
+        ? booked.minutes / 60
+        : undefined,
     },
   });
   if (judged.blocked) return { ok: false, error: judged.blocked, appointmentId: "", overrideId: null };

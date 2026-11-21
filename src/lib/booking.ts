@@ -20,6 +20,12 @@ type DeskShop = {
   settings: { scheduling: { onlineMenu: { id: string }[] } };
 };
 
+/** Book opens on the Working-as advisor. A technician, or nobody, leaves the field blank. */
+export function bookingAdvisorId(workingAsId: string | null | undefined, advisors: { id: string }[]): string {
+  if (!workingAsId) return "";
+  return advisors.some((row) => row.id === workingAsId) ? workingAsId : "";
+}
+
 /** Ids the booking form should open with for the store that is on screen. */
 export function deskSeedFor(shop: DeskShop): DeskSeed {
   const customerId = shop.customers[0]?.id ?? "";
