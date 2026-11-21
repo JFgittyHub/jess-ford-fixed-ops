@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToString } from "react-dom/server";
 import { NoShowMark } from "../components/no-show-mark.tsx";
 import { noShowSuffix } from "./no-show-label.ts";
+import { bookableDay } from "./bookable-day.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
@@ -11,6 +12,7 @@ import type { Appointment } from "./types.ts";
 describe("No-show", () => {
   it("marks the appointment and leaves the flag on the customer at that store", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const helen = shop.getState().customers.find((row) => row.name === "Helen Cho");
     assert.ok(helen);
     const vehicle = shop.getState().vehicles.find((row) => row.customerId === helen.id);
@@ -46,6 +48,7 @@ describe("No-show", () => {
 
   it("counts a No-show saved from the appointment edit, and keeps the sample mark", () => {
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("megan");
     const seeded = shop.getState().appointments.find((row) => row.status === "no_show");
     assert.ok(seeded);
     const seededCustomer = shop.getState().customers.find((row) => row.id === seeded.customerId);
@@ -58,8 +61,8 @@ describe("No-show", () => {
     const vehicle = shop.getState().vehicles.find((row) => row.customerId === helen?.id);
     assert.ok(helen && vehicle);
     const before = helen.noShows;
-    shop.getState().addAppointment(draft(helen.id, vehicle.id, shop.getState().advisors[0].id, "15:00"));
-    const added = shop.getState().appointments.find((row) => row.customerId === helen.id && row.time === "15:00");
+    shop.getState().addAppointment(draft(helen.id, vehicle.id, shop.getState().advisors[0].id, "12:00"));
+    const added = shop.getState().appointments.find((row) => row.customerId === helen.id && row.time === "12:00");
     assert.ok(added);
     shop.getState().updateAppointment(added.id, { status: "no_show" });
     assert.equal(shop.getState().appointments.find((row) => row.id === added.id)?.status, "no_show");
@@ -70,7 +73,7 @@ describe("No-show", () => {
 
 function draft(customerId: string, vehicleId: string, advisorId: string, time = "09:00"): Omit<Appointment, "id" | "orderId" | "status"> {
   return {
-    date: "2026-10-23",
+    date: bookableDay(),
     time,
     minutes: 60,
     customerId,

@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 
 export function Button({
@@ -9,9 +9,9 @@ export function Button({
   className,
   type = "button",
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "primary" | "ghost" | "accent"; small?: boolean }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "primary" | "ghost" | "accent" | "danger"; small?: boolean }) {
   return (
-    <button type={type} className={cn("btn", tone === "primary" && "btn-primary", tone === "ghost" && "btn-ghost", tone === "accent" && "btn-accent", small && "btn-small", className)} {...props}>
+    <button type={type} className={cn("btn", tone === "primary" && "btn-primary", tone === "ghost" && "btn-ghost", tone === "accent" && "btn-accent", tone === "danger" && "btn-danger", small && "btn-small", className)} {...props}>
       {children}
     </button>
   );
@@ -47,6 +47,15 @@ export function Modal({
   wide?: boolean;
   children: ReactNode;
 }) {
+  const opener = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const active = document.activeElement;
+    opener.current = active instanceof HTMLElement ? active : null;
+    return () => {
+      opener.current?.focus();
+    };
+  }, [open]);
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>

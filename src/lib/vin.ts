@@ -20,8 +20,44 @@ const YEAR_CODE: Record<number, string> = {
   2027: "V",
 };
 
+/** Upper case, with spaces and dashes removed, before a compare, a length check, or a save. */
+export function normalizeVin(value: string): string {
+  return value.toUpperCase().replace(/[\s-]+/g, "");
+}
+
 export function isFullVin(value: string): boolean {
-  return /^[A-HJ-NPR-Z0-9]{17}$/.test(value);
+  return /^[A-HJ-NPR-Z0-9]{17}$/.test(normalizeVin(value));
+}
+
+/** Blank is allowed until close. I, O, and Q are refused, not stripped. */
+export function vinEntryError(value: unknown): string | null {
+  if (typeof value !== "string") return "Enter a 17-character VIN.";
+  const vin = normalizeVin(value);
+  if (!vin) return null;
+  if (vin === "UNKNOWN") return "Enter the VIN. Unknown is not a VIN.";
+  if (/[IOQ]/.test(vin)) return "A VIN can't include the letters I, O, or Q.";
+  if (vin.length !== 17 || !isFullVin(vin)) return "VIN has to be 17 characters.";
+  return null;
+}
+
+/**
+ * Appointment save. Blank is allowed. Letters I, O, and Q are refused.
+ * A bad check digit does not save. Closing a repair order still only warns.
+ */
+export function vinScheduleError(value: string): string | null {
+  const entry = vinEntryError(value);
+  if (entry) return entry;
+  if (vinCheckWarning(value)) return "The VIN check digit doesn't match. Check it before you save.";
+  return null;
+}
+
+/** A bad check digit warns. It does not block saving or closing a repair order. */
+export function vinCheckWarning(value: string): string | null {
+  if (vinEntryError(value) || !isFullVin(value)) return null;
+  const vin = normalizeVin(value);
+  const digit = vinCheckDigit(vin);
+  if (digit && vin[8] !== digit) return "The VIN check digit doesn't match. Check it before you close.";
+  return null;
 }
 
 export function vinCheckDigit(vin: string): string | null {

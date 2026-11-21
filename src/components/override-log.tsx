@@ -32,7 +32,7 @@ export function OverrideLog({ rows }: { rows: OverrideRecord[] }) {
               <td className="whitespace-nowrap tabular-nums">{row.date} · {row.time}</td>
               <td>{row.techName}</td>
               <td>{row.advisorName}</td>
-              <td>{overrideReasonLabel(row.reason)}</td>
+              <td>{overrideReasonLabel(row.reason)}{row.note ? ` · ${row.note}` : ""}</td>
             </tr>
           ))}
         </tbody>

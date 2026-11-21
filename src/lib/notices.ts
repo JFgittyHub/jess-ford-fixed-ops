@@ -1,5 +1,5 @@
 import { laborHoursFor } from "./capacity";
-import { addDays, todayIso } from "./clock";
+import { addDays, now, todayIso } from "./clock";
 import { matchRequestCustomer } from "./online-request";
 import { textingAdapter } from "./adapters/texting";
 import type { Appointment, ContactMethod, Customer, OnlineRequest, ShopNotice, Vehicle } from "./types";
@@ -47,6 +47,8 @@ export function reminderNotice(input: {
   transportName: string;
   method: ContactMethod;
   storeId: ShopNotice["storeId"];
+  who?: string;
+  whoId?: string;
 }): ShopNotice {
   const customer = input.customer;
   const notice: ShopNotice = {
@@ -64,6 +66,8 @@ export function reminderNotice(input: {
     requestId: null,
     appointmentId: input.appointment.id,
     customerName: customer?.name ?? "Customer",
+    who: input.who ?? "",
+    whoId: input.whoId ?? "",
   };
   simulateDelivery(notice);
   return notice;
@@ -149,7 +153,7 @@ export function reminderMethod(request: OnlineRequest | undefined, customer: Cus
   return "call";
 }
 
-export function tomorrowIso(at = new Date()): string {
+export function tomorrowIso(at = now()): string {
   return addDays(todayIso(at), 1);
 }
 
@@ -211,8 +215,10 @@ function freshParty(input: {
 }
 
 function vehicleFromRequest(id: string, customerId: string, request: OnlineRequest): Vehicle {
-  const model = [request.make, request.model].filter(Boolean).join(" ") || request.model || "Vehicle";
-  return { id, customerId, year: request.year || 2020, model, vin: request.vin };
+  const make = request.make?.trim() || "Ford";
+  let model = request.model?.trim() || "Vehicle";
+  if (model.toLowerCase().startsWith(`${make.toLowerCase()} `)) model = model.slice(make.length).trim() || "Vehicle";
+  return { id, customerId, year: request.year || 2020, make, model, vin: request.vin };
 }
 
 function vehicleByVin(customerId: string, vehicles: Vehicle[], vin: string): Vehicle | undefined {

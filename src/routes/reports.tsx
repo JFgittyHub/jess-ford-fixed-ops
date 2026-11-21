@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Shell } from "@/components/shell";
+import { guardLocked } from "@/lib/locked-route";
 import { Button } from "@/components/ui";
 import { monthLabel, num, ordinal, dayOfMonth, pct, usd } from "@/lib/format";
 import { digest } from "@/lib/metrics";
 import { useShop } from "@/lib/store";
 
-export const Route = createFileRoute("/reports")({ component: ReportsPage });
+export const Route = createFileRoute("/reports")({ component: guardLocked(ReportsPage) });
 
 function moneyCell(value: number) {
   return <td className="tabular-nums text-right">{usd(value)}</td>;
@@ -41,7 +42,7 @@ function ReportsPage() {
           </thead>
           <tbody>
             <tr>
-              <td>Sales, closed repair orders</td>
+              <td>Sales, booked repair orders</td>
               {moneyCell(view.laborSales)}
               {moneyCell(view.partsSales)}
               {moneyCell(view.laborSales + view.partsSales)}
@@ -106,6 +107,11 @@ function ReportsPage() {
           <p className="text-sm text-muted">Internal</p>
           <p className="font-display text-3xl tabular-nums">{usd(view.laborI)}</p>
           <p className="text-sm text-muted">{num(view.hoursI, 1)} hours · {num(view.hoursPerRo, 2)} hours per closed RO</p>
+        </article>
+        <article className="card">
+          <p className="text-sm text-muted">No-work closes</p>
+          <p className="font-display text-3xl tabular-nums">{view.noWorkCloses}</p>
+          <p className="text-sm text-muted">$0 tickets. Not in sales, hours, or hours per RO.</p>
         </article>
       </section>
 

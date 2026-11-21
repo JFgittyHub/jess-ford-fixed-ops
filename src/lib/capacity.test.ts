@@ -1,3 +1,4 @@
+import { bookableDay } from "./bookable-day.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
@@ -6,6 +7,7 @@ import {
   assessAppointment,
   evaluateCapacity,
   onlineSlots,
+  overrideReason,
   type CapacityLoad,
 } from "./capacity.ts";
 import { defaultScheduling } from "./scheduling.ts";
@@ -72,9 +74,12 @@ describe("capacity engine", () => {
     assert.equal(other.length > 0, true);
 
     const shop = createShopStore({ demoMode: true, storage: memoryStorage() });
+    shop.getState().setWorkingAs("derek");
     const before = shop.getState().appointments.length;
-    shop.getState().addAppointment(draft("10:00", 600));
-    shop.getState().addAppointment(draft("10:00", 60));
+    const openDay = bookableDay();
+    shop.getState().addAppointment(draft("10:00", 600, openDay), undefined, "Capacity fixture runs past close");
+    shop.getState().setWorkingAs("megan");
+    shop.getState().addAppointment(draft("10:00", 60, openDay));
     assert.equal(shop.getState().appointments.length, before + 2);
     const saved = assessAppointment({
       scheduling: shop.getState().settings.scheduling,
@@ -82,7 +87,7 @@ describe("capacity engine", () => {
       techs: shop.getState().techs,
       appointments: shop.getState().appointments,
       laborOps: shop.getState().laborOps,
-      proposal: { date: tuesday, time: "10:30", advisorId: "megan", techId: "marcus", laborOpIds: [], minutes: 60 },
+      proposal: { date: openDay, time: "10:30", advisorId: "megan", techId: "marcus", laborOpIds: [], minutes: 60 },
     });
     assert.equal(saved.open, false);
     assert.match(saved.warning ?? "", /technician hours/);
@@ -122,7 +127,10 @@ describe("capacity engine", () => {
 
     const stranger = propose(coulee, [], { techId: "holly", laborHours: 0.5 });
     assert.equal(stranger.open, false);
-    assert.match(stranger.warning ?? "", /isn't on this store/);
+    assert.equal(stranger.warning, null);
+    assert.match(stranger.blocked ?? "", /isn't on this store/);
+    assert.equal(advisorBookingNote(stranger)?.includes("You can still book it"), false);
+    assert.equal(overrideReason(stranger), null);
 
     const couleeMenu = menu(coulee, "gc-oil", 6);
     const pullmanMenu = menu(pullman, "pl-oil", 6);
@@ -133,7 +141,7 @@ describe("capacity engine", () => {
     const holiday = "2026-11-26";
     assert.equal(openings(coulee, [], { serviceId: "gc-oil", from: holiday, through: holiday, now: new Date("2026-11-26T16:00:00Z") }).length, 0);
     assert.equal(openings(pullman, [], { serviceId: "pl-oil", from: holiday, through: holiday, now: new Date("2026-11-26T16:00:00Z") }).length > 0, true);
-    assert.match(propose(coulee, [], { date: "2026-10-25", laborHours: 1 }).warning ?? "", /closed/);
+    assert.match(propose(coulee, [], { date: "2026-10-25", laborHours: 1 }).blocked ?? "", /closed/);
   });
 
   it("counts pending holds and live appointments, and ignores no-shows and declined holds", () => {
@@ -280,9 +288,9 @@ function menu(scheduling: SchedulingSettings, id: string, laborHours: number): S
   };
 }
 
-function draft(time: string, minutes: number) {
+function draft(time: string, minutes: number, date = tuesday) {
   return {
-    date: tuesday,
+    date,
     time,
     minutes,
     customerId: "c1",

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
+  mkdtempSync as makeTempDir,
+  rmSync,
   readFileSync,
   readdirSync,
   writeFileSync,
@@ -10,6 +11,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+
+const temps = [];
+function mkdtempSync(prefix) {
+  const root = makeTempDir(prefix);
+  temps.push(root);
+  return root;
+}
+test.after(() => {
+  for (const root of temps) rmSync(root, { recursive: true, force: true });
+});
 import { isMigrationFile, migrationName, pendingMigrations } from "./migration-plan.mjs";
 import { projectRoot } from "./with-app-env.mjs";
 
