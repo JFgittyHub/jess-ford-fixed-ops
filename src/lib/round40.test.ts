@@ -208,7 +208,7 @@ describe("round 23 drag override and hour checks", () => {
       60,
       store.getState().laborOps,
     );
-    assert.equal(Number.isNaN(prepared[0]?.hours), true);
+    assert.equal(prepared[0]?.hours, undefined);
     assert.match(laborLineError([{ laborOpId: misc.id, hours: Number.NaN }], store.getState().laborOps) ?? "", /labor hour/);
     assert.equal(minutesFromLineHours([{ hours: 4.1 }]), 246);
   });

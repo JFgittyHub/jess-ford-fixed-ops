@@ -20,6 +20,21 @@ function slotRowIndex(column: HTMLElement, clientY: number) {
 function slotRowCenter(column: HTMLElement, clientY: number) {
   return column.getBoundingClientRect().top + slotRowIndex(column, clientY) * SLOT + SLOT / 2;
 }
+
+/** Window scroll, unless the event target is itself a scrolling box. A cell under the finger is not one. */
+function scrollOffset(target: EventTarget | null): { node: EventTarget; x: number; y: number } {
+  if (target instanceof HTMLElement && target !== document.body && target !== document.documentElement) {
+    const style = getComputedStyle(target);
+    const scrolls = style.overflowY === "auto" || style.overflowY === "scroll"
+      || style.overflowX === "auto" || style.overflowX === "scroll"
+      || target.scrollHeight > target.clientHeight + 1
+      || target.scrollWidth > target.clientWidth + 1
+      || target.scrollTop !== 0
+      || target.scrollLeft !== 0;
+    if (scrolls) return { node: target, x: target.scrollLeft, y: target.scrollTop };
+  }
+  return { node: window, x: window.scrollX, y: window.scrollY };
+}
 const HANDLE = 10;
 /** Prior help box was 44px. 34px is about 23% smaller and still a usable touch target. */
 const SUMMARY_MARK = 34;
@@ -377,18 +392,11 @@ export function AppointmentCalendar({
         node = node.parentElement;
       }
     });
-    const pointOf = (target: EventTarget | null) => {
-      if (target instanceof HTMLElement && target !== document.body && target !== document.documentElement) {
-        return { node: target, x: target.scrollLeft, y: target.scrollTop };
-      }
-      return { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
-    };
     let menuTop = document.querySelector("[data-tech]")?.getBoundingClientRect().top ?? 0;
     const onScroll = (event: Event) => {
-      const target = event.target;
-      const viewport = target == null || target === window || target === document || target === document.documentElement || target === document.body;
-      const now = pointOf(target);
-      const then = origin.get(now.node) ?? (now.node === window ? origin.get(window) : undefined);
+      const now = scrollOffset(event.target);
+      const viewport = now.node === window;
+      const then = origin.get(now.node);
       if (viewport && ignoreMenuScroll.current) {
         const top = document.querySelector("[data-tech]")?.getBoundingClientRect().top ?? menuTop;
         const scrolledY = window.scrollY - (origin.get(window)?.y ?? window.scrollY);
@@ -744,17 +752,10 @@ export function AppointmentCalendar({
                   };
                   onScroll = (event: Event) => {
                     if (heldPointerId.current !== pointerId) return;
-                    const target = event.target;
                     // A touch scroll's target is the element under the finger. That node usually
                     // does not scroll; comparing its scrollTop of 0 with the window's scrollY
                     // looked like a jump and cancelled a 6px hold.
-                    const elementScrolls = target instanceof HTMLElement
-                      && target !== document.body
-                      && target !== document.documentElement
-                      && target.scrollHeight > target.clientHeight + 1;
-                    const now = elementScrolls
-                      ? { node: target as EventTarget, x: target.scrollLeft, y: target.scrollTop }
-                      : { node: window as EventTarget, x: window.scrollX, y: window.scrollY };
+                    const now = scrollOffset(event.target);
                     const then = scrollOrigin.get(now.node);
                     if (!then) {
                       scrollOrigin.set(now.node, { x: now.x, y: now.y });

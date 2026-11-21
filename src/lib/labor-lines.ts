@@ -17,10 +17,11 @@ export function clampLaborHours(opcode: string, hours: number): number {
   return Math.max(MIN_LINE_HOURS, value);
 }
 
-/** Exact minutes for the line-hour total. 4.1 hr is 246 min, not a 30-minute snap. */
+/** Exact minutes for the lines that have hours. A concern-only line does not wipe the total. 4.1 hr is 246 min. */
 export function minutesFromLineHours(lines: { hours?: number }[]): number | null {
-  if (!lines.length || lines.some((line) => typeof line.hours !== "number" || !Number.isFinite(line.hours))) return null;
-  return Math.round(lines.reduce((sum, line) => sum + (line.hours ?? 0), 0) * 60);
+  const numbered = lines.filter((line) => typeof line.hours === "number" && Number.isFinite(line.hours));
+  if (!numbered.length) return null;
+  return Math.round(numbered.reduce((sum, line) => sum + (line.hours ?? 0), 0) * 60);
 }
 
 export function laborLineError(
@@ -81,7 +82,8 @@ export function prepareConcernLines(
     const opcode = op?.opcode ?? "";
     if (typeof line.hours === "number") {
       if (!Number.isFinite(line.hours) || laborLineError([{ laborOpId, hours: line.hours }], laborOps)) {
-        return { ...line, laborOpId, hours: line.hours };
+        const { hours: _illegal, ...rest } = line;
+        return { ...rest, laborOpId };
       }
       return { ...line, laborOpId, hours: roundLaborHours(line.hours) };
     }

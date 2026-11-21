@@ -72,7 +72,7 @@ describe("labor ops on each concern line", () => {
     assert.equal(clampLaborHours("BRKF", 0.04), 0.1);
     assert.equal(minutesFromLineHours([{ hours: 1 }, { hours: 2.3 }]), 198);
     assert.equal(minutesFromLineHours([{ hours: 4.1 }]), 246);
-    assert.equal(minutesFromLineHours([{ hours: 1 }, {}]), null);
+    assert.equal(minutesFromLineHours([{ hours: 1 }, {}]), 60);
     const store = shop();
     const misc = store.getState().laborOps.find((op) => op.opcode === "MISC");
     const brake = store.getState().laborOps.find((op) => op.opcode === "BRKF");

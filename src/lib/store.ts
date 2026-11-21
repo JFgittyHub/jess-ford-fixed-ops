@@ -3427,7 +3427,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
         );
         if (staffError) return { ok: false, error: staffError };
-        const editKeys = ["time", "date", "techId", "advisorId", "customerId", "concern", "lines", "vin", "minutes", "vehicleId", "lane", "laborOpIds"] as const;
+        const editKeys = ["time", "date", "techId", "advisorId", "customerId", "concern", "lines", "vin", "minutes", "vehicleId", "lane", "laborOpIds", "lengthOverrideMinutes"] as const;
         const editsSomething = editKeys.some((key) => patch[key] !== undefined);
         const statusChange = Boolean(patch.status && patch.status !== current.status);
         if ((editsSomething || statusChange) && (!namedActor(state) || !rosterEditor(state))) {
@@ -3442,12 +3442,30 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           return { ok: false, error: PAST_STATUS_ONLY };
         }
         if (ownStoreError(state)) return { ok: false, error: ownStoreError(state) };
-        const scheduleChanged = (patch.date !== undefined && patch.date !== current.date)
-          || (patch.time !== undefined && patch.time !== current.time)
-          || (typeof patch.minutes === "number" && patch.minutes !== current.minutes);
+        if (patch.lengthOverrideMinutes != null) {
+          const overrideError = visitLengthError(patch.lengthOverrideMinutes);
+          if (overrideError) return { ok: false, error: overrideError };
+        }
+        const lineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines) : null;
+        const explicitOverride = patch.lengthOverrideMinutes === null
+          ? null
+          : typeof patch.lengthOverrideMinutes === "number"
+            ? patch.lengthOverrideMinutes
+            : (typeof current.lengthOverrideMinutes === "number" ? current.lengthOverrideMinutes : null);
         const effectiveDate = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
         const effectiveTime = patch.time !== undefined ? patch.time : current.time;
-        const effectiveMinutes = typeof patch.minutes === "number" ? patch.minutes : current.minutes;
+        const effectiveMinutes = typeof explicitOverride === "number"
+          ? explicitOverride
+          : lineMinutes !== null
+            ? lineMinutes
+            : typeof patch.minutes === "number"
+              ? patch.minutes
+              : current.minutes;
+        const touchesLength = Array.isArray(patch.lines) || typeof patch.minutes === "number" || patch.lengthOverrideMinutes !== undefined;
+        if (touchesLength && visitLengthError(effectiveMinutes)) {
+          return { ok: false, error: visitLengthError(effectiveMinutes) ?? "That length is not on this desk." };
+        }
+        const scheduleChanged = effectiveDate !== current.date || effectiveTime !== current.time || effectiveMinutes !== current.minutes;
         if (scheduleChanged && current.date >= today()) {
           const timeError = visitTimeError(state.settings.scheduling, effectiveDate, effectiveTime);
           if (timeError) return { ok: false, error: timeError };
@@ -3488,19 +3506,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           appointments: state.appointments
             .map((row) => {
               if (row.id !== id) return row;
-              const sized = minutesFromLineHours(Array.isArray(patch.lines) ? patch.lines : row.lines);
-              const keptOverride = typeof patch.lengthOverrideMinutes === "number"
-                ? patch.lengthOverrideMinutes
-                : patch.lengthOverrideMinutes === null
-                  ? null
-                  : row.lengthOverrideMinutes;
-              const minutes = typeof keptOverride === "number"
-                ? keptOverride
-                : typeof patch.minutes === "number" && !visitLengthError(patch.minutes)
-                  ? patch.minutes
-                  : sized !== null && Array.isArray(patch.lines)
-                    ? sized
-                    : row.minutes;
+              const keptOverride = explicitOverride;
+              const minutes = effectiveMinutes;
               const time = patch.time && /^\d{2}:(00|30)$/.test(patch.time) ? patch.time : row.time;
               const date = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : row.date;
               const concernOnly = typeof patch.concern === "string" && !(Array.isArray(patch.lines) && patch.lines.length > 0)
@@ -3589,6 +3596,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!owned || owned.customerId !== input.customerId) return "";
         if (appointmentDateError(input.date || "", state.settings.scheduling)) return "";
         if (ownStoreError(state)) return "";
+        if (staffBlockMessage(
+          state.techs.some((tech) => tech.id === input.techId),
+          state.advisors.some((advisor) => advisor.id === input.advisorId),
+        )) return "";
+        if (input.lengthOverrideMinutes != null && visitLengthError(input.lengthOverrideMinutes)) return "";
         const prepared = storedLaborLines(input.lines ?? [], state.laborOps);
         if (!prepared.ok) return "";
         input = { ...input, lines: prepared.lines };

@@ -908,7 +908,7 @@ export function AppointmentFields({
   const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes: visitMinutes, advisorId, techId, laborOpIds, laborHours: drivenMinutes !== null || blockOverride !== null ? visitMinutes / 60 : undefined }) ?? { blocked: null, warning: null };
   const openStarts = scheduling ? STARTS.filter((item) => visitTimeError(scheduling, date, item) === null) : STARTS;
   const gridStarts = !scheduling ? STARTS : manager ? openStarts : fittingStartTimes(scheduling, date, visitMinutes, STARTS);
-  const starts = gridStarts.includes(time) || pastVisit || !manager ? (gridStarts.includes(time) || pastVisit ? gridStarts : [time, ...gridStarts]) : gridStarts;
+  const starts = gridStarts.includes(time) || (pastVisit && time) ? (gridStarts.includes(time) ? gridStarts : [time, ...gridStarts]) : gridStarts;
   const clock = shopMinutes(now());
   const pastToday = !pastVisit && date === clock.date && time < `${String(Math.floor(clock.minutes / 60)).padStart(2, "0")}:${String(clock.minutes % 60).padStart(2, "0")}`;
   const matches = filterDeskCustomers(customers, vehicles, customerQuery);

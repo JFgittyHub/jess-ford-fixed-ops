@@ -2667,6 +2667,39 @@ describe("round 26 copy follows the person", () => {
 });
 
 describe("round 26 copy bar stays under the header", () => {
+  it("keeps the desk header the same height when the copied bar is up", async () => {
+    const bare = await scheduleShellHtml();
+    const copied = await copiedScheduleHtml();
+    const css = await appCss(`${bare.page}${copied.html}`);
+    const browser = await chromium.launch({ headless: true });
+    const widths = [1280, 1024, 768, 390] as const;
+    const measured: Record<string, { bare: number; withBar: number; barRemoved: number; bar: number }> = {};
+    try {
+      const page = await browser.newPage();
+      for (const width of widths) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${bare.page}</body></html>`);
+        const bareHeight = await page.evaluate(() => Math.round(document.querySelector("header.app-header")?.getBoundingClientRect().height ?? 0));
+        await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body style="margin:0">${copied.html}</body></html>`);
+        await page.evaluate((style) => document.documentElement.setAttribute("style", style), copied.rootStyle);
+        const row = await page.evaluate(() => {
+          const header = document.querySelector("header.app-header");
+          const bar = document.querySelector("[data-copy-bar]");
+          const withBar = Math.round(header?.getBoundingClientRect().height ?? 0);
+          const barHeight = Math.round(bar?.getBoundingClientRect().height ?? 0);
+          bar?.remove();
+          const barRemoved = Math.round(document.querySelector("header.app-header")?.getBoundingClientRect().height ?? 0);
+          return { withBar, barRemoved, bar: barHeight };
+        });
+        measured[String(width)] = { bare: bareHeight, ...row };
+        assert.ok(Math.abs(row.withBar - row.barRemoved) <= 2, `${width} header changed from ${row.barRemoved} to ${row.withBar} because of the copied bar`);
+      }
+    } finally {
+      await browser.close();
+    }
+    console.log(`header-heights ${JSON.stringify(measured)}`);
+  });
+
   it("keeps the copied line and a dismissible refusal below the desk header", async () => {
     const shell = await scheduleShellHtml();
     const header = shell.header;
@@ -3231,6 +3264,26 @@ describe("round 26 live scroll anchoring", () => {
       assert.ok(await waitForSelector(page, "[data-appt]", 20000), "no visit to copy");
       await page.locator("[aria-label='Working as']").selectOption("megan");
       await page.locator("[data-appt]").first().click({ button: "right" });
+      const copyCenter = await page.evaluate(() => {
+        const button = document.querySelector("[data-copy]");
+        const rect = button?.getBoundingClientRect();
+        if (!rect) return { open: false, offset: -1, center: 0, height: window.innerHeight };
+        const y = rect.top + rect.height / 2;
+        const x = rect.left + rect.width / 2;
+        let offset = -1;
+        for (const node of document.elementsFromPoint(x, y)) {
+          if (!(node instanceof Element) || node.closest("[data-context-menu]")) continue;
+          const column = node.closest("[data-tech]");
+          if (!column) continue;
+          const rel = y - column.getBoundingClientRect().top;
+          offset = rel - Math.floor(rel / 32) * 32;
+          break;
+        }
+        return { open: true, offset, center: y, height: window.innerHeight };
+      });
+      assert.equal(copyCenter.open, true, "Copy did not open");
+      assert.ok(copyCenter.center > 0 && copyCenter.center < copyCenter.height, `Copy center is off the screen at ${copyCenter.center}`);
+      assert.ok(copyCenter.offset >= 10 && copyCenter.offset <= 22, `Copy center is ${copyCenter.offset}px into the row`);
       await page.locator("[data-copy]").click();
       assert.ok(await waitForSelector(page, "[data-copied]"), "the copied line did not appear");
       for (let step = 0; step < 6 && !/\bFri\b/.test(await page.locator("[data-desk-heading] h1").innerText()); step += 1) {
@@ -3390,6 +3443,18 @@ describe("round 26 live scroll anchoring", () => {
       });
       assert.equal(nudged.menu, 0, `a 6 px scroll left Paste open ${JSON.stringify(nudged)}`);
       assert.equal(await page.locator("[data-appt]").count(), beforeNudge);
+      const columnTarget = await pressInHours(page);
+      assert.ok(columnTarget, "no slot for the column scroll");
+      await page.clock.fastForward(2000);
+      await releaseHold(page, columnTarget);
+      assert.equal(await page.locator("[data-paste]").count(), 1, "Paste did not open before the column scroll");
+      const columnNudge = await page.evaluate(() => {
+        window.scrollBy(0, 6);
+        document.querySelector("[data-tech]")?.dispatchEvent(new Event("scroll", { bubbles: true }));
+        return document.querySelectorAll("[data-context-menu]").length;
+      });
+      assert.equal(columnNudge, 0, "a 6 px scroll aimed at a column left Paste open");
+      assert.equal(await page.locator("[data-appt]").count(), beforeNudge, "the column scroll wrote a visit");
 
       await raiseOutsideNotice(page);
       const fine = await page.evaluate(() => {
