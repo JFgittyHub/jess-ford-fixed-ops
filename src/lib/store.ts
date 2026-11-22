@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, type CapacityResult } from "./capacity";
-import { blockMinutes, minutesFromLineHours, roundLaborHours, storedLaborLines } from "./labor-lines";
+import { blockMinutes, minutesFromLineHours, roundLaborHours, snapBlockMinutes, storedLaborLines } from "./labor-lines";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
 import { now } from "./clock";
@@ -3330,7 +3330,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (pastClose && deskActor(state) !== "service-manager") return { ok: false, error: PAST_CLOSE_MESSAGE };
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return { ok: false, error: PAST_CLOSE_REASON, needsCloseReason: true };
-        const lineBlock = minutesFromLineHours(current.lines);
+        const rawLineBlock = minutesFromLineHours(current.lines);
+        const lineBlock = rawLineBlock !== null ? snapBlockMinutes(rawLineBlock) : null;
         const useBlock = minutes !== current.minutes || typeof current.lengthOverrideMinutes === "number" || lineBlock !== null;
         const capacity = assessAppointment({
           scheduling: state.settings.scheduling,
@@ -3422,6 +3423,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const dateError = appointmentDateError(patch.date, state.settings.scheduling);
           if (dateError) return { ok: false, error: dateError };
         }
+        if (patch.advisorId === "") return { ok: false, error: "Choose an advisor." };
         const staffError = staffBlockMessage(
           state.techs.some((tech) => tech.id === (patch.techId || current.techId)),
           state.advisors.some((advisor) => advisor.id === (patch.advisorId || current.advisorId)),
@@ -3446,7 +3448,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const overrideError = visitLengthError(patch.lengthOverrideMinutes);
           if (overrideError) return { ok: false, error: overrideError };
         }
-        const lineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines) : null;
+        const rawLineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines.filter((line) => line.laborOpId)) : null;
+        const lineMinutes = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
         const explicitOverride = patch.lengthOverrideMinutes === null
           ? null
           : typeof patch.lengthOverrideMinutes === "number"
@@ -3478,6 +3481,24 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (pastClose && !closeNote) {
           return { ok: false, error: PAST_CLOSE_REASON, needsCloseReason: true };
         }
+        const judged = assessAppointment({
+          scheduling: state.settings.scheduling,
+          advisors: state.advisors,
+          techs: state.techs,
+          appointments: state.appointments,
+          laborOps: state.laborOps,
+          proposal: {
+            date: effectiveDate,
+            time: effectiveTime,
+            minutes: effectiveMinutes,
+            advisorId: patch.advisorId || current.advisorId,
+            techId: patch.techId || current.techId,
+            laborOpIds: Array.isArray(patch.laborOpIds) ? patch.laborOpIds : current.laborOpIds ?? [],
+            laborHours: typeof explicitOverride === "number" || lineMinutes !== null ? effectiveMinutes / 60 : undefined,
+            ignoreId: id,
+          },
+        });
+        if (judged.blocked) return { ok: false, error: judged.blocked };
         const nextCustomerId = patch.customerId || current.customerId;
         const nextVehicleId = patch.vehicleId || current.vehicleId;
         if ((patch.customerId && patch.customerId !== current.customerId) || (patch.vehicleId && patch.vehicleId !== current.vehicleId)) {
@@ -3586,7 +3607,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           techId: patch.techId || current.techId,
           advisorId: patch.advisorId || current.advisorId,
         }, closeNote) : null;
-        return { ok: true, error: null, overrideId: closeOverride };
+        const capacityOverride = judged.warning ? logOverride(judged, id, {
+          customerId: current.customerId,
+          date: effectiveDate,
+          time: effectiveTime,
+          techId: patch.techId || current.techId,
+          advisorId: patch.advisorId || current.advisorId,
+        }) : null;
+        return { ok: true, error: null, overrideId: closeOverride ?? capacityOverride };
       },
       addAppointment: (input, id, closeReason) => {
         const state = get();
@@ -3713,7 +3741,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const storedLines = storedLaborLines(input.lines ?? [], state.laborOps);
         if (!storedLines.ok) return { ok: false, appointmentId: "", overrideId: null, error: storedLines.error };
-        const sized = minutesFromLineHours(storedLines.lines);
+        const rawSized = minutesFromLineHours(storedLines.lines.filter((line) => line.laborOpId));
+        const sized = rawSized !== null ? snapBlockMinutes(rawSized) : null;
         const override = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes)
           ? input.lengthOverrideMinutes
           : null;
@@ -3844,7 +3873,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const message = error instanceof Error && error.message && !error.message.startsWith("probe:") ? error.message : "That appointment could not be saved.";
           return { ok: false, appointmentId: existingId ?? "", overrideId: null, error: message };
         }
-        const overrideId = result ? logOverride(result, appointmentId, input) : null;
+        const overrideId = existingId ? null : (result ? logOverride(result, appointmentId, input) : null);
         const closeOverride = pastClose
           ? [...(get().overrides ?? [])].reverse().find((row) => row.appointmentId === appointmentId && row.reason === "past-close")?.id ?? null
           : null;
@@ -3873,7 +3902,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (Array.isArray(input.lines) && !input.lines.some((line) => line.concern.trim()) && !input.concern?.trim()) return fail("Add a concern.");
         const preparedLines = storedLaborLines(input.lines ?? [], state.laborOps);
         if (!preparedLines.ok) return fail(preparedLines.error);
-        const newSized = minutesFromLineHours(preparedLines.lines);
+        const rawNew = minutesFromLineHours(preparedLines.lines);
+        const newSized = rawNew !== null ? snapBlockMinutes(rawNew) : null;
         const newOverride = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes) ? input.lengthOverrideMinutes : null;
         const minutes = newOverride ?? newSized ?? input.minutes;
         const laborOpIds = preparedLines.lines.some((line) => line.laborOpId)

@@ -83,7 +83,7 @@ describe("round 23 drag override and hour checks", () => {
     assert.equal(saved.ok, true, saved.error ?? "");
     const row = store.getState().appointments.find((item) => item.id === saved.appointmentId);
     assert.ok(row);
-    assert.equal(row.minutes, 246);
+    assert.equal(row.minutes, 270);
     assert.equal(row.lines[0]?.hours, 4.1);
     const dragged = store.getState().moveAppointment(row.id, { minutes: 240, time: "08:00" });
     assert.equal(dragged.ok, true, dragged.error ?? "");
@@ -175,7 +175,7 @@ describe("round 23 drag override and hour checks", () => {
     assert.equal(rounded.ok, true, rounded.error ?? "");
     const row = store.getState().appointments.find((item) => item.id === rounded.appointmentId);
     assert.equal(row?.lines[0]?.hours, 1.3);
-    assert.equal(row?.minutes, 78);
+    assert.equal(row?.minutes, 90);
     const added = store.getState().addAppointment({
       date: friday,
       time: "10:00",

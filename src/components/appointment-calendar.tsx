@@ -950,6 +950,14 @@ export function AppointmentCalendar({
                         <span className="pointer-events-none text-[8px] leading-none">?</span>
                       </button>
                     </div>
+                    <button
+                      type="button"
+                      aria-label="Change length"
+                      data-resize-pad
+                      className="absolute cursor-ns-resize border-0 bg-transparent p-0"
+                      style={{ position: "absolute", left: 4, right: gutter, top: "100%", height: 24, zIndex: 1 }}
+                      onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
+                    />
                   </article>
                 );
               })}

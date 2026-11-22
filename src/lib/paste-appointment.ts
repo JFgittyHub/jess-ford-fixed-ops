@@ -162,7 +162,8 @@ export function commitPaste(
   if (!advisorId) {
     return { ok: false, error: "That advisor isn't on this store.", appointmentId: "", overrideId: null };
   }
-  const booked = { ...input, advisorId };
+  const length = blockMinutes(input);
+  const booked = { ...input, advisorId, minutes: length ?? input.minutes };
   const pastClose = visitRunsPastClose(state.settings.scheduling, booked.date, booked.time, booked.minutes);
   if (pastClose && deskActor(state) !== "service-manager") {
     return { ok: false, error: PAST_CLOSE_MESSAGE, appointmentId: "", overrideId: null };
@@ -184,7 +185,7 @@ export function commitPaste(
       advisorId: booked.advisorId,
       techId: booked.techId,
       laborOpIds: booked.laborOpIds ?? [],
-      laborHours: blockMinutes(booked) !== null && (typeof booked.lengthOverrideMinutes === "number" || minutesFromLineHours(booked.lines) !== null)
+      laborHours: length !== null && (typeof booked.lengthOverrideMinutes === "number" || minutesFromLineHours(booked.lines) !== null)
         ? booked.minutes / 60
         : undefined,
     },

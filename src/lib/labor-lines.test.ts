@@ -88,7 +88,7 @@ describe("labor ops on each concern line", () => {
     });
     assert.equal(both.ok, true, both.error ?? "");
     const row = store.getState().appointments.find((item) => item.id === both.appointmentId);
-    assert.equal(row?.minutes, 198);
+    assert.equal(row?.minutes, 210);
     assert.deepEqual(row?.lines.map((line) => line.hours), [2.3, 1]);
     assert.equal(row?.laborOpIds.length, 2);
   });
@@ -261,7 +261,7 @@ describe("labor ops on each concern line", () => {
     assert.ok(brake);
     flushSync(() => setControl(op, brake.id));
     assert.equal(hours.value, "2.3");
-    assert.equal(length.value, "138");
+    assert.equal(length.value, "150");
     const add = [...host.querySelectorAll("button")].find((button) => button.textContent === "Add line");
     assert.ok(add);
     flushSync(() => add.click());
@@ -270,12 +270,12 @@ describe("labor ops on each concern line", () => {
     flushSync(() => setControl(lineB!, "0.5"));
     assert.equal(lineB?.value, "1");
     assert.match(host.textContent ?? "", /at least 1\.0 hr/);
-    assert.equal(length.value, "198");
+    assert.equal(length.value, "210");
     const removes = [...host.querySelectorAll("button")].filter((button) => button.textContent === "Remove");
     assert.ok(removes.length > 1);
     flushSync(() => removes[removes.length - 1].click());
     assert.equal(host.querySelector("[aria-label='Hours for line B']"), null);
-    assert.equal(length.value, "138");
+    assert.equal(length.value, "150");
     flushSync(() => root.unmount());
     host.remove();
   });

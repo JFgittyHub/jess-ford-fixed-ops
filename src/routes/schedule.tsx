@@ -17,7 +17,7 @@ import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
 import { formatVisit, snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
-import { clampLaborHours, DEMO_MISC_OPCODE, minutesFromLineHours } from "@/lib/labor-lines";
+import { clampLaborHours, DEMO_MISC_OPCODE, minutesFromLineHours, snapBlockMinutes } from "@/lib/labor-lines";
 import { lookups } from "@/lib/metrics";
 import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
@@ -870,7 +870,9 @@ export function AppointmentFields({
   const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern, laborOpId: miscOp?.id ?? "", hours: 1 }]);
   const [vin, setVin] = useState(initial.vin);
   const [storedOpIds] = useState(initial.laborOpIds ?? []);
-  const drivenMinutes = minutesFromLineHours(lines);
+  const rawLineMinutes = minutesFromLineHours(lines.filter((line) => line.laborOpId));
+  const drivenMinutes = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
+  const oplessLine = lines.some((line) => line.concern.trim() && !line.laborOpId && typeof line.hours === "number");
   const lineOpIds = lines.length > 0 && lines.every((line) => line.laborOpId)
     ? lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
     : null;
@@ -925,6 +927,10 @@ export function AppointmentFields({
         event.preventDefault();
         if (!advisorId) {
           setFormError("Choose an advisor.");
+          return;
+        }
+        if (runsPastClose && lines.some((line) => line.concern.trim() && !line.laborOpId && typeof line.hours === "number")) {
+          setFormError("Each concern line needs a labor op.");
           return;
         }
         if (capacity.blocked) {
@@ -1004,7 +1010,7 @@ export function AppointmentFields({
         <Field label="Length">
           <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || drivenMinutes !== null || blockOverride !== null} onChange={setMinutes} />
           {blockOverride !== null && drivenMinutes !== null && blockOverride !== drivenMinutes ? (
-            <p data-length-compare className="text-sm text-muted">Labor hours {flagHours(drivenMinutes / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
+            <p data-length-compare className="text-sm text-muted">Labor hours {flagHours((rawLineMinutes ?? drivenMinutes) / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
           ) : drivenMinutes !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
         </Field>
         <Field label="Lane">
@@ -1158,6 +1164,7 @@ export function AppointmentFields({
                   <option value="">Choose a labor op</option>
                   {laborOps.map((op) => <option key={op.id} value={op.id}>{op.opcode} · {op.description} · {op.hours} hr</option>)}
                 </select>
+                {line.concern.trim() && !line.laborOpId && typeof line.hours === "number" ? <p data-line-error className="text-sm text-[#8a3b2a]">Choose a labor op.</p> : null}
               </Field>
               <Field label="Hours">
                 <input
@@ -1211,8 +1218,8 @@ export function AppointmentFields({
       ) : null}
       {alertText ? <p role="alert" className="text-sm text-[#8a3b2a]">{alertText}</p> : null}
       {pastToday ? <p role="status" className="text-sm text-[#8a5a00]">{PAST_TODAY_MESSAGE}</p> : null}
-      {runsPastClose && !manager ? <p role="alert" className="text-sm text-[#8a3b2a]">{PAST_CLOSE_MESSAGE}</p> : null}
-      {runsPastClose && manager ? (
+      {runsPastClose && !oplessLine && !manager ? <p role="alert" className="text-sm text-[#8a3b2a]">{PAST_CLOSE_MESSAGE}</p> : null}
+      {runsPastClose && !oplessLine && manager ? (
         <Field label="Reason for running past close">
           <input className="field" aria-label="Reason for running past close" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} />
         </Field>

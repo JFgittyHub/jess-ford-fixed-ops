@@ -3866,12 +3866,35 @@ describe("round 26 live scroll anchoring", () => {
           cards.sort((a, b) => a.getBoundingClientRect().height - b.getBoundingClientRect().height);
           const card = cards[0];
           if (!card) return false;
+          const before = card.getBoundingClientRect();
+          const target = Math.min(Math.max(120, window.innerHeight / 2), window.innerHeight - 80);
+          window.scrollBy({ top: before.top + 8 - target, left: 0, behavior: "instant" });
           const rect = card.getBoundingClientRect();
           card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: rect.left + 12, clientY: rect.top + 8, button: 2 }));
           return true;
         });
         assert.ok(copied, `${person} has no card to copy`);
-        await page.locator("[data-copy]").click();
+        const menuCenter = await page.evaluate(() => {
+          const button = document.querySelector("[data-copy]");
+          const rect = button?.getBoundingClientRect();
+          if (!rect) return { open: false, offset: -1, center: 0, height: window.innerHeight };
+          const y = rect.top + rect.height / 2;
+          const x = rect.left + rect.width / 2;
+          let offset = -1;
+          for (const node of document.elementsFromPoint(x, y)) {
+            if (!(node instanceof Element) || node.closest("[data-context-menu]")) continue;
+            const column = node.closest("[data-tech]");
+            if (!column) continue;
+            const rel = y - column.getBoundingClientRect().top;
+            offset = rel - Math.floor(rel / 32) * 32;
+            break;
+          }
+          return { open: true, offset, center: y, height: window.innerHeight };
+        });
+        assert.equal(menuCenter.open, true, `${person} Copy did not open`);
+        assert.ok(menuCenter.center > 0 && menuCenter.center < menuCenter.height, `${person} Copy center is off the screen at ${menuCenter.center}`);
+        assert.ok(menuCenter.offset >= 10 && menuCenter.offset <= 22, `${person} Copy center is ${menuCenter.offset}px into the row`);
+        await page.evaluate(() => document.querySelector<HTMLButtonElement>("[data-copy]")?.click());
         assert.ok(await waitForSelector(page, "[data-copied]"), "the copied line did not appear");
         for (let step = 0; step < 8 && !/\bFri\b/.test(await page.locator("[data-desk-heading] h1").innerText()); step += 1) {
           await page.getByRole("button", { name: "Next", exact: true }).click();

@@ -1,5 +1,5 @@
 import { addDays, daysBetween, now } from "./clock";
-import { minutesFromLineHours } from "./labor-lines";
+import { minutesFromLineHours, snapBlockMinutes } from "./labor-lines";
 import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } from "./types";
 
 /**
@@ -70,14 +70,16 @@ export function appointmentLoads(
 ): CapacityLoad[] {
   return appointments.map((row) => {
     const fromLines = minutesFromLineHours(row.lines ?? []);
-    const block = typeof row.lengthOverrideMinutes === "number" ? row.lengthOverrideMinutes : fromLines;
+    const override = typeof row.lengthOverrideMinutes === "number" && Number.isFinite(row.lengthOverrideMinutes) ? row.lengthOverrideMinutes : null;
+    const block = override !== null ? override : fromLines !== null ? snapBlockMinutes(fromLines) : null;
+    const minutes = typeof row.minutes === "number" && Number.isFinite(row.minutes) ? row.minutes : 0;
     return {
       id: row.id,
       date: row.date,
       time: row.time,
       advisorId: row.advisorId,
       techId: row.techId,
-      laborHours: block !== null ? round2(block / 60) : laborHoursFor(row.laborOpIds, row.minutes, laborOps),
+      laborHours: block !== null && Number.isFinite(block) ? round2(block / 60) : laborHoursFor(row.laborOpIds, minutes, laborOps),
       counts: row.status !== "no_show" && row.status !== "cancelled",
     };
   });
@@ -421,9 +423,9 @@ export function nextOpenVisit(scheduling: SchedulingSettings, selected: string, 
   return { date: clock.date, time: formatTime(shopDay(scheduling, clock.date).openMinutes || 8 * 60) };
 }
 
-/** At least 30 minutes and under 24 hours. Line hours may land off the 30-minute grid, so 246 (4.1 hr) is allowed. 1440 is refused. */
+/** 30-minute steps, at least 30 minutes and under 24 hours. 31, 45, and 1440 are refused. */
 export function visitLengthError(minutes: unknown): string | null {
-  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440) {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440 || minutes % 30 !== 0) {
     return "That length is not on this desk.";
   }
   return null;

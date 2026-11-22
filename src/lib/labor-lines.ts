@@ -17,11 +17,17 @@ export function clampLaborHours(opcode: string, hours: number): number {
   return Math.max(MIN_LINE_HOURS, value);
 }
 
-/** Exact minutes for the lines that have hours. A concern-only line does not wipe the total. 4.1 hr is 246 min. */
+/** Exact minutes for the lines that have hours. A concern-only line does not wipe the total. 4.1 hr is 246 min before the block is rounded. */
 export function minutesFromLineHours(lines: { hours?: number }[]): number | null {
   const numbered = lines.filter((line) => typeof line.hours === "number" && Number.isFinite(line.hours));
   if (!numbered.length) return null;
   return Math.round(numbered.reduce((sum, line) => sum + (line.hours ?? 0), 0) * 60);
+}
+
+/** Calendar blocks sit on the 30-minute grid. A 246-minute line total becomes a 270-minute block. */
+export function snapBlockMinutes(minutes: number): number {
+  if (!Number.isFinite(minutes)) return minutes;
+  return Math.ceil((minutes - 1e-9) / 30) * 30;
 }
 
 export function laborLineError(
@@ -60,11 +66,11 @@ export function storedLaborLines(
   };
 }
 
-/** Block length the calendar and the booking rules use. A drag override wins over the line total. */
-export function blockMinutes(input: { minutes?: number; lengthOverrideMinutes?: number | null; lines?: { hours?: number }[] }): number | null {
+/** Block length the calendar and the booking rules use. A drag override wins. A line total rounds up to 30 minutes. */
+export function blockMinutes(input: { minutes?: number; lengthOverrideMinutes?: number | null; lines?: { hours?: number; laborOpId?: string }[] }): number | null {
   if (typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes)) return input.lengthOverrideMinutes;
   const fromLines = minutesFromLineHours(input.lines ?? []);
-  if (fromLines !== null) return fromLines;
+  if (fromLines !== null) return snapBlockMinutes(fromLines);
   return typeof input.minutes === "number" && Number.isFinite(input.minutes) ? input.minutes : null;
 }
 
