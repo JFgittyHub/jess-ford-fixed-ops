@@ -223,8 +223,8 @@ describe("round 25 block length", () => {
     const pad = host.querySelector<HTMLElement>("[data-resize-pad]");
     const concern = host.querySelector<HTMLElement>("[data-concern]");
     assert.ok(pad);
+    assert.equal(pad.closest("[data-appt]"), null);
     assert.equal(pad.style.height, "24px");
-    assert.equal(pad.style.top, "100%");
     const pointer = window.PointerEvent;
     pad.dispatchEvent(new pointer("pointerdown", { bubbles: true, button: 0, pointerId: 3, pointerType: "touch", isPrimary: true, clientX: 40, clientY: 200 }));
     window.dispatchEvent(new pointer("pointermove", { bubbles: true, button: 0, pointerId: 3, pointerType: "touch", isPrimary: true, clientX: 40, clientY: 232 }));

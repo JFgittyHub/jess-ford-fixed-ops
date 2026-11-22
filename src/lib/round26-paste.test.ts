@@ -3308,7 +3308,7 @@ describe("round 26 live scroll anchoring", () => {
           const x = rect.left + Math.min(36, rect.width / 2);
           if (y < 80 || y > window.innerHeight - 20) continue;
           const hit = document.elementFromPoint(x, y);
-          if (hit?.closest("[data-appt], [data-copy-bar], header")) continue;
+          if (hit?.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]")) continue;
           return { x, y };
         }
         return null;
@@ -3408,7 +3408,7 @@ describe("round 26 live scroll anchoring", () => {
         const y = next.top + 11 * 32 - 3;
         const x = Math.min(window.innerWidth - 12, Math.max(12, next.left + 24));
         const hit = document.elementFromPoint(x, y);
-        const onColumn = Boolean(hit?.closest("[data-tech]")) && !hit?.closest("[data-appt], [data-copy-bar], header");
+        const onColumn = Boolean(hit?.closest("[data-tech]")) && !hit?.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]");
         if (onColumn && hit) {
           hit.dispatchEvent(new PointerEvent("pointerdown", {
             bubbles: true, cancelable: true, clientX: x, clientY: y,
@@ -3583,7 +3583,7 @@ describe("round 26 live scroll anchoring", () => {
               if (y < 0 || y > window.innerHeight - 1) continue;
               const hit = document.elementFromPoint(x, y);
               last = `${Math.round(x)},${Math.round(y)} ${hit ? hit.tagName : "none"} bar ${Math.round(bar)}`;
-              if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+              if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]")) continue;
               hit.dispatchEvent(new PointerEvent("pointerdown", {
                 bubbles: true, cancelable: true, clientX: x, clientY: y,
                 button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
@@ -3696,7 +3696,7 @@ describe("round 26 live scroll anchoring", () => {
           const y = rect.top + 6 * 32 + 30;
           if (y < 0 || y > window.innerHeight - 1) continue;
           const hit = document.elementFromPoint(x, y);
-          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]")) continue;
           hit.dispatchEvent(new PointerEvent("pointerdown", {
             bubbles: true, cancelable: true, clientX: x, clientY: y,
             button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
@@ -3753,7 +3753,7 @@ describe("round 26 live scroll anchoring", () => {
           const x = Math.max(rect.left, 8) + 16;
           const y = rect.top + 4 * 32 + 30;
           const hit = document.elementFromPoint(x, y);
-          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]")) continue;
           hit.dispatchEvent(new PointerEvent("pointerdown", {
             bubbles: true, cancelable: true, clientX: x, clientY: y,
             button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
@@ -3814,7 +3814,7 @@ describe("round 26 live scroll anchoring", () => {
           const y = rect.top + 8 * 32 + 2;
           if (y < 0 || y > window.innerHeight - 1) continue;
           const hit = document.elementFromPoint(x, y);
-          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+          if (!hit?.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]")) continue;
           hit.dispatchEvent(new PointerEvent("pointerdown", {
             bubbles: true, cancelable: true, clientX: x, clientY: y,
             button: 0, buttons: 1, pointerId: 7, pointerType: "mouse", isPrimary: true,
@@ -4076,7 +4076,7 @@ async function raiseOutsideNotice(page: Page) {
       const x = visibleLeft + 20;
       if (y < 80 || y > window.innerHeight - 20) continue;
       const hit = document.elementFromPoint(x, y);
-      if (!hit || !hit.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header")) continue;
+      if (!hit || !hit.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-resize-pad]")) continue;
       hit.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 2 }));
       return { x, y };
     }
@@ -4132,7 +4132,7 @@ async function pressInHours(page: Page, pointerType: "mouse" | "touch" = "mouse"
         const time = `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
         if (time > latest) continue;
         const hit = document.elementFromPoint(x, y);
-        if (!hit || !hit.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-context-menu]")) continue;
+        if (!hit || !hit.closest("[data-tech]") || hit.closest("[data-appt], [data-copy-bar], header, [data-resize-pad], [data-context-menu]")) continue;
         hit.dispatchEvent(new PointerEvent("pointerdown", {
           bubbles: true, cancelable: true, clientX: x, clientY: y,
           button: 0, buttons: 1, pointerId: 7, pointerType, isPrimary: true,

@@ -27,6 +27,9 @@ import { applyPartStock, bookRepairOrder, closeRepairOrder, closeRepairOrderWith
 import { closedRecord, orderMoney, vehicleTitle } from "./metrics";
 import type { Advisor, Appointment, AppointmentCancel, BookingWindow, Campaign, CancelReason, ClosedRecord, CloseSnapshot, Customer, DatedAuthorization, DayHours, ExpenseTxn, FeeLine, LaborLine, LaborOp, OnlineService, OverrideReason, OverrideRecord, OwnershipChange, PartLine, PartSku, PayKind, RepairOrder, RequestAction, RoCloseType, RoHistoryEntry, RoPayment, RoStatus, RoleChange, ServiceManager, SettingsChange, ShopData, StoreId, Tech, TechBoard, Vehicle, WeekdayIndex } from "./types";
 
+/** Desk save already judged capacity and will record the override. A direct add does not carry this token. */
+const AUDITED_ADD = Symbol("audited-add");
+
 export interface NewOrderInput {
   customerId: string;
   vehicleId: string;
@@ -139,7 +142,7 @@ interface ShopActions {
   setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => { ok: boolean; error: string | null };
   moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>, confirmOverride?: boolean, closeReason?: string) => { ok: boolean; error: string | null; warning?: string | null; needsOverride?: boolean; needsCloseReason?: boolean; overrideId?: string | null };
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>, closeReason?: string) => { ok: boolean; error: string | null; needsCloseReason?: boolean; overrideId?: string | null };
-  addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string, closeReason?: string) => string;
+  addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string, closeReason?: string, audited?: symbol) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
   saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean };
   saveNewCustomerAppointment: (input: NewCustomerInput & Omit<Appointment, "id" | "orderId" | "customerId" | "vehicleId" | "vin" | "status"> & { plate: string }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => { ok: boolean; appointmentId: string; customerId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean };
@@ -3616,7 +3619,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }) : null;
         return { ok: true, error: null, overrideId: closeOverride ?? capacityOverride };
       },
-      addAppointment: (input, id, closeReason) => {
+      addAppointment: (input, id, closeReason, audited) => {
         const state = get();
         if (foreignField(input, ADD_FIELDS)) return "";
         if (!input.customerId || !state.customers.some((row) => row.id === input.customerId)) return "";
@@ -3635,6 +3638,25 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const finalMinutes = blockMinutes(input) ?? 60;
         if (visitTimeError(state.settings.scheduling, input.date || "", input.time || "")) return "";
         if (visitLengthError(finalMinutes)) return "";
+        const fromLines = minutesFromLineHours(input.lines ?? []);
+        const hasOverride = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes);
+        const judged = assessAppointment({
+          scheduling: state.settings.scheduling,
+          advisors: state.advisors,
+          techs: state.techs,
+          appointments: state.appointments,
+          laborOps: state.laborOps,
+          proposal: {
+            date: input.date || today(),
+            time: input.time,
+            minutes: finalMinutes,
+            advisorId: input.advisorId,
+            techId: input.techId,
+            laborOpIds: input.laborOpIds ?? [],
+            laborHours: hasOverride || fromLines !== null ? finalMinutes / 60 : undefined,
+          },
+        });
+        if (audited !== AUDITED_ADD && (judged.blocked || judged.warning)) return "";
         const pastClose = visitRunsPastClose(state.settings.scheduling, input.date || "", input.time || "", finalMinutes);
         if (pastClose && deskActor(state) !== "service-manager") return "";
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
@@ -3743,9 +3765,13 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!storedLines.ok) return { ok: false, appointmentId: "", overrideId: null, error: storedLines.error };
         const rawSized = minutesFromLineHours(storedLines.lines.filter((line) => line.laborOpId));
         const sized = rawSized !== null ? snapBlockMinutes(rawSized) : null;
-        const override = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes)
-          ? input.lengthOverrideMinutes
-          : null;
+        if (input.lengthOverrideMinutes != null) {
+          const rawOverride = input.lengthOverrideMinutes as unknown;
+          if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) {
+            return { ok: false, appointmentId: "", overrideId: null, error: "That length is not on this desk." };
+          }
+        }
+        const override = typeof input.lengthOverrideMinutes === "number" ? input.lengthOverrideMinutes : null;
         input = {
           ...input,
           lines: storedLines.lines,
@@ -3844,12 +3870,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           customers: state.customers,
           settingsLog: state.settingsLog ?? [],
         };
+        let editedOverride: string | null = null;
         try {
           if (claimState) set(claimState);
           appointmentCommitProbe?.();
           if (existingId) {
             const edited = get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId }, closeNote ?? undefined);
             if (!edited.ok) throw new Error(edited.error ?? "That appointment could not be saved.");
+            editedOverride = edited.overrideId ?? null;
           } else {
             const added = get().addAppointment({
               date: input.date,
@@ -3865,7 +3893,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
               laborOpIds: input.laborOpIds,
               techId: input.techId,
               lane: input.lane,
-            }, appointmentId, closeNote ?? undefined);
+            }, appointmentId, closeNote ?? undefined, AUDITED_ADD);
             if (!added) throw new Error("That appointment could not be saved.");
           }
         } catch (error) {
@@ -3873,7 +3901,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           const message = error instanceof Error && error.message && !error.message.startsWith("probe:") ? error.message : "That appointment could not be saved.";
           return { ok: false, appointmentId: existingId ?? "", overrideId: null, error: message };
         }
-        const overrideId = existingId ? null : (result ? logOverride(result, appointmentId, input) : null);
+        const overrideId = existingId ? editedOverride : (result ? logOverride(result, appointmentId, input) : null);
         const closeOverride = pastClose
           ? [...(get().overrides ?? [])].reverse().find((row) => row.appointmentId === appointmentId && row.reason === "past-close")?.id ?? null
           : null;
@@ -3904,7 +3932,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (!preparedLines.ok) return fail(preparedLines.error);
         const rawNew = minutesFromLineHours(preparedLines.lines);
         const newSized = rawNew !== null ? snapBlockMinutes(rawNew) : null;
-        const newOverride = typeof input.lengthOverrideMinutes === "number" && Number.isFinite(input.lengthOverrideMinutes) ? input.lengthOverrideMinutes : null;
+        if (input.lengthOverrideMinutes != null) {
+          const rawOverride = input.lengthOverrideMinutes as unknown;
+          if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) return fail("That length is not on this desk.");
+        }
+        const newOverride = typeof input.lengthOverrideMinutes === "number" ? input.lengthOverrideMinutes : null;
         const minutes = newOverride ?? newSized ?? input.minutes;
         const laborOpIds = preparedLines.lines.some((line) => line.laborOpId)
           ? preparedLines.lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
@@ -3978,7 +4010,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             lengthOverrideMinutes: newOverride,
             techId: input.techId,
             lane: input.lane,
-          }, appointmentId, closeNote ?? undefined);
+          }, appointmentId, closeNote ?? undefined, AUDITED_ADD);
           if (!added) throw new Error("That appointment could not be saved.");
         } catch (error) {
           set(snapshot);

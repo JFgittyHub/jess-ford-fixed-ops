@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { flushSync } from "react-dom";
 import { Meter } from "@/components/ui";
 import { lengthLabel, today } from "@/lib/format";
@@ -487,6 +487,12 @@ export function AppointmentCalendar({
     setDraft(next);
   }
 
+  function pointOn(event: ReactPointerEvent) {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (box.width < 1 && box.height < 1) return true;
+    return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+  }
+
   function begin(event: ReactPointerEvent, appt: Appointment, mode: "move" | "resize", quiet?: "summary") {
     if (heldPointerId.current !== null && event.pointerId !== heldPointerId.current) {
       event.preventDefault();
@@ -500,7 +506,7 @@ export function AppointmentCalendar({
     const origin = { x: event.clientX, y: event.clientY, time: appt.time, minutes: appt.minutes, techId: appt.techId };
     const column = (event.currentTarget as HTMLElement).closest("[data-tech]") as HTMLElement | null;
     const colWidth = column?.getBoundingClientRect().width ?? 140;
-    mark.setPointerCapture?.(event.pointerId);
+    try { mark.setPointerCapture?.(event.pointerId); } catch { /* a synthetic pointer has no capture */ }
     setHover(null);
     gesture.current = { moved: false, summary: quiet === "summary", x: event.clientX, y: event.clientY };
     const slop = quiet === "summary" ? 16 : 4;
@@ -836,16 +842,17 @@ export function AppointmentCalendar({
                 const titleRight = mark.top < titleBand ? gutter : 6;
                 const concernRight = titleBand + concernHeight > mark.top ? gutter : 6;
                 const tag = laneTag(row.lane);
+                const visit = appointments.find((item) => item.id === row.id) ?? row;
                 return (
+                  <Fragment key={row.id}>
                   <article
-                    key={row.id}
                     data-appt
                     data-appt-id={row.id}
                     data-drag="move"
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
                     data-appt-time={row.time}
                     style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
-                    onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "move")}
+                    onPointerDown={(event) => begin(event, visit, "move")}
                     onContextMenu={(event) => {
                       if (heldPointerActive.current) {
                         event.preventDefault();
@@ -890,7 +897,7 @@ export function AppointmentCalendar({
                         data-drag="resize"
                         className="absolute cursor-ns-resize border-0 p-0"
                         style={{ position: "absolute", left: 4, right: gutter, bottom: 0, height: HANDLE, zIndex: 0, background: selected ? "rgba(1,27,101,0.16)" : "transparent" }}
-                        onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
+                        onPointerDown={(event) => begin(event, visit, pointOn(event) ? "resize" : "move")}
                       >
                         <span className={`pointer-events-none mx-auto mt-1 block h-1 w-10 rounded-full ${selected ? "bg-primary" : "bg-[#5d87b0]"} group-hover:h-1.5`} />
                       </button>
@@ -945,20 +952,26 @@ export function AppointmentCalendar({
                           event.stopPropagation();
                           showHover(row.id, event.currentTarget.getBoundingClientRect());
                         }}
-                        onPointerDown={(event) => { event.stopPropagation(); begin(event, appointments.find((item) => item.id === row.id) ?? row, "move", "summary"); }}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          const card = appointments.find((item) => item.id === row.id) ?? row;
+                          begin(event, card, "move", pointOn(event) ? "summary" : undefined);
+                        }}
                       >
                         <span className="pointer-events-none text-[8px] leading-none">?</span>
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      aria-label="Change length"
-                      data-resize-pad
-                      className="absolute cursor-ns-resize border-0 bg-transparent p-0"
-                      style={{ position: "absolute", left: 4, right: gutter, top: "100%", height: 24, zIndex: 1 }}
-                      onPointerDown={(event) => begin(event, appointments.find((item) => item.id === row.id) ?? row, "resize")}
-                    />
                   </article>
+                  <button
+                    type="button"
+                    aria-label="Change length"
+                    data-resize-pad
+                    data-resize-for={row.id}
+                    className="absolute cursor-ns-resize border-0 bg-transparent p-0"
+                    style={{ position: "absolute", left: 4 + offset * 12, right: 4, top: top + block, height: 24, zIndex: 0 }}
+                    onPointerDown={(event) => begin(event, visit, "resize")}
+                  />
+                  </Fragment>
                 );
               })}
               {nowTop !== null && day === today() ? (

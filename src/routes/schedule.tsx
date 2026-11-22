@@ -1011,6 +1011,8 @@ export function AppointmentFields({
           <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || drivenMinutes !== null || blockOverride !== null} onChange={setMinutes} />
           {blockOverride !== null && drivenMinutes !== null && blockOverride !== drivenMinutes ? (
             <p data-length-compare className="text-sm text-muted">Labor hours {flagHours((rawLineMinutes ?? drivenMinutes) / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
+          ) : rawLineMinutes !== null && drivenMinutes !== null && drivenMinutes > rawLineMinutes ? (
+            <p data-length-compare className="text-sm text-muted">Labor {flagHours(rawLineMinutes / 60)} hr. Calendar block {flagHours(drivenMinutes / 60)} hr (rounded up to the next half hour).</p>
           ) : drivenMinutes !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
         </Field>
         <Field label="Lane">
@@ -1171,7 +1173,7 @@ export function AppointmentFields({
                   className="field"
                   type="number"
                   inputMode="decimal"
-                  step={0.1}
+                  step="any"
                   min={opcode === DEMO_MISC_OPCODE ? 1 : 0.1}
                   aria-label={`Hours for line ${lineLetter(index)}`}
                   disabled={pastVisit}

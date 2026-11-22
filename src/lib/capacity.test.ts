@@ -77,9 +77,11 @@ describe("capacity engine", () => {
     shop.getState().setWorkingAs("derek");
     const before = shop.getState().appointments.length;
     const openDay = bookableDay();
-    shop.getState().addAppointment(draft("10:00", 600, openDay), undefined, "Capacity fixture runs past close");
+    const long = shop.getState().saveAdvisorAppointment({ ...draft("10:00", 600, openDay), status: "scheduled" }, undefined, undefined, undefined, "Capacity fixture runs past close");
+    assert.equal(long.ok, true, long.error ?? "");
     shop.getState().setWorkingAs("megan");
-    shop.getState().addAppointment(draft("10:00", 60, openDay));
+    const second = shop.getState().saveAdvisorAppointment({ ...draft("10:00", 60, openDay), status: "scheduled" });
+    assert.equal(second.ok, true, second.error ?? "");
     assert.equal(shop.getState().appointments.length, before + 2);
     const saved = assessAppointment({
       scheduling: shop.getState().settings.scheduling,
