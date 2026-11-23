@@ -243,12 +243,12 @@ describe("round 26 real touch on a one-row card", () => {
           return cards.some((card) => {
             const rect = card.getBoundingClientRect();
             const time = card.getAttribute("data-appt-time") ?? "";
-            if (rect.height > 34 || time >= "16:00") return false;
+            if (rect.height > 34 || time >= "12:00") return false;
             const hit = document.elementFromPoint(rect.left + 20, rect.bottom + 12);
             return !hit?.closest("[data-appt]");
           });
         });
-        if (!found) await page.getByRole("button", { name: "Previous", exact: true }).click();
+        if (!found) await page.getByRole("button", { name: "Next", exact: true }).click();
       }
       assert.equal(found, true, "no one-row card with an empty slot under it");
 
@@ -257,7 +257,7 @@ describe("round 26 real touch on a one-row card", () => {
         const card = cards.find((item) => {
           const rect = item.getBoundingClientRect();
           const time = item.getAttribute("data-appt-time") ?? "";
-          if (rect.height > 34 || time >= "16:00") return false;
+          if (rect.height > 34 || time >= "12:00") return false;
           const below = document.elementFromPoint(rect.left + 20, rect.bottom + 12);
           return !below?.closest("[data-appt]");
         });
@@ -375,7 +375,12 @@ describe("round 26 real touch on a one-row card", () => {
         await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: spot.x, y: spot.y + 32, id: 1 }] });
         await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
         await client.detach();
-        const grown = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, spot.id);
+        let grown = spot.height;
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          grown = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, spot.id);
+          if (grown >= spot.height + 30) break;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
         assert.ok(grown >= spot.height + 30 && grown <= spot.height + 34, `${width} drag changed the card from ${spot.height} to ${grown}`);
         const back = await page.evaluate((id) => {
           const card = document.querySelector<HTMLElement>(`[data-appt-id="${id}"]`);

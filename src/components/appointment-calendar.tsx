@@ -968,7 +968,7 @@ export function AppointmentCalendar({
                     data-resize-pad
                     data-resize-for={row.id}
                     className="absolute cursor-ns-resize border-0 bg-transparent p-0"
-                    style={{ position: "absolute", left: 4 + offset * 12, right: 4, top: top + block, height: 24, zIndex: 0 }}
+                    style={{ position: "absolute", left: 4 + offset * 12, right: 4, top: top + block, height: 24, zIndex: 0, touchAction: "none" }}
                     onPointerDown={(event) => begin(event, visit, "resize")}
                   />
                   </Fragment>
