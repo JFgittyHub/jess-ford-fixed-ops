@@ -6,7 +6,7 @@ import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { CopyBar, AppointmentFields } from "../routes/schedule.tsx";
-import { advisorBookingNote, advisorDayCapacity, assessAppointment, PAST_CLOSE_MESSAGE } from "./capacity.ts";
+import { advisorBookingNote, advisorDayCapacity, assessAppointment } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import { clampLaborHours, laborLineError, minutesFromLineHours, MISC_MIN_HOURS } from "./labor-lines.ts";
 import { commitPaste, copiedFrom, pasteAppointmentInput } from "./paste-appointment.ts";
@@ -102,7 +102,7 @@ describe("labor ops on each concern line", () => {
       lines: [{ id: "a", code: "A", concern: "Late", laborOpId: misc.id, hours: 2 }],
     });
     assert.equal(late.ok, false);
-    assert.match(late.error ?? "", new RegExp(PAST_CLOSE_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(late.error ?? "", /This visit runs past closing \(5:30 PM\)/);
     const outside = book(store, {
       time: "18:00",
       lines: [{ id: "a", code: "A", concern: "After", laborOpId: misc.id, hours: 1 }],

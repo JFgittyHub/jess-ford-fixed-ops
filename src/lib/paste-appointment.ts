@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { advisorBookingNote, assessAppointment, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
+import { advisorBookingNote, assessAppointment, pastCloseMessage, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
 import { deskActor } from "./cancel";
 import { bookingDateMessage } from "./store";
 import { blockMinutes, minutesFromLineHours } from "./labor-lines";
@@ -166,7 +166,7 @@ export function commitPaste(
   const booked = { ...input, advisorId, minutes: length ?? input.minutes };
   const pastClose = visitRunsPastClose(state.settings.scheduling, booked.date, booked.time, booked.minutes);
   if (pastClose && deskActor(state) !== "service-manager") {
-    return { ok: false, error: PAST_CLOSE_MESSAGE, appointmentId: "", overrideId: null };
+    return { ok: false, error: pastCloseMessage(state.settings.scheduling, booked.date), appointmentId: "", overrideId: null };
   }
   const reason = opts?.closeReason?.trim() ?? "";
   if (pastClose && !reason) {

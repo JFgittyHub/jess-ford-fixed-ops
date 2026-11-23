@@ -10,7 +10,7 @@ import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingAdvisorId, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, shopMinutes, visitRunsPastClose, visitTimeError } from "@/lib/capacity";
+import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, pastCloseMessage, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, shopMinutes, visitRunsPastClose, visitTimeError } from "@/lib/capacity";
 import { filterDeskCustomers, tenDigitPhone } from "@/lib/desk-customers";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
@@ -594,9 +594,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
           submitLabel="Book it"
           manager={actor === "service-manager"}
           scheduling={shop.settings.scheduling}
-          onCreate={(value, confirmTransfer, transferReason, closeReason) => {
-            const result = shop.saveNewCustomerAppointment(value, confirmTransfer, transferReason, closeReason);
+          onCreate={(value, confirmTransfer, transferReason, closeReason, confirmOverride) => {
+            const result = shop.saveNewCustomerAppointment(value, confirmTransfer, transferReason, closeReason, confirmOverride);
             if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
+            if (result.needsOverride) return { error: null, needsOverride: true, warning: result.warning ?? null };
             if (!result.ok) return result.error;
             setBooking(false);
             return null;
@@ -853,7 +854,7 @@ export function AppointmentFields({
   scheduling?: SchedulingSettings;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; laborHours?: number }) => { blocked: string | null; warning: string | null };
   onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status" | "lengthOverrideMinutes">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
-  onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmOverride?: boolean) => string | null | { error: string | null; needsTransfer?: boolean; needsOverride?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
 }) {
@@ -897,6 +898,8 @@ export function AppointmentFields({
   const [newVin, setNewVin] = useState("");
   const [newPlate, setNewPlate] = useState("");
   const transferRef = useRef(false);
+  const capacityRef = useRef(false);
+  const closeText = scheduling ? pastCloseMessage(scheduling, date) : "";
   const formRef = useRef<HTMLFormElement>(null);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
@@ -915,7 +918,7 @@ export function AppointmentFields({
   const pastToday = !pastVisit && date === clock.date && time < `${String(Math.floor(clock.minutes / 60)).padStart(2, "0")}:${String(clock.minutes % 60).padStart(2, "0")}`;
   const matches = filterDeskCustomers(customers, vehicles, customerQuery);
   const chosen = customers.find((customer) => customer.id === customerId);
-  const staleCloseError = !runsPastClose && (formError === PAST_CLOSE_MESSAGE || formError === PAST_CLOSE_REASON);
+  const staleCloseError = !runsPastClose && (formError === closeText || formError === PAST_CLOSE_REASON);
   const alertText = transferWarning ? null : ((staleCloseError ? null : formError) || (!creating && owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
   return (
@@ -940,7 +943,7 @@ export function AppointmentFields({
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
         if (creating && onCreate) {
           if (runsPastClose && !manager) {
-            setFormError(PAST_CLOSE_MESSAGE);
+            setFormError(closeText);
             return;
           }
           if (runsPastClose && !closeReason.trim()) {
@@ -965,8 +968,13 @@ export function AppointmentFields({
             lines: kept,
             concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "),
             laborOpIds,
-          }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
+          }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, capacityRef.current);
           transferRef.current = false;
+          capacityRef.current = false;
+          if (result && typeof result === "object" && result.needsOverride) {
+            setFormError(result.warning ?? "That technician is over the day's hours.");
+            return;
+          }
           if (result && typeof result === "object" && result.needsTransfer) {
             setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
             setFormError(result.error ?? null);
@@ -982,7 +990,7 @@ export function AppointmentFields({
           return;
         }
         if (runsPastClose && !manager) {
-          setFormError(PAST_CLOSE_MESSAGE);
+          setFormError(closeText);
           return;
         }
         if (runsPastClose && !closeReason.trim()) {
@@ -1220,7 +1228,8 @@ export function AppointmentFields({
       ) : null}
       {alertText ? <p role="alert" className="text-sm text-[#8a3b2a]">{alertText}</p> : null}
       {pastToday ? <p role="status" className="text-sm text-[#8a5a00]">{PAST_TODAY_MESSAGE}</p> : null}
-      {runsPastClose && !oplessLine && !manager ? <p role="alert" className="text-sm text-[#8a3b2a]">{PAST_CLOSE_MESSAGE}</p> : null}
+      {runsPastClose && !oplessLine && !manager ? <p role="alert" className="text-sm text-[#8a3b2a]">{closeText}</p> : null}
+      {creating && capacity.warning ? <Button type="button" onClick={() => { capacityRef.current = true; formRef.current?.requestSubmit(); }}>Book it anyway</Button> : null}
       {runsPastClose && !oplessLine && manager ? (
         <Field label="Reason for running past close">
           <input className="field" aria-label="Reason for running past close" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} />

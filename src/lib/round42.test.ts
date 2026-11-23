@@ -10,7 +10,7 @@ import { compile } from "@tailwindcss/node";
 import { chromium } from "playwright";
 import { AppointmentCalendar } from "../components/appointment-calendar.tsx";
 import { AppointmentFields } from "../routes/schedule.tsx";
-import { appointmentLoads, PAST_CLOSE_MESSAGE } from "./capacity.ts";
+import { appointmentLoads } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import { snapBlockMinutes } from "./labor-lines.ts";
 import { commitPaste, copiedFrom, pasteAppointmentInput } from "./paste-appointment.ts";
@@ -119,7 +119,7 @@ describe("round 25 block length", () => {
       laborOpIds: [misc.id],
     });
     assert.equal(late.ok, false);
-    assert.match(late.error ?? "", new RegExp(PAST_CLOSE_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(late.error ?? "", /This visit runs past closing \(5:30 PM\)/);
     assert.equal(store.getState().appointments.some((row) => row.time === "16:00" && row.techId === "elena"), false);
   });
 

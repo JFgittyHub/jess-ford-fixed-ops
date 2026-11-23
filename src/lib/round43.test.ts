@@ -115,7 +115,7 @@ describe("round 26 block, capacity, and the resize pad", () => {
       const overrides = store.getState().overrides.length;
       const refused = store.getState().saveAdvisorAppointment(body(store, { time: "11:00", lengthOverrideMinutes }));
       assert.equal(refused.ok, false);
-      assert.match(refused.error ?? "", /not on this desk/);
+      assert.equal(refused.error, "That length override is not on this desk.");
       assert.equal(store.getState().appointments.map((row) => `${row.id}|${row.minutes}|${row.lengthOverrideMinutes ?? ""}`).join("\n"), before);
       assert.equal(store.getState().overrides.length, overrides);
       const pasted = commitPaste(store, {
@@ -394,6 +394,114 @@ describe("round 26 real touch on a one-row card", () => {
         await shrink.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: back.x, y: back.y - 32, id: 1 }] });
         await shrink.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
         await shrink.detach();
+        if (width === 820) {
+          const scrolled: { x: number; y: number; height: number; scrolled: number; pad: boolean; touchAction: string } | null = await page.evaluate((id: string) => {
+            const card = document.querySelector<HTMLElement>(`[data-appt-id="${id}"]`);
+            if (!card) return null;
+            const before = card.getBoundingClientRect();
+            window.scrollBy({ top: 90, left: 0, behavior: "instant" });
+            const rect = card.getBoundingClientRect();
+            const x = rect.left + 20;
+            const y = rect.bottom + 12;
+            const hit = document.elementFromPoint(x, y);
+            return {
+              x, y,
+              height: rect.height,
+              scrolled: Math.round(before.top - rect.top),
+              pad: Boolean(hit?.closest("[data-resize-pad]")),
+              touchAction: getComputedStyle(document.querySelector(`[data-resize-for="${id}"]`) ?? document.body).touchAction,
+            };
+          }, held.id);
+          assert.ok(scrolled, "the card disappeared after the page scroll");
+          assert.ok(scrolled.scrolled >= 40, `the page did not scroll (${scrolled.scrolled})`);
+          assert.equal(scrolled.pad, true, "the pad is not the hit target after the scroll");
+          assert.equal(scrolled.touchAction, "none");
+          const again = await page.context().newCDPSession(page);
+          await again.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: scrolled.x, y: scrolled.y, id: 1 }] });
+          await again.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: scrolled.x, y: scrolled.y + 32, id: 1 }] });
+          await again.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+          await again.detach();
+          let afterScroll = scrolled.height;
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            afterScroll = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, held.id);
+            if (afterScroll >= scrolled.height + 30) break;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          assert.ok(afterScroll >= scrolled.height + 30, `a touch drag after scrolling left the card at ${afterScroll}`);
+        }
+      }
+
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.keyboard.press("Escape");
+      const mouse = await page.evaluate((id) => {
+        const card = document.querySelector<HTMLElement>(`[data-appt-id="${id}"]`);
+        if (!card) return null;
+        const box = card.getBoundingClientRect();
+        window.scrollBy({ top: box.top - 240, left: 0, behavior: "instant" });
+        const rect = card.getBoundingClientRect();
+        return { x: rect.left + 30, y: rect.bottom + 8, height: rect.height };
+      }, held.id);
+      assert.ok(mouse, "no card for the mouse resize");
+      await page.mouse.move(mouse.x, mouse.y);
+      await page.mouse.down();
+      await page.mouse.move(mouse.x, mouse.y + 48, { steps: 6 });
+      await page.mouse.up();
+      let mouseGrown = mouse.height;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        mouseGrown = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, held.id);
+        if (mouseGrown >= mouse.height + 30) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.ok(mouseGrown >= mouse.height + 30, `the mouse resize left the card at ${mouseGrown}`);
+      assert.equal(await page.getByRole("dialog").filter({ hasText: "Book an appointment" }).count(), 0);
+      const booked = await page.evaluate(() => {
+        const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+        for (const column of columns) {
+          const rect = column.getBoundingClientRect();
+          if (rect.width < 40) continue;
+          const y = rect.top + 2 * 32 + 8;
+          const x = rect.left + 24;
+          if (y < 80 || y > window.innerHeight - 20) continue;
+          const hit = document.elementFromPoint(x, y);
+          if (!hit || hit.closest("[data-appt], [data-resize-pad], header, [data-copy-bar]")) continue;
+          return { x, y };
+        }
+        return null;
+      });
+      assert.ok(booked, "no empty slot for the later click");
+      await page.mouse.click(booked.x, booked.y);
+      assert.ok(await page.getByRole("dialog").filter({ hasText: "Book an appointment" }).count(), "a later click did not open Book");
+
+      const stacked = await page.evaluate(() => {
+        const columns = [...document.querySelectorAll<HTMLElement>("[data-tech]")];
+        for (const column of columns) {
+          const cards = [...column.querySelectorAll<HTMLElement>("[data-appt]")].sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+          for (let index = 0; index < cards.length - 1; index += 1) {
+            const upper = cards[index];
+            const lower = cards[index + 1];
+            const top = upper.getBoundingClientRect();
+            const next = lower.getBoundingClientRect();
+            if (next.top > top.bottom + 40) continue;
+            const x = top.left + 24;
+            const y = top.bottom + 12;
+            const hit = document.elementFromPoint(x, y);
+            const pad = document.querySelector(`[data-resize-for="${upper.getAttribute("data-appt-id")}"]`);
+            const paint = pad ? getComputedStyle(pad).backgroundColor : "";
+            const text = lower.querySelector("[data-concern], p");
+            return {
+              pad: Boolean(hit?.closest("[data-resize-pad]")),
+              paint,
+              text: text?.textContent ?? "",
+              lowerId: lower.getAttribute("data-appt-id") ?? "",
+            };
+          }
+        }
+        return null;
+      });
+      if (stacked) {
+        assert.equal(stacked.pad, false, "the lower card must stay the hit target so its hold still works");
+        assert.match(stacked.paint, /rgba\(0,\s*0,\s*0,\s*0\)|transparent/);
+        assert.ok(stacked.text.length > 0, "the lower card has no text");
       }
     } finally {
       await browser.close();

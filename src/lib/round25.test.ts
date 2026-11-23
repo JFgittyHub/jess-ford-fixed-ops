@@ -247,7 +247,7 @@ describe("round 25 past close", () => {
       concern: "Stays late",
       lines: [{ id: "a", code: "A", concern: "Stays late" }],
       laborOpIds: [],
-    }, undefined, undefined, "Saturday carryover");
+    }, undefined, undefined, "Saturday carryover", true);
     assert.equal(createdOk.ok, true, createdOk.error ?? "");
     assert.equal(store.getState().overrides.find((row) => row.id === createdOk.overrideId)?.note, "Saturday carryover");
 
@@ -521,7 +521,7 @@ describe("round 25 direct past-close boundary", () => {
     store.getState().setWorkingAs("megan");
     const advisor = store.getState().updateAppointment(id, { time: "17:00", minutes: 120 }, "Advisor tried");
     assert.equal(advisor.ok, false);
-    assert.equal(advisor.error, PAST_CLOSE_MESSAGE);
+    assert.match(advisor.error ?? "", /This visit runs past closing \(5:30 PM\)/);
     assert.deepEqual(stamp(store), beforeUpdate);
 
     store.getState().setWorkingAs("derek");
@@ -611,7 +611,7 @@ describe("round 25 direct past-close boundary", () => {
       concern: "Stays late",
       lines: [{ id: "a", code: "A", concern: "Stays late" }],
       laborOpIds: [],
-    }, undefined, undefined, "New customer reason");
+    }, undefined, undefined, "New customer reason", true);
     assert.equal(created.ok, true, created.error ?? "");
     assert.equal(store.getState().overrides.filter((row) => row.appointmentId === created.appointmentId && row.reason === "past-close").length, 1);
     assert.equal(store.getState().overrides.find((row) => row.id === created.overrideId)?.note, "New customer reason");
@@ -670,9 +670,9 @@ describe("round 25 date-only hours and unchanged past-close edits", () => {
     assert.equal(crossing.ok, true, crossing.error ?? "");
     store.getState().setWorkingAs("megan");
     const advisorCross = store.getState().updateAppointment(crossing.appointmentId, { date: saturday });
-    assert.equal(advisorCross.error, PAST_CLOSE_MESSAGE);
+    assert.match(advisorCross.error ?? "", /This visit runs past closing \(1:00 PM\)/);
     const advisorCrossMove = store.getState().moveAppointment(crossing.appointmentId, { date: saturday });
-    assert.equal(advisorCrossMove.error, PAST_CLOSE_MESSAGE);
+    assert.match(advisorCrossMove.error ?? "", /This visit runs past closing \(1:00 PM\)/);
     assert.equal(store.getState().appointments.find((row) => row.id === crossing.appointmentId)?.date, friday);
     store.getState().setWorkingAs("derek");
     const missing = store.getState().updateAppointment(crossing.appointmentId, { date: saturday }, "  ");

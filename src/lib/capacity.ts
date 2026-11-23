@@ -367,6 +367,17 @@ export function visitTimeError(scheduling: SchedulingSettings, iso: string, time
 }
 
 export const PAST_CLOSE_MESSAGE = "That visit runs past closing. A service manager can approve it.";
+
+/** The refusal an advisor sees when the visit starts on the grid and ends after close. */
+export function pastCloseMessage(scheduling: SchedulingSettings, iso: string): string {
+  const day = shopDay(scheduling, iso);
+  const h24 = Math.floor(day.closeMinutes / 60);
+  const minute = day.closeMinutes % 60;
+  const suffix = h24 >= 12 ? "PM" : "AM";
+  const hour = h24 % 12 || 12;
+  const label = `${hour}:${String(minute).padStart(2, "0")} ${suffix}`;
+  return `This visit runs past closing (${label}). A service manager can approve it.`;
+}
 export const PAST_CLOSE_REASON = "Add a reason for running past close.";
 export const PAST_TODAY_MESSAGE = "That start time has already passed today.";
 

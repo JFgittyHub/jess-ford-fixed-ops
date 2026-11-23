@@ -512,6 +512,7 @@ export function AppointmentCalendar({
     const slop = quiet === "summary" ? 16 : 4;
     let moved = false;
     let held = false;
+    if (mode === "resize") suppressSlotClick.current = true;
     const pressTimer = mode === "move" && quiet !== "summary" && onCopy
       ? window.setTimeout(() => {
         if (moved) return;
@@ -549,6 +550,7 @@ export function AppointmentCalendar({
       if (pressTimer) window.clearTimeout(pressTimer);
       window.removeEventListener("pointermove", onMovePointer);
       window.removeEventListener("pointerup", onUp);
+      if (mode === "resize") suppressSlotClick.current = true;
       if (held) return;
       const next = draftRef.current;
       commitDraft(null);
@@ -560,6 +562,69 @@ export function AppointmentCalendar({
       else onSelect(appt.id);
     }
 
+    window.addEventListener("pointermove", onMovePointer);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  function pressPad(event: ReactPointerEvent, owner: Appointment) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    suppressSlotClick.current = true;
+    const column = (event.currentTarget as HTMLElement).closest("[data-tech]") as HTMLElement | null;
+    const neighbourId = column ? [...column.querySelectorAll<HTMLElement>("[data-appt]")].find((node) => {
+      if (node.getAttribute("data-appt-id") === owner.id) return false;
+      const box = node.getBoundingClientRect();
+      return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
+    })?.getAttribute("data-appt-id") : null;
+    const neighbour = neighbourId ? appointments.find((item) => item.id === neighbourId) ?? null : null;
+    if (!neighbour) {
+      begin(event, owner, "resize");
+      return;
+    }
+    const origin = { x: event.clientX, y: event.clientY };
+    const colWidth = column?.getBoundingClientRect().width ?? 140;
+    let moved = false;
+    let held = false;
+    const pressTimer = onCopy
+      ? window.setTimeout(() => {
+        if (moved) return;
+        held = true;
+        window.removeEventListener("pointermove", onMovePointer);
+        window.removeEventListener("pointerup", onUp);
+        commitDraft(null);
+        openMenu({ kind: "copy", id: neighbour.id, x: origin.x, y: origin.y, rowCenter: column ? slotRowCenter(column, origin.y) : origin.y }, false);
+      }, longPressMs)
+      : 0;
+    function onMovePointer(ev: PointerEvent) {
+      const dx = ev.clientX - origin.x;
+      const dy = ev.clientY - origin.y;
+      if (Math.abs(dx) + Math.abs(dy) <= 4) return;
+      moved = true;
+      if (pressTimer) window.clearTimeout(pressTimer);
+      const next = planCalendarDrag({
+        mode: "resize",
+        time: owner.time,
+        minutes: owner.minutes,
+        techId: owner.techId,
+        dx,
+        dy,
+        techIds,
+        colWidth,
+      });
+      commitDraft({ id: owner.id, ...next });
+    }
+    function onUp() {
+      if (pressTimer) window.clearTimeout(pressTimer);
+      window.removeEventListener("pointermove", onMovePointer);
+      window.removeEventListener("pointerup", onUp);
+      suppressSlotClick.current = true;
+      if (held) return;
+      const next = draftRef.current;
+      commitDraft(null);
+      if (moved && next) onMove(owner.id, { time: next.time, minutes: next.minutes, techId: next.techId });
+      else if (neighbour) onSelect(neighbour.id);
+    }
     window.addEventListener("pointermove", onMovePointer);
     window.addEventListener("pointerup", onUp);
   }
@@ -968,8 +1033,8 @@ export function AppointmentCalendar({
                     data-resize-pad
                     data-resize-for={row.id}
                     className="absolute cursor-ns-resize border-0 bg-transparent p-0"
-                    style={{ position: "absolute", left: 4 + offset * 12, right: 4, top: top + block, height: 24, zIndex: 0, touchAction: "none" }}
-                    onPointerDown={(event) => begin(event, visit, "resize")}
+                    style={{ position: "absolute", left: 4 + offset * 12, right: 4 + gutter, top: top + block, height: 24, zIndex: 0, touchAction: "none", background: "transparent" }}
+                    onPointerDown={(event) => pressPad(event, visit)}
                   />
                   </Fragment>
                 );

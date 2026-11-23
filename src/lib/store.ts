@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_MESSAGE, PAST_CLOSE_REASON, type CapacityResult } from "./capacity";
+import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, pastCloseMessage, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_REASON, type CapacityResult } from "./capacity";
 import { blockMinutes, minutesFromLineHours, roundLaborHours, snapBlockMinutes, storedLaborLines } from "./labor-lines";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
@@ -145,7 +145,7 @@ interface ShopActions {
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string, closeReason?: string, audited?: symbol) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
   saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean };
-  saveNewCustomerAppointment: (input: NewCustomerInput & Omit<Appointment, "id" | "orderId" | "customerId" | "vehicleId" | "vin" | "status"> & { plate: string }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => { ok: boolean; appointmentId: string; customerId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean };
+  saveNewCustomerAppointment: (input: NewCustomerInput & Omit<Appointment, "id" | "orderId" | "customerId" | "vehicleId" | "vin" | "status"> & { plate: string }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmOverride?: boolean) => { ok: boolean; appointmentId: string; customerId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean; needsOverride?: boolean };
   cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }, confirmArrived?: boolean) => { ok: boolean; error: string | null; arrivedConfirm: string | null };
   reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
   setWorkingAs: (id: string) => void;
@@ -3330,7 +3330,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (timeError) return { ok: false, error: timeError };
         }
         const pastClose = scheduleChanged && visitRunsPastClose(state.settings.scheduling, date, time, minutes);
-        if (pastClose && deskActor(state) !== "service-manager") return { ok: false, error: PAST_CLOSE_MESSAGE };
+        if (pastClose && deskActor(state) !== "service-manager") return { ok: false, error: pastCloseMessage(state.settings.scheduling, date) };
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return { ok: false, error: PAST_CLOSE_REASON, needsCloseReason: true };
         const rawLineBlock = minutesFromLineHours(current.lines);
@@ -3478,7 +3478,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const pastClose = scheduleChanged && current.date >= today() && visitRunsPastClose(state.settings.scheduling, effectiveDate, effectiveTime, effectiveMinutes);
         if (pastClose && deskActor(state) !== "service-manager") {
-          return { ok: false, error: PAST_CLOSE_MESSAGE };
+          return { ok: false, error: pastCloseMessage(state.settings.scheduling, effectiveDate) };
         }
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) {
@@ -3768,7 +3768,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (input.lengthOverrideMinutes != null) {
           const rawOverride = input.lengthOverrideMinutes as unknown;
           if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) {
-            return { ok: false, appointmentId: "", overrideId: null, error: "That length is not on this desk." };
+            return { ok: false, appointmentId: "", overrideId: null, error: "That length override is not on this desk." };
           }
         }
         const override = typeof input.lengthOverrideMinutes === "number" ? input.lengthOverrideMinutes : null;
@@ -3842,7 +3842,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         if (result?.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
         const pastClose = !pastStatusOnly && clockChanged && visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
         if (pastClose && deskActor(state) !== "service-manager") {
-          return { ok: false, appointmentId: "", overrideId: null, error: PAST_CLOSE_MESSAGE };
+          return { ok: false, appointmentId: "", overrideId: null, error: pastCloseMessage(state.settings.scheduling, input.date || existing?.date || "") };
         }
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) {
@@ -3907,10 +3907,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           : null;
         return { ok: true, appointmentId, overrideId: closeOverride ?? overrideId, error: null };
       },
-      saveNewCustomerAppointment: (input, confirmTransfer, transferReasonText, closeReason) => {
+      saveNewCustomerAppointment: (input, confirmTransfer, transferReasonText, closeReason, confirmOverride = false) => {
         const state = get();
-        const fail = (error: string, extra?: { needsTransfer?: boolean; warning?: string | null; needsCloseReason?: boolean }) => ({
-          ok: false as const, appointmentId: "", customerId: "", overrideId: null, error, warning: extra?.warning ?? null, needsTransfer: extra?.needsTransfer, needsCloseReason: extra?.needsCloseReason,
+        const fail = (error: string, extra?: { needsTransfer?: boolean; warning?: string | null; needsCloseReason?: boolean; needsOverride?: boolean }) => ({
+          ok: false as const, appointmentId: "", customerId: "", overrideId: null, error, warning: extra?.warning ?? null, needsTransfer: extra?.needsTransfer, needsCloseReason: extra?.needsCloseReason, needsOverride: extra?.needsOverride,
         });
         if (ownStoreError(state)) return fail(ownStoreError(state) ?? OWN_STORE);
         if (!namedActor(state) || !rosterEditor(state)) return fail(rosterEditorError(state) ?? "Choose who is working.");
@@ -3934,7 +3934,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const newSized = rawNew !== null ? snapBlockMinutes(rawNew) : null;
         if (input.lengthOverrideMinutes != null) {
           const rawOverride = input.lengthOverrideMinutes as unknown;
-          if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) return fail("That length is not on this desk.");
+          if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) return fail("That length override is not on this desk.");
         }
         const newOverride = typeof input.lengthOverrideMinutes === "number" ? input.lengthOverrideMinutes : null;
         const minutes = newOverride ?? newSized ?? input.minutes;
@@ -3948,9 +3948,29 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const lengthError = visitLengthError(minutes);
         if (lengthError) return fail(lengthError);
         const pastClose = visitRunsPastClose(state.settings.scheduling, input.date, input.time, minutes);
-        if (pastClose && deskActor(state) !== "service-manager") return fail(PAST_CLOSE_MESSAGE);
+        if (pastClose && deskActor(state) !== "service-manager") return fail(pastCloseMessage(state.settings.scheduling, input.date));
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return fail(PAST_CLOSE_REASON, { needsCloseReason: true });
+        const judged = assessAppointment({
+          scheduling: state.settings.scheduling,
+          advisors: state.advisors,
+          techs: state.techs,
+          appointments: state.appointments,
+          laborOps: state.laborOps,
+          proposal: {
+            date: input.date,
+            time: input.time,
+            minutes,
+            advisorId: input.advisorId,
+            techId: input.techId,
+            laborOpIds,
+            laborHours: newOverride !== null || newSized !== null ? minutes / 60 : undefined,
+          },
+        });
+        if (judged.blocked) return fail(judged.blocked);
+        if (judged.warning && !confirmOverride) {
+          return { ok: false, appointmentId: "", customerId: "", overrideId: null, error: null, warning: advisorBookingNote(judged), needsOverride: true };
+        }
         const staffError = staffBlockMessage(state.techs.some((tech) => tech.id === input.techId), state.advisors.some((advisor) => advisor.id === input.advisorId));
         if (staffError) return fail(staffError);
         if (!state.settings.scheduling.transportOptions.some((row) => row.id === input.lane)) return fail("That lane is not on this store.");
@@ -4020,7 +4040,14 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const closeOverride = pastClose
           ? [...(get().overrides ?? [])].reverse().find((row) => row.appointmentId === appointmentId && row.reason === "past-close")?.id ?? null
           : null;
-        return { ok: true, appointmentId, customerId, overrideId: closeOverride, error: null };
+        const capacityOverride = judged.warning ? logOverride(judged, appointmentId, {
+          customerId,
+          date: input.date,
+          time: input.time,
+          techId: input.techId,
+          advisorId: input.advisorId,
+        }) : null;
+        return { ok: true, appointmentId, customerId, overrideId: closeOverride ?? capacityOverride, error: null };
       },
       cancelAppointment: (id, input, confirmArrived = false) => {
         const state = get();
