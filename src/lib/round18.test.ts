@@ -77,7 +77,7 @@ describe("round 18 calendar drag", () => {
     const row = shop.getState().appointments.find((item) => item.date >= todayIso() && item.status === "scheduled") ?? shop.getState().appointments[0];
     assert.ok(row);
     const before = row.minutes;
-    const result = shop.getState().moveAppointment(row.id, { minutes: before + 60, time: row.time, techId: row.techId });
+    const result = shop.getState().moveAppointment(row.id, { minutes: before + 60, time: row.time, techId: row.techId }, true);
     assert.equal(result.ok, true, result.error ?? "");
     const logged = shop.getState().settingsLog?.find((item) => item.field === "Length");
     assert.match(logged?.after ?? "", /Length: .+ → /);

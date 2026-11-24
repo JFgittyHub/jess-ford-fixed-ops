@@ -140,7 +140,7 @@ interface ShopActions {
   /** New customer and repair order in one step. A VIN transfer is written only when the repair order is created. */
   openWalkIn: (input: NewCustomerInput & Omit<NewOrderInput, "customerId" | "vehicleId">) => { ok: boolean; orderId: string; error: string | null; warning: string | null; needsTransfer?: boolean };
   setAppointmentStatus: (id: string, status: ShopData["appointments"][number]["status"]) => { ok: boolean; error: string | null };
-  moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>, confirmOverride?: boolean, closeReason?: string) => { ok: boolean; error: string | null; warning?: string | null; needsOverride?: boolean; needsCloseReason?: boolean; overrideId?: string | null };
+  moveAppointment: (id: string, patch: Partial<Pick<Appointment, "date" | "time" | "minutes" | "techId">>, confirmOverride?: boolean, closeReason?: string) => { ok: boolean; error: string | null; warning?: string | null; needsOverride?: boolean; needsCloseReason?: boolean; needsDoubleBook?: boolean; overrideId?: string | null };
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>, closeReason?: string) => { ok: boolean; error: string | null; needsCloseReason?: boolean; overrideId?: string | null };
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string, closeReason?: string, audited?: symbol) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
@@ -3354,14 +3354,32 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (capacity.blocked) return { ok: false, error: capacity.blocked };
+        const clockMinutes = (value: string) => {
+          const [hour, minute] = value.split(":").map(Number);
+          return (hour || 0) * 60 + (minute || 0);
+        };
+        const stretched = minutes > current.minutes;
+        const startMins = clockMinutes(time);
+        const endMins = startMins + minutes;
+        const doubleBooked = stretched && state.appointments.some((row) => {
+          if (row.id === id || row.date !== date || row.advisorId !== current.advisorId || row.status === "cancelled") return false;
+          const other = clockMinutes(row.time);
+          return other < endMins && other + row.minutes > startMins;
+        });
+        const advisorName = state.advisors.find((row) => row.id === current.advisorId)?.name ?? "This advisor";
+        const doubleWarning = `${advisorName} already has a visit in that stretch. Keeping both double-books the advisor.`;
+        const techName = state.techs.find((row) => row.id === techId)?.name ?? "";
         if (capacity.warning && !confirmOverride) {
-          return { ok: false, error: null, warning: advisorBookingNote(capacity), needsOverride: true };
+          return { ok: false, error: null, warning: advisorBookingNote(capacity, techName ? { techName, date } : undefined), needsOverride: true };
         }
-        const techName = (tech: string) => state.techs.find((row) => row.id === tech)?.name ?? "No technician";
+        if (doubleBooked && !confirmOverride) {
+          return { ok: false, error: null, warning: doubleWarning, needsOverride: true, needsDoubleBook: true };
+        }
+        const techNameOf = (tech: string) => state.techs.find((row) => row.id === tech)?.name ?? "No technician";
         const customerName = state.customers.find((row) => row.id === current.customerId)?.name ?? "Customer";
         const moved = current.date !== date || current.time !== time || current.techId !== techId;
         const resized = current.minutes !== minutes;
-        const moveSentence = `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techName(current.techId)} to ${visitLabel(date, time)} with ${techName(techId)}`;
+        const moveSentence = `Moved ${customerName} from ${visitLabel(current.date, current.time)} with ${techNameOf(current.techId)} to ${visitLabel(date, time)} with ${techNameOf(techId)}`;
         const lengthSentence = `Length: ${lengthLabel(current.minutes)} → ${lengthLabel(minutes)} for ${customerName}`;
         const logged = [
           ...(moved ? [settingsChange(who, "Move appointment", "", moveSentence)] : []),
@@ -3386,7 +3404,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const movedRow = { ...current, date, time, techId };
         const capacityOverride = capacity.warning ? logOverride(capacity, id, movedRow) : null;
         const closeOverride = pastClose && closeNote ? logReasonOverride("past-close", id, movedRow, closeNote) : null;
-        return { ok: true, error: null, overrideId: closeOverride ?? capacityOverride };
+        const doubleOverride = doubleBooked ? logReasonOverride("double-book", id, movedRow, doubleWarning) : null;
+        return { ok: true, error: null, overrideId: doubleOverride ?? closeOverride ?? capacityOverride };
       },
       updateAppointment: (id, patch, closeReason) => {
         const state = get();
@@ -3448,8 +3467,10 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         if (ownStoreError(state)) return { ok: false, error: ownStoreError(state) };
         if (patch.lengthOverrideMinutes != null) {
-          const overrideError = visitLengthError(patch.lengthOverrideMinutes);
-          if (overrideError) return { ok: false, error: overrideError };
+          const rawOverride = patch.lengthOverrideMinutes as unknown;
+          if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) {
+            return { ok: false, error: "That length override is not on this desk." };
+          }
         }
         const rawLineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines.filter((line) => line.laborOpId)) : null;
         const lineMinutes = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
@@ -3656,9 +3677,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             laborHours: hasOverride || fromLines !== null ? finalMinutes / 60 : undefined,
           },
         });
-        if (audited !== AUDITED_ADD && (judged.blocked || judged.warning)) return "";
         const pastClose = visitRunsPastClose(state.settings.scheduling, input.date || "", input.time || "", finalMinutes);
-        if (pastClose && deskActor(state) !== "service-manager") return "";
+        if (pastClose && deskActor(state) !== "service-manager") return pastCloseMessage(state.settings.scheduling, input.date || "");
+        if (audited !== AUDITED_ADD && (judged.blocked || judged.warning)) return "";
         const closeNote = pastClose ? typedCloseReason(closeReason) : null;
         if (pastClose && !closeNote) return "";
         if (input.lane === "" || (input.lane !== undefined && !state.settings.scheduling.transportOptions.some((row) => row.id === input.lane))) return "";
@@ -3905,7 +3926,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const closeOverride = pastClose
           ? [...(get().overrides ?? [])].reverse().find((row) => row.appointmentId === appointmentId && row.reason === "past-close")?.id ?? null
           : null;
-        return { ok: true, appointmentId, overrideId: closeOverride ?? overrideId, error: null };
+        const techName = state.techs.find((tech) => tech.id === input.techId)?.name ?? "";
+        const note = result && !result.blocked ? advisorBookingNote(result, techName ? { techName, date: input.date } : undefined) : null;
+        return { ok: true, appointmentId, overrideId: closeOverride ?? overrideId, error: null, warning: note };
       },
       saveNewCustomerAppointment: (input, confirmTransfer, transferReasonText, closeReason, confirmOverride = false) => {
         const state = get();
@@ -3968,16 +3991,25 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (judged.blocked) return fail(judged.blocked);
-        if (judged.warning && !confirmOverride) {
-          return { ok: false, appointmentId: "", customerId: "", overrideId: null, error: null, warning: advisorBookingNote(judged), needsOverride: true };
-        }
         const staffError = staffBlockMessage(state.techs.some((tech) => tech.id === input.techId), state.advisors.some((advisor) => advisor.id === input.advisorId));
         if (staffError) return fail(staffError);
         if (!state.settings.scheduling.transportOptions.some((row) => row.id === input.lane)) return fail("That lane is not on this store.");
         const ownerVehicle = state.vehicles.find((row) => currentVehicle(row) && sameVin(row.vin, vinText));
-        if (ownerVehicle && !confirmTransfer) {
-          const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
-          return { ok: false, appointmentId: "", customerId: "", overrideId: null, error: null, warning: `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?`, needsTransfer: true };
+        const newTechName = state.techs.find((row) => row.id === input.techId)?.name ?? "";
+        const needsOverride = Boolean(judged.warning && !confirmOverride);
+        const needsTransfer = Boolean(ownerVehicle && !confirmTransfer);
+        if (needsOverride || needsTransfer) {
+          const owner = ownerVehicle ? state.customers.find((row) => row.id === ownerVehicle.customerId) : undefined;
+          return {
+            ok: false,
+            appointmentId: "",
+            customerId: "",
+            overrideId: null,
+            error: null,
+            warning: needsTransfer ? `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?` : advisorBookingNote(judged, newTechName ? { techName: newTechName, date: input.date } : undefined),
+            needsTransfer,
+            needsOverride,
+          };
         }
         const customerId = uid("c");
         const who = namedActor(state);

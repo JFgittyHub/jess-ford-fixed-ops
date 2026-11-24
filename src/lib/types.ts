@@ -544,7 +544,7 @@ export interface ShopNotice {
 }
 
 /** Why an advisor kept a booking the capacity check would not offer online. */
-export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff" | "past-close";
+export type OverrideReason = "tech-hours" | "advisor" | "both" | "closed" | "unknown-staff" | "past-close" | "double-book";
 
 export interface OverrideRecord {
   id: string;

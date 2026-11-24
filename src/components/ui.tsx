@@ -63,8 +63,8 @@ export function Modal({
         <Dialog.Content className={cn("modal-panel", wide && "modal-wide")}>
           <div className="mb-4 flex items-start justify-between gap-3">
             <div>
-              <Dialog.Title className="font-display text-3xl leading-none tracking-tight">{title}</Dialog.Title>
-              <Dialog.Description className={description ? "mt-1 text-sm text-muted" : "sr-only"}>
+              <Dialog.Title className="font-display text-3xl leading-snug tracking-tight">{title}</Dialog.Title>
+              <Dialog.Description className={description ? "mt-2 text-sm text-muted" : "sr-only"}>
                 {description ?? title}
               </Dialog.Description>
             </div>

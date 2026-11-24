@@ -173,11 +173,25 @@ export function assessAppointment(input: {
   });
 }
 
+function bookedDayLabel(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1));
+  const week = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][date.getUTCDay()] ?? "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${week} ${months[date.getUTCMonth()] ?? ""} ${date.getUTCDate()}`;
+}
+
 /** Sentence for the advisor form. A block is a hard stop. A warning can still be saved. */
-export function advisorBookingNote(result: CapacityResult): string | null {
+export function advisorBookingNote(result: CapacityResult, detail?: { techName: string; date: string }): string | null {
   if (result.blocked) return result.blocked;
   if (!result.warning) return null;
-  return `${result.warning} You can still book it. Online customers will not see this time.`;
+  const online = "People booking online will not be offered this time.";
+  if (result.tech.overloaded && detail?.techName && detail.date) {
+    const booked = (result.tech.used + result.tech.adding).toFixed(1);
+    const available = result.tech.capacity.toFixed(1);
+    return `${detail.techName} would have ${booked} hr booked on ${bookedDayLabel(detail.date)} (${available} hr available). You can still book it. ${online}`;
+  }
+  return `${result.warning} You can still book it. ${online}`;
 }
 
 export function staffBlockMessage(knownTech: boolean, knownAdvisor: boolean): string | null {
@@ -211,6 +225,8 @@ export function overrideReasonLabel(reason: OverrideReason): string {
       return "Staff not on this store";
     case "past-close":
       return "Runs past closing";
+    case "double-book":
+      return "Double-booked advisor";
   }
 }
 

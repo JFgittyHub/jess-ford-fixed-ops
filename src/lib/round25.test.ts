@@ -565,7 +565,7 @@ describe("round 25 direct past-close boundary", () => {
     const beforeAdds = stamp(store);
 
     store.getState().setWorkingAs("megan");
-    assert.equal(store.getState().addAppointment(addBody(store.getState(), { date: friday, time: "17:00", minutes: 120, vin: "" }), undefined, "Advisor tried"), "");
+    assert.equal(store.getState().addAppointment(addBody(store.getState(), { date: friday, time: "17:00", minutes: 120, vin: "" }), undefined, "Advisor tried"), "This visit runs past closing (5:30 PM). A service manager can approve it.");
     assert.deepEqual(stamp(store), beforeAdds);
 
     store.getState().setWorkingAs("derek");

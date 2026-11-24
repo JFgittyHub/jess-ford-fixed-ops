@@ -51,7 +51,7 @@ describe("capacity engine", () => {
     assert.equal(result.advisor.overloaded, false);
     assert.match(result.warning ?? "", /technician hours/);
     assert.match(advisorBookingNote(result) ?? "", /You can still book it/);
-    assert.match(advisorBookingNote(result) ?? "", /Online customers will not see this time/);
+    assert.match(advisorBookingNote(result) ?? "", /People booking online will not be offered this time/);
 
     const hidden = openings(coulee, loads, { serviceId: "gc-oil", from: tuesday, through: tuesday, techId: "marcus" });
     const openTech = openings(coulee, loads, { serviceId: "gc-oil", from: tuesday, through: tuesday, techId: "elena" });

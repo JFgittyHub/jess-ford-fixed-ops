@@ -105,7 +105,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [requestNote, setRequestNote] = useState("");
   const [approveGate, setApproveGate] = useState<{ id: string; linkCustomerId?: string; warning: string } | null>(null);
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
-  const [moveOverride, setMoveOverride] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; warning: string; closeReason?: string } | null>(null);
+  const [moveOverride, setMoveOverride] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; warning: string; closeReason?: string; doubleBook?: boolean } | null>(null);
   const [moveClose, setMoveClose] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; reason: string } | null>(null);
   const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
   const [copiedName, setCopiedName] = useState("");
@@ -202,7 +202,8 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
       holds: requestHolds(shop.onlineRequests),
       proposal: { ...draft, ignoreId },
     });
-    return { blocked: result.blocked, warning: result.blocked ? null : advisorBookingNote(result) };
+    const techName = shop.techs.find((tech) => tech.id === draft.techId)?.name ?? "";
+    return { blocked: result.blocked, warning: result.blocked ? null : advisorBookingNote(result, techName ? { techName, date: draft.date } : undefined) };
   }
 
   function blockFor(row: { orderId: string | null } | null | undefined) {
@@ -410,7 +411,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
             return;
           }
           if (result.needsOverride && result.warning) {
-            setMoveOverride({ id, patch, warning: result.warning });
+            setMoveOverride({ id, patch, warning: result.warning, doubleBook: result.needsDoubleBook });
             setActionError(null);
             return;
           }
@@ -678,7 +679,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
         ) : cancelling ? <CancelForm key={cancelling.id} onSubmit={(input) => confirmCancel(input)} /> : null}
       </Modal>
 
-      <Modal open={moveOverride !== null} onClose={() => setMoveOverride(null)} title="This move overloads the day" description="The same warning as a booking. Nothing is saved until you confirm.">
+      <Modal open={moveOverride !== null} onClose={() => setMoveOverride(null)} title={moveOverride?.doubleBook ? "These visits overlap." : "This move overloads the day"} description={moveOverride?.doubleBook ? "Nothing is saved until you keep both." : "The same warning as a booking. Nothing is saved until you confirm."}>
         {moveOverride ? (
           <div className="grid gap-3">
             <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{moveOverride.warning}</p>
@@ -688,14 +689,14 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 const result = shop.moveAppointment(pending.id, pending.patch, true, pending.closeReason);
                 if (!result.ok) setActionError(result.error);
                 setMoveOverride(null);
-              }}>Move anyway</Button>
+              }}>{moveOverride.doubleBook ? "Keep both" : "Move anyway"}</Button>
               <Button className="min-h-11" onClick={() => setMoveOverride(null)}>Leave it</Button>
             </div>
           </div>
         ) : null}
       </Modal>
 
-      <Modal open={moveClose !== null} onClose={() => setMoveClose(null)} title="This visit runs past closing" description="A service manager can approve it after a reason.">
+      <Modal open={moveClose !== null} onClose={() => setMoveClose(null)} title="This visit runs past closing." description="A service manager can approve it after a reason.">
         {moveClose ? (
           <form className="grid gap-3" onSubmit={(event) => {
             event.preventDefault();
@@ -904,6 +905,13 @@ export function AppointmentFields({
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
   const visitMinutes = blockOverride ?? drivenMinutes ?? minutes;
+  const draftKey = [date, time, techId, String(visitMinutes), advisorId, newVin, newName, newPhone].join("|");
+  const draftSeen = useRef(draftKey);
+  if (draftSeen.current !== draftKey) {
+    draftSeen.current = draftKey;
+    transferRef.current = false;
+    capacityRef.current = false;
+  }
   const laborOpIds = lineOpIds ?? storedOpIds;
   const lengths = [...new Set([...LENGTHS, visitMinutes])].sort((a, b) => a - b);
   const pastVisit = showStatus === true && openedDate.current < today();
@@ -919,7 +927,8 @@ export function AppointmentFields({
   const matches = filterDeskCustomers(customers, vehicles, customerQuery);
   const chosen = customers.find((customer) => customer.id === customerId);
   const staleCloseError = !runsPastClose && (formError === closeText || formError === PAST_CLOSE_REASON);
-  const alertText = transferWarning ? null : ((staleCloseError ? null : formError) || (!creating && owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
+  const closeAlert = runsPastClose && !oplessLine && !manager;
+  const alertText = transferWarning ? null : ((staleCloseError || (closeAlert && formError === closeText) ? null : formError) || (!creating && owned.length === 0 ? VEHICLE_MISSING : null) || capacity.blocked);
 
   return (
     <form
@@ -932,6 +941,7 @@ export function AppointmentFields({
           setFormError("Choose an advisor.");
           return;
         }
+        if (capacity.warning && !capacityRef.current) return;
         if (runsPastClose && lines.some((line) => line.concern.trim() && !line.laborOpId && typeof line.hours === "number")) {
           setFormError("Each concern line needs a labor op.");
           return;
@@ -942,14 +952,13 @@ export function AppointmentFields({
         }
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
         if (creating && onCreate) {
-          if (runsPastClose && !manager) {
-            setFormError(closeText);
-            return;
-          }
+          if (runsPastClose && !manager) return;
           if (runsPastClose && !closeReason.trim()) {
             setFormError(PAST_CLOSE_REASON);
             return;
           }
+          const sentTransfer = transferRef.current;
+          const sentCapacity = capacityRef.current;
           const result = onCreate({
             name: newName,
             phone: newPhone,
@@ -968,18 +977,15 @@ export function AppointmentFields({
             lines: kept,
             concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "),
             laborOpIds,
-          }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, capacityRef.current);
+          }, sentTransfer, transferReason, runsPastClose ? closeReason : undefined, sentCapacity);
+          if (result && typeof result === "object" && (result.needsOverride || result.needsTransfer)) {
+            transferRef.current = result.needsTransfer ? false : sentTransfer;
+            capacityRef.current = result.needsOverride ? false : sentCapacity;
+            if (result.needsTransfer) setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
+            return;
+          }
           transferRef.current = false;
           capacityRef.current = false;
-          if (result && typeof result === "object" && result.needsOverride) {
-            setFormError(result.warning ?? "That technician is over the day's hours.");
-            return;
-          }
-          if (result && typeof result === "object" && result.needsTransfer) {
-            setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
-            setFormError(result.error ?? null);
-            return;
-          }
           setTransferWarning("");
           setFormError(typeof result === "string" ? result : result?.error ?? null);
           return;
@@ -989,10 +995,7 @@ export function AppointmentFields({
           setFormError(block);
           return;
         }
-        if (runsPastClose && !manager) {
-          setFormError(closeText);
-          return;
-        }
+        if (runsPastClose && !manager) return;
         if (runsPastClose && !closeReason.trim()) {
           setFormError(PAST_CLOSE_REASON);
           return;
@@ -1011,7 +1014,7 @@ export function AppointmentFields({
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Day"><input className="field" type="date" disabled={pastVisit} value={date} onChange={(event) => { setDate(event.target.value); onVisitChange?.({ date: event.target.value, time }); }} /></Field>
         <Field label="Starts">
-          <select className="field" disabled={pastVisit} value={starts.includes(time) ? time : snapHalfHour(time)} onChange={(event) => { setTime(event.target.value); onVisitChange?.({ date, time: event.target.value }); }}>
+          <select className="field" aria-label="Starts" disabled={pastVisit} value={starts.includes(time) ? time : snapHalfHour(time)} onChange={(event) => { setTime(event.target.value); onVisitChange?.({ date, time: event.target.value }); }}>
             {starts.map((item) => <option key={item} value={item}>{clockTime(item)}</option>)}
           </select>
         </Field>
@@ -1155,6 +1158,7 @@ export function AppointmentFields({
                 ) : null}
               </div>
               <Field label="Labor op">
+                <div className="flex items-center gap-2">
                 <select
                   className="field"
                   aria-label={`Labor op for line ${lineLetter(index)}`}
@@ -1174,6 +1178,10 @@ export function AppointmentFields({
                   <option value="">Choose a labor op</option>
                   {laborOps.map((op) => <option key={op.id} value={op.id}>{op.opcode} · {op.description} · {op.hours} hr</option>)}
                 </select>
+                {opcode && opcode !== DEMO_MISC_OPCODE && !pastVisit ? (
+                  <button type="button" className="btn btn-ghost btn-small min-h-11 min-w-11" aria-label={`Remove labor op from line ${lineLetter(index)}`} onClick={() => setLines((rows) => rows.map((row) => row.id === line.id ? { ...row, laborOpId: miscOp?.id ?? "", hours: 1 } : row))}>×</button>
+                ) : null}
+                </div>
                 {line.concern.trim() && !line.laborOpId && typeof line.hours === "number" ? <p data-line-error className="text-sm text-[#8a3b2a]">Choose a labor op.</p> : null}
               </Field>
               <Field label="Hours">
@@ -1228,17 +1236,23 @@ export function AppointmentFields({
       ) : null}
       {alertText ? <p role="alert" className="text-sm text-[#8a3b2a]">{alertText}</p> : null}
       {pastToday ? <p role="status" className="text-sm text-[#8a5a00]">{PAST_TODAY_MESSAGE}</p> : null}
-      {runsPastClose && !oplessLine && !manager ? <p role="alert" className="text-sm text-[#8a3b2a]">{closeText}</p> : null}
-      {creating && capacity.warning ? <Button type="button" onClick={() => { capacityRef.current = true; formRef.current?.requestSubmit(); }}>Book it anyway</Button> : null}
+      {closeAlert ? <p role="alert" className="text-sm text-[#8a3b2a]">{closeText}</p> : null}
       {runsPastClose && !oplessLine && manager ? (
         <Field label="Reason for running past close">
           <input className="field" aria-label="Reason for running past close" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} />
         </Field>
       ) : null}
       {capacity.warning ? (
-        <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{capacity.warning}</p>
-      ) : null}
-      <Button tone="primary" type="submit" disabled={Boolean(capacity.blocked)}>{submitLabel}</Button>
+        <div className="grid gap-2" data-capacity-choices>
+          <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{capacity.warning}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button tone="primary" type="button" onClick={() => { capacityRef.current = true; formRef.current?.requestSubmit(); }}>Book it anyway</Button>
+            <Button type="button" onClick={() => formRef.current?.querySelector<HTMLSelectElement>("[aria-label='Starts']")?.focus()}>Pick another time</Button>
+          </div>
+        </div>
+      ) : (
+        <Button tone="primary" type="submit" disabled={Boolean(capacity.blocked)}>{submitLabel}</Button>
+      )}
     </form>
   );
 }

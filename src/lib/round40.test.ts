@@ -145,7 +145,7 @@ describe("round 23 drag override and hour checks", () => {
     assert.equal(second.ok, true, second.error ?? "");
     const warned = store.getState().moveAppointment(second.appointmentId, { time: "11:00", minutes: 360 });
     assert.equal(warned.needsOverride, true);
-    assert.match(warned.warning ?? "", /overload/);
+    assert.match(warned.warning ?? "", /would have \d+\.\d hr booked/);
     assert.equal(store.getState().appointments.find((item) => item.id === second.appointmentId)?.minutes, 60);
     const late = book(store, {
       time: "16:00",
@@ -232,7 +232,7 @@ describe("round 23 drag override and hour checks", () => {
         techId: "marcus",
         lane: "drop",
       }, undefined, "Customer is waiting");
-      assert.equal(added, "", `${time} was stored from the 30 minute field`);
+      assert.match(added, /This visit runs past closing/, `${time} was stored from the 30 minute field`);
     }
     assert.equal(store.getState().appointments.length, before);
     store.getState().setWorkingAs("derek");

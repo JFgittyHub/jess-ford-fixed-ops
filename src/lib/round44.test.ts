@@ -90,7 +90,7 @@ describe("round 27 new customer capacity and closing time", () => {
     const asked = store.getState().saveNewCustomerAppointment(input);
     assert.equal(asked.ok, false);
     assert.equal(asked.needsOverride, true);
-    assert.match(asked.warning ?? "", /overload|hours/i);
+    assert.match(asked.warning ?? "", /would have|hours/i);
     assert.equal(store.getState().customers.length, before.customers);
     assert.equal(store.getState().appointments.length, before.appointments);
     assert.equal(store.getState().overrides.length, before.overrides);

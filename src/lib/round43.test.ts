@@ -375,6 +375,8 @@ describe("round 26 real touch on a one-row card", () => {
         await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: spot.x, y: spot.y + 32, id: 1 }] });
         await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
         await client.detach();
+        const overlap = page.getByRole("dialog").filter({ hasText: "These visits overlap" });
+        if (await overlap.count()) await overlap.getByRole("button", { name: "Keep both" }).click();
         let grown = spot.height;
         for (let attempt = 0; attempt < 20; attempt += 1) {
           grown = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, spot.id);
@@ -421,6 +423,8 @@ describe("round 26 real touch on a one-row card", () => {
           await again.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: scrolled.x, y: scrolled.y + 32, id: 1 }] });
           await again.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
           await again.detach();
+          const againOverlap = page.getByRole("dialog").filter({ hasText: "These visits overlap" });
+          if (await againOverlap.count()) await againOverlap.getByRole("button", { name: "Keep both" }).click();
           let afterScroll = scrolled.height;
           for (let attempt = 0; attempt < 20; attempt += 1) {
             afterScroll = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, held.id);
@@ -446,6 +450,8 @@ describe("round 26 real touch on a one-row card", () => {
       await page.mouse.down();
       await page.mouse.move(mouse.x, mouse.y + 48, { steps: 6 });
       await page.mouse.up();
+      const mouseOverlap = page.getByRole("dialog").filter({ hasText: "These visits overlap" });
+      if (await mouseOverlap.count()) await mouseOverlap.getByRole("button", { name: "Keep both" }).click();
       let mouseGrown = mouse.height;
       for (let attempt = 0; attempt < 20; attempt += 1) {
         mouseGrown = await page.evaluate((id) => document.querySelector(`[data-appt-id="${id}"]`)?.getBoundingClientRect().height ?? 0, held.id);

@@ -179,13 +179,47 @@ function placed(appt: Appointment, draft: Draft | null) {
   return { ...appt, time: draft.time, minutes: draft.minutes, techId: draft.techId };
 }
 
+function stretchStrip(rows: { row: Appointment; start: number }[], id: string, top: number, block: number) {
+  const padTop = top + block;
+  let height = 24;
+  let raised = false;
+  for (const other of rows) {
+    if (other.row.id === id) continue;
+    const otherTop = ((other.start - START) / SNAP) * SLOT;
+    const otherBlock = Math.max(SLOT - 2, (other.row.minutes / SNAP) * SLOT - 2);
+    if (otherTop >= padTop + 24 || otherTop + otherBlock <= padTop) continue;
+    const center = otherTop + otherBlock / 2;
+    height = Math.max(12, Math.min(24, Math.floor(center - padTop - 3)));
+    raised = true;
+    break;
+  }
+  return { height, raised };
+}
+
 function stack(rows: Appointment[]) {
   const sorted = rows
     .map((row) => ({ row, start: toMinutes(row.time), end: toMinutes(row.time) + row.minutes }))
     .sort((a, b) => a.start - b.start || a.end - b.end);
-  return sorted.map((item, index) => {
-    const offset = sorted.filter((other, otherIndex) => otherIndex < index && other.end > item.start).length;
-    return { ...item, offset };
+  const placed: { row: Appointment; start: number; end: number; offset: number }[] = [];
+  for (const item of sorted) {
+    const used = new Set(placed.filter((other) => other.end > item.start && item.end > other.start).map((other) => other.offset));
+    let offset = 0;
+    while (used.has(offset)) offset += 1;
+    placed.push({ ...item, offset });
+  }
+  return placed.map((item) => {
+    const seen = new Set<(typeof placed)[number]>();
+    const queue = [item];
+    while (queue.length) {
+      const current = queue.pop();
+      if (!current || seen.has(current)) continue;
+      seen.add(current);
+      for (const other of placed) {
+        if (other !== current && other.end > current.start && current.end > other.start) queue.push(other);
+      }
+    }
+    const lanes = Math.max(1, ...[...seen].map((other) => other.offset + 1));
+    return { ...item, lanes };
   });
 }
 
@@ -893,10 +927,14 @@ export function AppointmentCalendar({
                   }}
                 />
               ) : null}
-              {rows.map(({ row, offset }) => {
+              {rows.map(({ row, offset, lanes }) => {
                 const start = toMinutes(row.time);
                 const top = ((start - START) / SNAP) * SLOT;
                 const block = Math.max(SLOT - 2, (row.minutes / SNAP) * SLOT - 2);
+                const split = lanes > 1;
+                const laneStyle = split
+                  ? { left: `calc(4px + ${offset} * ((100% - 8px) / ${lanes}))`, width: `calc((100% - 8px) / ${lanes} - 4px)`, right: "auto" }
+                  : { left: 4 + offset * 12, right: 4 };
                 const selected = row.id === selectedId;
                 const titleBand = 11;
                 const mark = summaryMarkBox(block);
@@ -908,6 +946,7 @@ export function AppointmentCalendar({
                 const concernRight = titleBand + concernHeight > mark.top ? gutter : 6;
                 const tag = laneTag(row.lane);
                 const visit = appointments.find((item) => item.id === row.id) ?? row;
+                const strip = stretchStrip(rows, row.id, top, block);
                 return (
                   <Fragment key={row.id}>
                   <article
@@ -916,7 +955,7 @@ export function AppointmentCalendar({
                     data-drag="move"
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
                     data-appt-time={row.time}
-                    style={{ position: "absolute", overflow: "hidden", top, height: block, left: 4 + offset * 12, right: 4, zIndex: 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
+                    style={{ position: "absolute", overflow: "hidden", top, height: block, ...laneStyle, zIndex: split ? 1 : 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
                     onPointerDown={(event) => begin(event, visit, "move")}
                     onContextMenu={(event) => {
                       if (heldPointerActive.current) {
@@ -1033,7 +1072,7 @@ export function AppointmentCalendar({
                     data-resize-pad
                     data-resize-for={row.id}
                     className="absolute cursor-ns-resize border-0 bg-transparent p-0"
-                    style={{ position: "absolute", left: 4 + offset * 12, right: 4 + gutter, top: top + block, height: 24, zIndex: 0, touchAction: "none", background: "transparent" }}
+                    style={{ position: "absolute", ...laneStyle, right: split ? "auto" : 4 + gutter, top: top + block, height: strip.height, zIndex: strip.raised ? 12 : 0, touchAction: "none", background: "transparent" }}
                     onPointerDown={(event) => pressPad(event, visit)}
                   />
                   </Fragment>

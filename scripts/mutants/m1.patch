@@ -1,0 +1,12 @@
+diff --git a/src/components/appointment-calendar.tsx b/src/components/appointment-calendar.tsx
+--- a/src/components/appointment-calendar.tsx
++++ b/src/components/appointment-calendar.tsx
+@@ -18,7 +18,7 @@
+ 
+ /** Vertical center of that row, in client coordinates, using the column's position right now. */
+ function slotRowCenter(column: HTMLElement, clientY: number) {
+-  return column.getBoundingClientRect().top + slotRowIndex(column, clientY) * SLOT + SLOT / 2;
++  return clientY;
+ }
+ 
+ /** Window scroll, unless the event target is itself a scrolling box. A cell under the finger is not one. */
