@@ -7,14 +7,13 @@ import { afterEach, describe, it } from "node:test";
 import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { chromium, type Page } from "playwright";
+import { chromium } from "playwright";
 import { AppointmentFields } from "../routes/schedule.tsx";
 import { pastCloseMessage } from "./capacity.ts";
 import { pinClock, resetClock } from "./clock.ts";
 import type { ShopStorage } from "./shop-storage.ts";
 import { createShopStore } from "./store.ts";
 import type { Appointment } from "./types.ts";
-import { fullVin } from "./vin.ts";
 
 afterEach(() => resetClock());
 

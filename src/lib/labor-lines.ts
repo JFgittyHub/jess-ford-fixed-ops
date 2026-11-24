@@ -99,3 +99,52 @@ export function prepareConcernLines(
     return { ...line, laborOpId, hours };
   });
 }
+
+/** Lines as the desk form opens them. A line with no stored op stays blank so the desk can ask for one. */
+export function linesForDesk(
+  lines: AppointmentLine[],
+  laborOpIds: string[],
+  minutes: number,
+  laborOps: { id: string; opcode: string; hours: number }[],
+  lengthOverrideMinutes?: number | null,
+): AppointmentLine[] {
+  if (!lines.length) return prepareConcernLines(lines, laborOpIds, minutes, laborOps);
+  const prepared = lines.map((line, index) => {
+    const laborOpId = line.laborOpId || laborOpIds[index] || "";
+    if (!laborOpId) return { ...line };
+    const op = laborOps.find((row) => row.id === laborOpId);
+    if (typeof line.hours === "number" && Number.isFinite(line.hours)) {
+      return { ...line, laborOpId, hours: roundLaborHours(line.hours) };
+    }
+    const catalog = op?.hours ?? (lines.length === 1 ? Math.round((minutes / 60) * 10) / 10 : MISC_MIN_HOURS);
+    return { ...line, laborOpId, hours: clampLaborHours(op?.opcode ?? "", catalog) };
+  });
+  if (typeof lengthOverrideMinutes === "number") return prepared;
+  const raw = minutesFromLineHours(prepared.filter((line) => line.laborOpId));
+  if (raw == null || prepared.length === 0) return prepared;
+  const snapped = snapBlockMinutes(raw);
+  if (snapped >= minutes) return prepared;
+  const last = [...prepared].reverse().findIndex((line) => line.laborOpId);
+  if (last < 0) return prepared;
+  const index = prepared.length - 1 - last;
+  const hours = roundLaborHours((prepared[index]?.hours ?? 0) + (minutes - snapped) / 60);
+  return prepared.map((line, at) => at === index ? { ...line, hours } : line);
+}
+
+/**
+ * The block after a line edit. Adding hours never shrinks a longer visit:
+ * 90 minutes plus a 0.5 hour line is 120, not 30. A drag override wins.
+ */
+export function deskBlockMinutes(input: {
+  openedMinutes: number;
+  openedLineMinutes: number;
+  lineMinutes: number | null;
+  override: number | null;
+}): number {
+  if (typeof input.override === "number") return input.override;
+  if (input.lineMinutes == null) return input.openedMinutes;
+  const snapped = snapBlockMinutes(input.lineMinutes);
+  const delta = input.lineMinutes - input.openedLineMinutes;
+  if (snapped < input.openedMinutes && delta > 0) return snapBlockMinutes(input.openedMinutes + delta);
+  return snapped;
+}

@@ -1,6 +1,7 @@
 import { genericOAuthClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { runPreSignInSignOut, runSignOut } from "../../../scripts/sign-out-plan.mjs";
+import { clearCopiedVisits } from "../copied-visit";
 import { GROK_PROVIDERS } from "./providers";
 
 /**
@@ -35,7 +36,8 @@ export const authClient = createAuthClient({
  * with the key removed, sign-in is real in preview (baked preview client) and
  * when deployed (injected per-app client).
  */
-export const authEnabled = import.meta.env.VITE_AUTH_ENABLED !== "false";
+const authEnv = import.meta.env as { VITE_AUTH_ENABLED?: string } | undefined;
+export const authEnabled = authEnv?.VITE_AUTH_ENABLED !== "false" && authEnv != null;
 
 /** The upstream providers to render sign-in buttons for. */
 export { GROK_PROVIDERS };
@@ -228,7 +230,10 @@ export async function signOut(redirectTo = "/"): Promise<void> {
       const { error } = await authClient.signOut();
       if (error) throw new Error(error.message ?? "Sign-out failed");
     },
-    clearToken: () => setBearerToken(null),
+    clearToken: () => {
+      setBearerToken(null);
+      if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+    },
     redirect: () => {
       window.location.href = redirectTo;
     },

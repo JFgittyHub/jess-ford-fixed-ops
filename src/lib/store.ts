@@ -144,7 +144,7 @@ interface ShopActions {
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>, closeReason?: string) => { ok: boolean; error: string | null; needsCloseReason?: boolean; overrideId?: string | null };
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string, closeReason?: string, audited?: symbol) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
-  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean };
+  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmDoubleBook?: boolean) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean; needsDoubleBook?: boolean };
   saveNewCustomerAppointment: (input: NewCustomerInput & Omit<Appointment, "id" | "orderId" | "customerId" | "vehicleId" | "vin" | "status"> & { plate: string }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmOverride?: boolean) => { ok: boolean; appointmentId: string; customerId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean; needsOverride?: boolean };
   cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }, confirmArrived?: boolean) => { ok: boolean; error: string | null; arrivedConfirm: string | null };
   reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
@@ -1500,6 +1500,25 @@ export function vehicleWriterError(state: ShopData): string | null {
     return "Only an advisor or service manager can add a vehicle.";
   }
   return null;
+}
+
+function clockMinutes(value: string) {
+  const [hour, minute] = value.split(":").map(Number);
+  return (hour || 0) * 60 + (minute || 0);
+}
+
+/** True when the visit's clock overlaps another visit for the same advisor that day. */
+export function sameAdvisorOverlap(
+  appointments: { id: string; date: string; time: string; minutes: number; advisorId: string; status: string }[],
+  candidate: { id?: string; date: string; time: string; minutes: number; advisorId: string },
+) {
+  const start = clockMinutes(candidate.time);
+  const end = start + candidate.minutes;
+  return appointments.some((row) => {
+    if (row.id === candidate.id || row.date !== candidate.date || row.advisorId !== candidate.advisorId || row.status === "cancelled") return false;
+    const other = clockMinutes(row.time);
+    return other < end && other + row.minutes > start;
+  });
 }
 
 export function createShopStore(options: ShopStoreOptions = {}) {
@@ -3354,18 +3373,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (capacity.blocked) return { ok: false, error: capacity.blocked };
-        const clockMinutes = (value: string) => {
-          const [hour, minute] = value.split(":").map(Number);
-          return (hour || 0) * 60 + (minute || 0);
-        };
         const stretched = minutes > current.minutes;
-        const startMins = clockMinutes(time);
-        const endMins = startMins + minutes;
-        const doubleBooked = stretched && state.appointments.some((row) => {
-          if (row.id === id || row.date !== date || row.advisorId !== current.advisorId || row.status === "cancelled") return false;
-          const other = clockMinutes(row.time);
-          return other < endMins && other + row.minutes > startMins;
-        });
+        const doubleBooked = stretched && sameAdvisorOverlap(state.appointments, { id, date, time, minutes, advisorId: current.advisorId });
         const advisorName = state.advisors.find((row) => row.id === current.advisorId)?.name ?? "This advisor";
         const doubleWarning = `${advisorName} already has a visit in that stretch. Keeping both double-books the advisor.`;
         const techName = state.techs.find((row) => row.id === techId)?.name ?? "";
@@ -3471,6 +3480,9 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (typeof rawOverride !== "number" || visitLengthError(rawOverride)) {
             return { ok: false, error: "That length override is not on this desk." };
           }
+        }
+        if (Array.isArray(patch.lines) && patch.lines.some((line) => line.laborOpId && !cleanFreeText(line.concern).trim())) {
+          return { ok: false, error: "Add a concern for this labor op." };
         }
         const rawLineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines.filter((line) => line.laborOpId)) : null;
         const lineMinutes = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
@@ -3757,7 +3769,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         return appointmentId;
       },
-      saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText, closeReason) => {
+      saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText, closeReason, confirmDoubleBook = false) => {
         const state = get();
         if (ownStoreError(state)) return { ok: false, appointmentId: "", overrideId: null, error: ownStoreError(state) };
         if (!namedActor(state) || !rosterEditor(state)) {
@@ -3861,6 +3873,23 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           },
         });
         if (result?.blocked) return { ok: false, appointmentId: "", overrideId: null, error: result.blocked };
+        const lengthened = Boolean(existing && input.minutes > existing.minutes);
+        const overlappedBefore = existing ? sameAdvisorOverlap(state.appointments, existing) : false;
+        const doubleBooked = lengthened && !overlappedBefore && sameAdvisorOverlap(state.appointments, {
+          id: existing?.id,
+          date: input.date,
+          time: input.time,
+          minutes: input.minutes,
+          advisorId: input.advisorId,
+        });
+        const advisorName = state.advisors.find((row) => row.id === input.advisorId)?.name ?? "This advisor";
+        const doubleWarning = `${advisorName} already has a visit in that stretch. Keeping both double-books the advisor.`;
+        if (doubleBooked && !confirmDoubleBook) {
+          return { ok: false, appointmentId: existing?.id ?? "", overrideId: null, error: null, warning: doubleWarning, needsDoubleBook: true };
+        }
+        if (Array.isArray(input.lines) && input.lines.some((line) => line.laborOpId && !cleanFreeText(line.concern).trim())) {
+          return { ok: false, appointmentId: existing?.id ?? "", overrideId: null, error: "Add a concern for this labor op." };
+        }
         const pastClose = !pastStatusOnly && clockChanged && visitRunsPastClose(state.settings.scheduling, input.date, input.time, input.minutes);
         if (pastClose && deskActor(state) !== "service-manager") {
           return { ok: false, appointmentId: "", overrideId: null, error: pastCloseMessage(state.settings.scheduling, input.date || existing?.date || "") };
@@ -3926,9 +3955,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const closeOverride = pastClose
           ? [...(get().overrides ?? [])].reverse().find((row) => row.appointmentId === appointmentId && row.reason === "past-close")?.id ?? null
           : null;
+        const doubleOverride = doubleBooked ? logReasonOverride("double-book", appointmentId, {
+          customerId: input.customerId,
+          date: input.date,
+          time: input.time,
+          techId: input.techId,
+          advisorId: input.advisorId,
+        }, doubleWarning) : null;
         const techName = state.techs.find((tech) => tech.id === input.techId)?.name ?? "";
         const note = result && !result.blocked ? advisorBookingNote(result, techName ? { techName, date: input.date } : undefined) : null;
-        return { ok: true, appointmentId, overrideId: closeOverride ?? overrideId, error: null, warning: note };
+        return { ok: true, appointmentId, overrideId: doubleOverride ?? closeOverride ?? overrideId, error: null, warning: note };
       },
       saveNewCustomerAppointment: (input, confirmTransfer, transferReasonText, closeReason, confirmOverride = false) => {
         const state = get();

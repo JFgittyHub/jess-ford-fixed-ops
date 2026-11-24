@@ -17,13 +17,15 @@ import { roCreationEnabled } from "@/lib/ro-flags";
 import { repairOrderWriterError } from "@/lib/store";
 import { formatVisit, snapHalfHour, today } from "@/lib/format";
 import { lineLetter } from "@/lib/jobs";
-import { clampLaborHours, DEMO_MISC_OPCODE, minutesFromLineHours, snapBlockMinutes } from "@/lib/labor-lines";
+import { clampLaborHours, DEMO_MISC_OPCODE, deskBlockMinutes, linesForDesk, minutesFromLineHours, snapBlockMinutes } from "@/lib/labor-lines";
 import { lookups } from "@/lib/metrics";
 import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
+import { clearCopiedVisits, readCopiedVisit, saveCopiedVisit } from "@/lib/copied-visit";
 import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotGestureError, slotOpensBook, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
+import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import { now } from "@/lib/clock";
 import type { Appointment, CancelReason, SchedulingSettings, TransportOption } from "@/lib/types";
@@ -110,11 +112,27 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
   const [copiedName, setCopiedName] = useState("");
   const [pasteNotice, setPasteNotice] = useState<PasteNotice | null>(null);
-  useForgetCopy(copyWorkerKey(shop), () => {
+  const { user, isPending } = useCurrentUserState();
+  const workerKey = copyWorkerKey(shop);
+  useForgetCopy(workerKey, () => {
     setClipboard(null);
     setCopiedName("");
     setPasteNotice(null);
+    if (user) clearCopiedVisits(localStorage, user.id);
   });
+  useEffect(() => {
+    if (isPending) return;
+    if (!user) {
+      clearCopiedVisits(localStorage);
+      setClipboard(null);
+      setCopiedName("");
+      return;
+    }
+    const stored = readCopiedVisit(localStorage, user.id, shop.activeStoreId, workerKey);
+    if (!stored) return;
+    setClipboard(stored.copy);
+    setCopiedName(stored.name);
+  }, [isPending, user, shop.activeStoreId, workerKey]);
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
     if (ignoreRequestsHash.current) {
@@ -135,9 +153,6 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     setOverridePrompt(null);
     setMoveOverride(null);
     setMoveClose(null);
-    setClipboard(null);
-    setCopiedName("");
-    setPasteNotice(null);
     setArrivedGate(null);
   }
   const { customerId, vehicleId, techId, serviceId: servicePick, onlineTechId } = liveSeed;
@@ -268,8 +283,11 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     }
     const row = shop.appointments.find((item) => item.id === id);
     if (!row) return;
-    setClipboard(copiedFrom(row));
-    setCopiedName(look.customer.get(row.customerId)?.name ?? "Appointment");
+    const copy = copiedFrom(row);
+    const name = look.customer.get(row.customerId)?.name ?? "Appointment";
+    setClipboard(copy);
+    setCopiedName(name);
+    if (user) saveCopiedVisit(localStorage, { userId: user.id, storeId: shop.activeStoreId, workerKey, name, copy });
     setPasteNotice(null);
   }
 
@@ -642,8 +660,9 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 scheduling={shop.settings.scheduling}
                 capacityFor={(draft) => capacityFor(draft, editing.id)}
                 initial={editing}
-                onSubmit={(value, confirmTransfer, transferReason, closeReason) => {
-                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason, closeReason);
+                onSubmit={(value, confirmTransfer, transferReason, closeReason, confirmDoubleBook) => {
+                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason, closeReason, confirmDoubleBook);
+                  if (result.needsDoubleBook) return { error: null, needsDoubleBook: true, warning: result.warning ?? null };
                   if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
                   if (!result.ok) return result.error;
                   setEditingId(null);
@@ -854,7 +873,7 @@ export function AppointmentFields({
   manager?: boolean;
   scheduling?: SchedulingSettings;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; laborHours?: number }) => { blocked: string | null; warning: string | null };
-  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status" | "lengthOverrideMinutes">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string) => string | null | { error: string | null; needsTransfer?: boolean; warning?: string | null };
+  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status" | "lengthOverrideMinutes">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmDoubleBook?: boolean) => string | null | { error: string | null; needsTransfer?: boolean; needsDoubleBook?: boolean; warning?: string | null };
   onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmOverride?: boolean) => string | null | { error: string | null; needsTransfer?: boolean; needsOverride?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
@@ -869,11 +888,20 @@ export function AppointmentFields({
   const editedHours = useRef(new Set<string>());
   const [techId, setTechId] = useState(initial.techId);
   const miscOp = laborOps.find((op) => op.opcode === DEMO_MISC_OPCODE);
-  const [lines, setLines] = useState(initial.lines?.length ? initial.lines : [{ id: "a", code: "A", concern: initial.concern, laborOpId: miscOp?.id ?? "", hours: 1 }]);
+  const [lines, setLines] = useState(() => linesForDesk(initial.lines ?? [], initial.laborOpIds ?? [], initial.minutes, laborOps, initial.lengthOverrideMinutes));
+  const openedLines = useRef(lines);
   const [vin, setVin] = useState(initial.vin);
   const [storedOpIds] = useState(initial.laborOpIds ?? []);
-  const rawLineMinutes = minutesFromLineHours(lines.filter((line) => line.laborOpId));
-  const drivenMinutes = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
+  const countedLines = lines.filter((line) => line.laborOpId && typeof line.hours === "number");
+  const rawLineMinutes = minutesFromLineHours(countedLines);
+  const openedLineMinutes = minutesFromLineHours(openedLines.current.filter((line) => line.concern.trim() && line.laborOpId)) ?? 0;
+  const lineSnap = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
+  const visitMinutes = deskBlockMinutes({
+    openedMinutes: initial.minutes,
+    openedLineMinutes,
+    lineMinutes: rawLineMinutes,
+    override: blockOverride,
+  });
   const oplessLine = lines.some((line) => line.concern.trim() && !line.laborOpId && typeof line.hours === "number");
   const lineOpIds = lines.length > 0 && lines.every((line) => line.laborOpId)
     ? lines.map((line) => line.laborOpId).filter((id): id is string => Boolean(id))
@@ -900,11 +928,12 @@ export function AppointmentFields({
   const [newPlate, setNewPlate] = useState("");
   const transferRef = useRef(false);
   const capacityRef = useRef(false);
+  const doubleRef = useRef(false);
+  const [doubleBook, setDoubleBook] = useState<string | null>(null);
   const closeText = scheduling ? pastCloseMessage(scheduling, date) : "";
   const formRef = useRef<HTMLFormElement>(null);
   const owned = vehicles.filter((vehicle) => vehicle.customerId === customerId);
   const resolvedVehicle = owned.some((vehicle) => vehicle.id === vehicleId) ? vehicleId : owned[0]?.id ?? "";
-  const visitMinutes = blockOverride ?? drivenMinutes ?? minutes;
   const draftKey = [date, time, techId, String(visitMinutes), advisorId, newVin, newName, newPhone].join("|");
   const draftSeen = useRef(draftKey);
   if (draftSeen.current !== draftKey) {
@@ -918,7 +947,7 @@ export function AppointmentFields({
   const scheduleMoved = date !== openedSchedule.current.date || time !== openedSchedule.current.time || visitMinutes !== openedSchedule.current.minutes;
   const selectedRunsPast = scheduling ? visitRunsPastClose(scheduling, date, time, visitMinutes) : false;
   const runsPastClose = !pastVisit && selectedRunsPast && (showStatus !== true || scheduleMoved);
-  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes: visitMinutes, advisorId, techId, laborOpIds, laborHours: drivenMinutes !== null || blockOverride !== null ? visitMinutes / 60 : undefined }) ?? { blocked: null, warning: null };
+  const capacity = pastVisit ? { blocked: null, warning: null } : capacityFor?.({ date, time, minutes: visitMinutes, advisorId, techId, laborOpIds, laborHours: lineSnap !== null || blockOverride !== null ? visitMinutes / 60 : undefined }) ?? { blocked: null, warning: null };
   const openStarts = scheduling ? STARTS.filter((item) => visitTimeError(scheduling, date, item) === null) : STARTS;
   const gridStarts = !scheduling ? STARTS : manager ? openStarts : fittingStartTimes(scheduling, date, visitMinutes, STARTS);
   const starts = gridStarts.includes(time) || (pastVisit && time) ? (gridStarts.includes(time) ? gridStarts : [time, ...gridStarts]) : gridStarts;
@@ -942,6 +971,10 @@ export function AppointmentFields({
           return;
         }
         if (capacity.warning && !capacityRef.current) return;
+        if (lines.some((line) => line.laborOpId && !line.concern.trim())) {
+          setFormError("Add a concern for this labor op.");
+          return;
+        }
         if (runsPastClose && lines.some((line) => line.concern.trim() && !line.laborOpId && typeof line.hours === "number")) {
           setFormError("Each concern line needs a labor op.");
           return;
@@ -1000,8 +1033,16 @@ export function AppointmentFields({
           setFormError(PAST_CLOSE_REASON);
           return;
         }
-        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined);
+        const sentDouble = doubleRef.current;
+        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, sentDouble);
         transferRef.current = false;
+        if (result && typeof result === "object" && result.needsDoubleBook) {
+          doubleRef.current = false;
+          setDoubleBook(result.warning || "Keeping both double-books the advisor.");
+          return;
+        }
+        doubleRef.current = false;
+        setDoubleBook(null);
         if (result && typeof result === "object" && result.needsTransfer) {
           setTransferWarning(result.warning || "This VIN is on file for another customer. Transfer the vehicle?");
           setFormError(result.error ?? null);
@@ -1019,12 +1060,12 @@ export function AppointmentFields({
           </select>
         </Field>
         <Field label="Length">
-          <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || drivenMinutes !== null || blockOverride !== null} onChange={setMinutes} />
-          {blockOverride !== null && drivenMinutes !== null && blockOverride !== drivenMinutes ? (
-            <p data-length-compare className="text-sm text-muted">Labor hours {flagHours((rawLineMinutes ?? drivenMinutes) / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
-          ) : rawLineMinutes !== null && drivenMinutes !== null && drivenMinutes > rawLineMinutes ? (
-            <p data-length-compare className="text-sm text-muted">Labor {flagHours(rawLineMinutes / 60)} hr. Calendar block {flagHours(drivenMinutes / 60)} hr (rounded up to the next half hour).</p>
-          ) : drivenMinutes !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
+          <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || lineSnap !== null || blockOverride !== null} onChange={setMinutes} />
+          {blockOverride !== null && lineSnap !== null && blockOverride !== lineSnap ? (
+            <p data-length-compare className="text-sm text-muted">Labor hours {flagHours((rawLineMinutes ?? lineSnap) / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
+          ) : rawLineMinutes !== null && lineSnap !== null && lineSnap > rawLineMinutes ? (
+            <p data-length-compare className="text-sm text-muted">Labor {flagHours(rawLineMinutes / 60)} hr. Calendar block {flagHours(lineSnap / 60)} hr (rounded up to the next half hour).</p>
+          ) : lineSnap !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
         </Field>
         <Field label="Lane">
           <select className="field" disabled={pastVisit} value={lane} onChange={(event) => setLane(event.target.value)}>
@@ -1183,6 +1224,7 @@ export function AppointmentFields({
                 ) : null}
                 </div>
                 {line.concern.trim() && !line.laborOpId && typeof line.hours === "number" ? <p data-line-error className="text-sm text-[#8a3b2a]">Choose a labor op.</p> : null}
+                {line.laborOpId && !line.concern.trim() ? <p data-line-error className="text-sm text-[#8a3b2a]">Add a concern for this labor op.</p> : null}
               </Field>
               <Field label="Hours">
                 <input
@@ -1241,6 +1283,16 @@ export function AppointmentFields({
         <Field label="Reason for running past close">
           <input className="field" aria-label="Reason for running past close" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} />
         </Field>
+      ) : null}
+      {doubleBook ? (
+        <div className="grid gap-2" data-double-book>
+          <p className="font-semibold">These visits overlap.</p>
+          <p role="status" className="rounded-md border border-[#e7d7a8] bg-[#f8efd4] px-3 py-2 text-sm text-[#8a5a00]">{doubleBook}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button tone="primary" type="button" onClick={() => { doubleRef.current = true; formRef.current?.requestSubmit(); }}>Keep both</Button>
+            <Button type="button" onClick={() => setDoubleBook(null)}>Leave it</Button>
+          </div>
+        </div>
       ) : null}
       {capacity.warning ? (
         <div className="grid gap-2" data-capacity-choices>
@@ -1344,7 +1396,7 @@ export function CopyBar({
   if (!copiedName && !notice) return null;
   return (
     <CopyBarFrame copiedName={copiedName} notice={notice}>
-      {copiedName ? <p data-copied role="status" className="shrink-0 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays until you copy another card.</p> : null}
+      {copiedName ? <p data-copied role="status" className="shrink-0 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays when you leave this page, until you copy another card, change who is working, or sign out.</p> : null}
       <div data-copy-scroll className="min-h-0 overflow-y-auto">
         <PasteNoticeBar notice={notice} onOverride={onOverride} onReason={onReason} onDismiss={onDismiss} />
       </div>
