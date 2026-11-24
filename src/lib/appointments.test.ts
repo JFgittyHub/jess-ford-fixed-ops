@@ -29,7 +29,7 @@ describe("appointment actions", () => {
     assert.equal(added[0].concern.includes("Oil change"), true);
 
     const target = added[0];
-    shop.getState().moveAppointment(target.id, { time: "11:30", minutes: 90, techId: "elena" });
+    shop.getState().moveAppointment(target.id, { time: "11:30", minutes: 90, techId: "elena" }, true);
     const moved = shop.getState().appointments.find((row) => row.id === target.id);
     assert.equal(moved?.time, "11:30");
     assert.equal(moved?.minutes, 90);
