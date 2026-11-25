@@ -204,7 +204,14 @@ function waitForPort(port: number) {
 async function waitForSelector(page: Page, selector: string, timeoutMs = 20000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    if (await page.evaluate((selector) => Boolean(document.querySelector(selector)), selector)) return true;
+    try {
+      if (await page.evaluate((selector) => Boolean(document.querySelector(selector)), selector)) return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // The dev document can be replaced once while the client boots. A probe
+      // in that moment must wait for the next document, not fail the test.
+      if (!/Execution context was destroyed|Target page, context or browser has been closed|Navigation/i.test(message)) throw error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return false;

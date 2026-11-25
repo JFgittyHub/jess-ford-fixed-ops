@@ -4025,7 +4025,12 @@ function stopServer(server: ChildProcess) {
 async function waitForSelector(page: Page, selector: string, timeoutMs = 4000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    if (await page.evaluate((selector) => Boolean(document.querySelector(selector)), selector)) return true;
+    try {
+      if (await page.evaluate((selector) => Boolean(document.querySelector(selector)), selector)) return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/Execution context was destroyed|Target page, context or browser has been closed|Navigation/i.test(message)) throw error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return false;
