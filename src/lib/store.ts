@@ -3486,9 +3486,11 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const rawLineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines.filter((line) => line.laborOpId)) : null;
         const explicitOverride = typeof patch.lengthOverrideMinutes === "number" ? patch.lengthOverrideMinutes : null;
-        const editedBlock = Array.isArray(patch.lines) || patch.lengthOverrideMinutes !== undefined
-          ? blockAfterLineEdit(current.minutes, rawLineMinutes, explicitOverride)
-          : { minutes: typeof patch.minutes === "number" ? patch.minutes : current.minutes, override: explicitOverride };
+        const editedBlock = rawLineMinutes == null && typeof patch.minutes === "number" && typeof patch.lengthOverrideMinutes !== "number"
+          ? { minutes: patch.minutes, override: explicitOverride }
+          : Array.isArray(patch.lines) || patch.lengthOverrideMinutes !== undefined
+            ? blockAfterLineEdit(current.minutes, rawLineMinutes, explicitOverride)
+            : { minutes: typeof patch.minutes === "number" ? patch.minutes : current.minutes, override: explicitOverride };
         const effectiveDate = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
         const effectiveTime = patch.time !== undefined ? patch.time : current.time;
         const effectiveMinutes = editedBlock.minutes;

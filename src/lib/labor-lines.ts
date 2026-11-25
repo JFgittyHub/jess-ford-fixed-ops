@@ -138,9 +138,12 @@ export function deskBlockMinutes(input: {
   const current = typeof input.override === "number" ? input.override : input.openedMinutes;
   if (input.lineMinutes == null || !Number.isFinite(input.lineMinutes)) return current;
   const snapped = snapBlockMinutes(input.lineMinutes);
-  const opened = snapBlockMinutes(Math.max(0, input.openedLineMinutes));
-  if (snapped > opened && snapped > current) return snapped;
-  return current;
+  if (typeof input.override === "number") {
+    const opened = snapBlockMinutes(Math.max(0, input.openedLineMinutes));
+    if (snapped > opened && snapped > current) return snapped;
+    return current;
+  }
+  return snapped > current ? snapped : current;
 }
 
 /**

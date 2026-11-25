@@ -278,7 +278,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   }
 
   function pasteInto(techId: string, time: string, opts?: { confirmOverride?: boolean; closeReason?: string }) {
-    if (authEnabled && !isPending && !user) {
+    if (authEnabled && !isPending && !user && !shop.workingAsId) {
       setPasteNotice({ kind: "error", text: "Sign in to paste." });
       return;
     }
@@ -295,7 +295,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
       return;
     }
     const input = pasteAppointmentInput(clipboard, { date: day, time, techId });
-    const result = commitPaste({ getState: () => useShop.getState() }, input, { ...opts, signedIn: !authEnabled || isPending || Boolean(user) });
+    const result = commitPaste({ getState: () => useShop.getState() }, input, { ...opts, signedIn: !authEnabled || isPending || Boolean(user) || Boolean(shop.workingAsId) });
     if (result.needsCloseReason) {
       setPasteNotice({ kind: "close", techId, time, reason: "", text: result.error });
       return;

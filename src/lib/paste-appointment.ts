@@ -217,14 +217,11 @@ export function commitPaste(
   opts?: { confirmOverride?: boolean; closeReason?: string; signedIn?: boolean },
 ): PasteResult {
   const state = store.getState();
-  if (opts?.signedIn === false) {
-    return { ok: false, error: "Sign in to paste.", appointmentId: "", overrideId: null };
-  }
-  if (!state.workingAsId) {
-    return { ok: false, error: "Choose who is working to book or change anything.", appointmentId: "", overrideId: null };
-  }
   if (state.userStoreId && state.activeStoreId && state.userStoreId !== state.activeStoreId) {
     return { ok: false, error: "Book on your own store. Each store keeps its own schedule.", appointmentId: "", overrideId: null };
+  }
+  if (opts?.signedIn === false || !state.workingAsId) {
+    return { ok: false, error: state.workingAsId ? "Sign in to paste." : "Choose who is working to book or change anything.", appointmentId: "", overrideId: null };
   }
   const advisorId = pasterAdvisorId(state);
   if (!advisorId) {
