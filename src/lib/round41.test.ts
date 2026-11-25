@@ -125,7 +125,7 @@ describe("round 24 override and advisor checks", () => {
       lines: [{ id: "a", code: "A", concern: "Short", laborOpId: brake.id, hours: 0.1 }],
     });
     assert.equal(tiny.ok, true, tiny.error ?? "");
-    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 30);
+    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 60);
     assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.lines[0]?.hours, 0.1);
     const huge = store.getState().updateAppointment(saved.appointmentId, {
       lines: [{ id: "a", code: "A", concern: "All day", laborOpId: brake.id, hours: 24 }],
@@ -140,7 +140,7 @@ describe("round 24 override and advisor checks", () => {
     assert.notEqual(addedTiny, "");
     assert.equal(store.getState().appointments.find((row) => row.id === addedTiny)?.minutes, 30);
     assert.equal(store.getState().appointments.find((row) => row.id === addedTiny)?.lines[0]?.hours, 0.1);
-    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 30);
+    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 60);
     const late = store.getState().updateAppointment(saved.appointmentId, {
       lines: [
         { id: "a", code: "A", concern: "Late", laborOpId: misc.id, hours: 3 },
@@ -149,7 +149,7 @@ describe("round 24 override and advisor checks", () => {
     });
     assert.equal(late.ok, false);
     assert.match(late.error ?? "", /past closing/);
-    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 30);
+    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 60);
     assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.lines.length, 1);
     store.getState().setWorkingAs("derek");
     const noisy = store.getState().updateAppointment(saved.appointmentId, {
@@ -160,7 +160,7 @@ describe("round 24 override and advisor checks", () => {
     }, "Customer is waiting on this");
     assert.match(noisy.error ?? "", /labor op/);
     assert.equal(noisy.needsCloseReason ?? false, false);
-    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 30);
+    assert.equal(store.getState().appointments.find((row) => row.id === saved.appointmentId)?.minutes, 60);
     const approved = store.getState().updateAppointment(saved.appointmentId, {
       lines: [
         { id: "a", code: "A", concern: "Late", laborOpId: misc.id, hours: 3 },

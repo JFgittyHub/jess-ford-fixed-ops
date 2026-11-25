@@ -109,6 +109,7 @@ export function linesForDesk(
   lengthOverrideMinutes?: number | null,
 ): AppointmentLine[] {
   if (!lines.length) return prepareConcernLines(lines, laborOpIds, minutes, laborOps);
+  void lengthOverrideMinutes;
   const prepared = lines.map((line, index) => {
     const laborOpId = line.laborOpId || laborOpIds[index] || "";
     if (!laborOpId) return { ...line };
@@ -119,21 +120,14 @@ export function linesForDesk(
     const catalog = op?.hours ?? (lines.length === 1 ? Math.round((minutes / 60) * 10) / 10 : MISC_MIN_HOURS);
     return { ...line, laborOpId, hours: clampLaborHours(op?.opcode ?? "", catalog) };
   });
-  if (typeof lengthOverrideMinutes === "number") return prepared;
-  const raw = minutesFromLineHours(prepared.filter((line) => line.laborOpId));
-  if (raw == null || prepared.length === 0) return prepared;
-  const snapped = snapBlockMinutes(raw);
-  if (snapped >= minutes) return prepared;
-  const last = [...prepared].reverse().findIndex((line) => line.laborOpId);
-  if (last < 0) return prepared;
-  const index = prepared.length - 1 - last;
-  const hours = roundLaborHours((prepared[index]?.hours ?? 0) + (minutes - snapped) / 60);
-  return prepared.map((line, at) => at === index ? { ...line, hours } : line);
+  return prepared;
 }
 
 /**
- * The block after a line edit. Adding hours never shrinks a longer visit:
- * 90 minutes plus a 0.5 hour line is 120, not 30. A drag override wins.
+ * The block after a line edit. A higher line total, rounded up to 30 minutes,
+ * lengthens the visit. An equal or lower total leaves the length alone.
+ * A drag override is the current length until the lines grow past it.
+ * Line hours are not rewritten.
  */
 export function deskBlockMinutes(input: {
   openedMinutes: number;
@@ -141,10 +135,24 @@ export function deskBlockMinutes(input: {
   lineMinutes: number | null;
   override: number | null;
 }): number {
-  if (typeof input.override === "number") return input.override;
-  if (input.lineMinutes == null) return input.openedMinutes;
+  const current = typeof input.override === "number" ? input.override : input.openedMinutes;
+  if (input.lineMinutes == null || !Number.isFinite(input.lineMinutes)) return current;
   const snapped = snapBlockMinutes(input.lineMinutes);
-  const delta = input.lineMinutes - input.openedLineMinutes;
-  if (snapped < input.openedMinutes && delta > 0) return snapBlockMinutes(input.openedMinutes + delta);
-  return snapped;
+  const opened = snapBlockMinutes(Math.max(0, input.openedLineMinutes));
+  if (snapped > opened && snapped > current) return snapped;
+  return current;
+}
+
+/**
+ * Store rule for a save or update. A numeric drag override is the length.
+ * Otherwise a higher snapped line total grows the visit, and a lower one
+ * keeps the current length so the calendar cannot shrink from the lines.
+ */
+export function blockAfterLineEdit(currentMinutes: number, lineMinutes: number | null, explicitOverride: number | null): { minutes: number; override: number | null } {
+  if (typeof explicitOverride === "number") return { minutes: explicitOverride, override: explicitOverride };
+  if (lineMinutes == null || !Number.isFinite(lineMinutes)) return { minutes: currentMinutes, override: null };
+  const snapped = snapBlockMinutes(lineMinutes);
+  if (snapped > currentMinutes) return { minutes: snapped, override: null };
+  if (snapped < currentMinutes) return { minutes: currentMinutes, override: currentMinutes };
+  return { minutes: currentMinutes, override: null };
 }

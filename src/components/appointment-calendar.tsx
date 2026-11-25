@@ -664,10 +664,11 @@ export function AppointmentCalendar({
   }
 
   const shown = appointments.map((row) => placed(row, draft));
+  const wideLanes = techs.some((tech) => stack(shown.filter((row) => row.date === day && row.techId === tech.id)).some((row) => row.lanes > 1));
 
   return (
     <div className="card mt-4 overflow-x-auto p-0" style={{ scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}>
-      <div className="grid min-w-[52rem]" style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(8.5rem, 1fr))` }}>
+      <div className="grid min-w-[52rem]" data-lane-layout={wideLanes ? "side" : "single"} style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(${wideLanes ? "18rem" : "8.5rem"}, 1fr))` }}>
         <div className="border-b border-line" />
         {columnGroups(techs).map((group) => (
           <div key={group.key} className="border-b border-l border-line px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide" style={{ gridColumn: `span ${group.count}`, background: BOARD_SHADE[group.board].head }}>
@@ -702,6 +703,7 @@ export function AppointmentCalendar({
         </div>
         {techs.map((tech) => {
           const rows = stack(shown.filter((row) => row.date === day && row.techId === tech.id));
+          const laneCount = Math.max(1, ...rows.map((row) => row.lanes));
           return (
             <div
               key={tech.id}
@@ -710,6 +712,7 @@ export function AppointmentCalendar({
               style={{
                 position: "relative",
                 height,
+                minWidth: laneCount > 1 ? `${laneCount * 9}rem` : undefined,
                 overflow: "visible",
                 backgroundColor: BOARD_SHADE[tech.board].column,
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
@@ -955,7 +958,7 @@ export function AppointmentCalendar({
                     data-drag="move"
                     className={`group absolute rounded-md border border-[#c5d7ee] bg-[#e7f1fb] text-left shadow-card ${selected ? "border-primary ring-2 ring-primary/30" : ""} ${row.status === "no_show" ? "opacity-55" : ""}`}
                     data-appt-time={row.time}
-                    style={{ position: "absolute", overflow: "hidden", top, height: block, ...laneStyle, zIndex: split ? 1 : 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
+                    style={{ position: "absolute", overflow: "hidden", top, height: block, ...laneStyle, zIndex: split ? 2 : 1 + offset, cursor: "grab", touchAction: "none", scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}
                     onPointerDown={(event) => begin(event, visit, "move")}
                     onContextMenu={(event) => {
                       if (heldPointerActive.current) {
@@ -970,7 +973,7 @@ export function AppointmentCalendar({
                     }}
                   >
                     <div data-card-clip className="absolute inset-0 overflow-hidden rounded-md" style={{ overflow: "hidden" }}>
-                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{clockTime(row.time)} {label(row)}</p>
+                      <p className="pointer-events-none absolute truncate text-[11px] font-semibold" title={label(row)} style={{ left: 6, right: titleRight, top: 0, height: titleBand, margin: 0, lineHeight: "14px", fontSize: 11, overflow: "hidden" }}>{split ? label(row) : `${clockTime(row.time)} ${label(row)}`}</p>
                       {tag ? (
                         <span
                           data-lane-tag

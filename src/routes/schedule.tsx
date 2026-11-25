@@ -23,8 +23,8 @@ import { matchRequestCustomer, requestHolds } from "@/lib/online-request";
 import { normalizeVin } from "@/lib/vin";
 import { noShowSuffix } from "@/lib/no-show-label";
 import { laneLabel, normalizeLane } from "@/lib/scheduling";
-import { clearCopiedVisits, readCopiedVisit, saveCopiedVisit } from "@/lib/copied-visit";
-import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotGestureError, slotOpensBook, useForgetCopy, type CopiedAppointment } from "@/lib/paste-appointment";
+import { authEnabled } from "@/lib/auth/client";
+import { commitPaste, copiedFrom, copyWorkerKey, pasteAppointmentInput, slotGestureError, slotOpensBook, useDeskCopy } from "@/lib/paste-appointment";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { bookingDateMessage, nextOpenShopDay, useShop } from "@/lib/store";
 import { now } from "@/lib/clock";
@@ -109,30 +109,18 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
   const [overridePrompt, setOverridePrompt] = useState<{ id: string; warning: string } | null>(null);
   const [moveOverride, setMoveOverride] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; warning: string; closeReason?: string; doubleBook?: boolean } | null>(null);
   const [moveClose, setMoveClose] = useState<{ id: string; patch: { time: string; minutes: number; techId: string }; reason: string } | null>(null);
-  const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
-  const [copiedName, setCopiedName] = useState("");
   const [pasteNotice, setPasteNotice] = useState<PasteNotice | null>(null);
   const { user, isPending } = useCurrentUserState();
   const workerKey = copyWorkerKey(shop);
-  useForgetCopy(workerKey, () => {
-    setClipboard(null);
-    setCopiedName("");
-    setPasteNotice(null);
-    if (user) clearCopiedVisits(localStorage, user.id);
-  });
-  useEffect(() => {
-    if (isPending) return;
-    if (!user) {
-      clearCopiedVisits(localStorage);
-      setClipboard(null);
-      setCopiedName("");
-      return;
-    }
-    const stored = readCopiedVisit(localStorage, user.id, shop.activeStoreId, workerKey);
-    if (!stored) return;
-    setClipboard(stored.copy);
-    setCopiedName(stored.name);
-  }, [isPending, user, shop.activeStoreId, workerKey]);
+  const deskCopy = useDeskCopy(
+    shop.workingAsId,
+    shop.activeStoreId,
+    workerKey,
+    (vehicleId) => shop.vehicles.find((row) => row.id === vehicleId)?.vin ?? "",
+    () => setPasteNotice(null),
+  );
+  const clipboard = deskCopy.clipboard;
+  const copiedName = deskCopy.name;
   const [arrivedGate, setArrivedGate] = useState<{ reason: CancelReason; note: string } | null>(null);
   useEffect(() => {
     if (ignoreRequestsHash.current) {
@@ -285,13 +273,19 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     if (!row) return;
     const copy = copiedFrom(row);
     const name = look.customer.get(row.customerId)?.name ?? "Appointment";
-    setClipboard(copy);
-    setCopiedName(name);
-    if (user) saveCopiedVisit(localStorage, { userId: user.id, storeId: shop.activeStoreId, workerKey, name, copy });
+    deskCopy.remember(copy, name);
     setPasteNotice(null);
   }
 
   function pasteInto(techId: string, time: string, opts?: { confirmOverride?: boolean; closeReason?: string }) {
+    if (authEnabled && !isPending && !user) {
+      setPasteNotice({ kind: "error", text: "Sign in to paste." });
+      return;
+    }
+    if (!shop.workingAsId) {
+      setPasteNotice({ kind: "error", text: "Choose who is working to book or change anything." });
+      return;
+    }
     if (actor !== "advisor" && actor !== "service-manager") {
       setPasteNotice({ kind: "error", text: actor === "technician" ? "Techs can view only." : "Choose who is working to book or change anything." });
       return;
@@ -301,7 +295,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
       return;
     }
     const input = pasteAppointmentInput(clipboard, { date: day, time, techId });
-    const result = commitPaste({ getState: () => useShop.getState() }, input, opts);
+    const result = commitPaste({ getState: () => useShop.getState() }, input, { ...opts, signedIn: !authEnabled || isPending || Boolean(user) });
     if (result.needsCloseReason) {
       setPasteNotice({ kind: "close", techId, time, reason: "", text: result.error });
       return;
@@ -1034,7 +1028,8 @@ export function AppointmentFields({
           return;
         }
         const sentDouble = doubleRef.current;
-        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, sentDouble);
+        const linesGrew = lineSnap !== null && lineSnap > (blockOverride ?? initial.minutes) && lineSnap > snapBlockMinutes(Math.max(0, openedLineMinutes));
+        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: linesGrew ? null : blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, sentDouble);
         transferRef.current = false;
         if (result && typeof result === "object" && result.needsDoubleBook) {
           doubleRef.current = false;
@@ -1061,10 +1056,12 @@ export function AppointmentFields({
         </Field>
         <Field label="Length">
           <VisitLengthPicker minutes={visitMinutes} lengths={lengths} disabled={pastVisit || lineSnap !== null || blockOverride !== null} onChange={setMinutes} />
-          {blockOverride !== null && lineSnap !== null && blockOverride !== lineSnap ? (
+          {blockOverride !== null && lineSnap !== null && blockOverride !== lineSnap && visitMinutes === blockOverride ? (
             <p data-length-compare className="text-sm text-muted">Labor hours {flagHours((rawLineMinutes ?? lineSnap) / 60)} hr. Block length {lengthLabel(blockOverride)}.</p>
-          ) : rawLineMinutes !== null && lineSnap !== null && lineSnap > rawLineMinutes ? (
+          ) : rawLineMinutes !== null && lineSnap !== null && lineSnap > rawLineMinutes && visitMinutes === lineSnap ? (
             <p data-length-compare className="text-sm text-muted">Labor {flagHours(rawLineMinutes / 60)} hr. Calendar block {flagHours(lineSnap / 60)} hr (rounded up to the next half hour).</p>
+          ) : lineSnap !== null && visitMinutes > lineSnap ? (
+            <p data-length-compare className="text-sm text-muted">Labor {flagHours((rawLineMinutes ?? lineSnap) / 60)} hr. Calendar block {flagHours(visitMinutes / 60)} hr. Drag the visit to make it shorter.</p>
           ) : lineSnap !== null ? <p className="text-sm text-muted">Length follows the labor hours on each line.</p> : null}
         </Field>
         <Field label="Lane">
@@ -1396,7 +1393,7 @@ export function CopyBar({
   if (!copiedName && !notice) return null;
   return (
     <CopyBarFrame copiedName={copiedName} notice={notice}>
-      {copiedName ? <p data-copied role="status" className="shrink-0 text-sm text-muted">Copied {copiedName}. Paste into an open slot. The copy stays when you leave this page, until you copy another card, change who is working, or sign out.</p> : null}
+      {copiedName ? <p data-copied role="status" className="text-sm leading-5 text-muted">Copied {copiedName}. Stays when you leave, until a new copy, a different person, or sign-out.</p> : null}
       <div data-copy-scroll className="min-h-0 overflow-y-auto">
         <PasteNoticeBar notice={notice} onOverride={onOverride} onReason={onReason} onDismiss={onDismiss} />
       </div>

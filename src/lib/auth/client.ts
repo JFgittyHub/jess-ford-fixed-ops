@@ -119,6 +119,9 @@ export async function signIn(
     livePreview: inLivePreview(),
     hasBearer: Boolean(getBearerToken()),
     requestSignOut: () => authClient.signOut(),
+    clearCopies: () => {
+      if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+    },
     clearToken: () => setBearerToken(null),
   });
 
@@ -226,13 +229,15 @@ export async function signOut(redirectTo = "/"): Promise<void> {
     hasBearer: Boolean(getBearerToken()),
     // Better Auth resolves with `{ error }` instead of rejecting, so surface a
     // failed response as a rejection for the sequence to act on.
+    clearCopies: () => {
+      if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+    },
     requestSignOut: async () => {
       const { error } = await authClient.signOut();
       if (error) throw new Error(error.message ?? "Sign-out failed");
     },
     clearToken: () => {
       setBearerToken(null);
-      if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
     },
     redirect: () => {
       window.location.href = redirectTo;

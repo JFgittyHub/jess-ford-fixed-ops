@@ -90,7 +90,7 @@ describe("round 29 lines, overlap, and a lasting copy", () => {
     host.remove();
 
     assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 90, lineMinutes: 120, override: null }), 120);
-    assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 0, lineMinutes: 30, override: null }), 120);
+    assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 0, lineMinutes: 30, override: null }), 90);
     assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 90, lineMinutes: 60, override: 90 }), 90);
   });
 
@@ -172,24 +172,27 @@ describe("round 29 lines, overlap, and a lasting copy", () => {
     assert.ok(row);
     const workerKey = copyWorkerKey(store.getState());
     const record: StoredCopy = {
-      userId: "dev-user",
+      workingAsId: "megan",
       storeId: store.getState().activeStoreId,
       workerKey,
       name: "Helen Cho",
       copy: copiedFrom(row),
     };
     saveCopiedVisit(storage, record);
-    const restored = readCopiedVisit(storage, "dev-user", record.storeId, workerKey);
+    const restored = readCopiedVisit(storage, "megan", record.storeId, workerKey);
     assert.equal(restored?.name, "Helen Cho");
     assert.equal(restored?.copy.customerId, row.customerId);
+    assert.equal(restored?.copy.vin, "");
+    assert.equal(readCopiedVisit(storage, "", record.storeId, workerKey), null);
+    assert.equal(readCopiedVisit(storage, "megan", record.storeId, workerKey)?.name, "Helen Cho");
     assert.equal(readCopiedVisit(storage, "other-user", record.storeId, workerKey), null);
     saveCopiedVisit(storage, record);
-    assert.equal(readCopiedVisit(storage, "dev-user", "pullman", workerKey), null);
+    assert.equal(readCopiedVisit(storage, "megan", "pullman", workerKey), null);
     saveCopiedVisit(storage, record);
-    assert.equal(readCopiedVisit(storage, "dev-user", record.storeId, `${workerKey}|other`), null);
+    assert.equal(readCopiedVisit(storage, "megan", record.storeId, `${workerKey}|other`), null);
     saveCopiedVisit(storage, record);
-    clearCopiedVisits(storage, "dev-user");
-    assert.equal(readCopiedVisit(storage, "dev-user", record.storeId, workerKey), null);
+    clearCopiedVisits(storage, "megan");
+    assert.equal(readCopiedVisit(storage, "megan", record.storeId, workerKey), null);
 
     const sunday = "2026-11-15";
     const pasted = commitPaste(store, pasteAppointmentInput(copiedFrom(row), { date: sunday, time: "10:00", techId: "elena" }));

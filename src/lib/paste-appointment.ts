@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { advisorBookingNote, assessAppointment, pastCloseMessage, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
 import { deskActor } from "./cancel";
+import { clearCopiedVisits, copyStorageKey, isCopyStorageKey, readCopiedVisit, saveCopiedVisit } from "./copied-visit";
 import { bookingDateMessage } from "./store";
 import { blockMinutes, minutesFromLineHours } from "./labor-lines";
 import type { Appointment } from "./types";
@@ -104,14 +105,75 @@ export function copyWorkerKey(state: {
 }
 
 /** Drop a copied card during render when the person, role, or store changes, so the old line never paints. */
-export function useForgetCopy(workerKey: string, clear: () => void) {
+export function useForgetCopy(workerKey: string, clear: (previousKey: string) => void) {
   const clearRef = useRef(clear);
   clearRef.current = clear;
   const [seen, setSeen] = useState(workerKey);
   if (seen !== workerKey) {
+    const previous = seen;
     setSeen(workerKey);
-    clearRef.current();
+    clearRef.current(previous);
   }
+}
+
+/** The desk copy, restored after Working as is known and kept across a reload. An empty Working as does not delete it. */
+export function useDeskCopy(workingAsId: string, storeId: string, workerKey: string, vinFor: (vehicleId: string) => string, onForget?: () => void) {
+  const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
+  const [name, setName] = useState("");
+  const vinForRef = useRef(vinFor);
+  vinForRef.current = vinFor;
+  const onForgetRef = useRef(onForget);
+  onForgetRef.current = onForget;
+  const storage = typeof localStorage === "undefined" ? null : localStorage;
+  useForgetCopy(workerKey, (previous) => {
+    const previousPerson = previous.split("|")[2] ?? "";
+    const nextPerson = workerKey.split("|")[2] ?? "";
+    if (!previousPerson || !nextPerson) return;
+    setClipboard(null);
+    setName("");
+    onForgetRef.current?.();
+    if (storage) clearCopiedVisits(storage, previousPerson);
+  });
+  useLayoutEffect(() => {
+    if (!storage || !workingAsId) return;
+    const stored = readCopiedVisit(storage, workingAsId, storeId, workerKey);
+    if (!stored) {
+      setClipboard(null);
+      setName("");
+      return;
+    }
+    setClipboard({ ...stored.copy, vin: stored.copy.vin || vinForRef.current(stored.copy.vehicleId) });
+    setName(stored.name);
+  }, [storage, workingAsId, storeId, workerKey]);
+  useLayoutEffect(() => {
+    if (!storage || typeof window === "undefined") return;
+    const onStorage = (event: StorageEvent) => {
+      if (!isCopyStorageKey(event.key)) return;
+      if (!workingAsId || event.key !== copyStorageKey(workingAsId, storeId) || event.newValue == null) {
+        setClipboard(null);
+        setName("");
+        onForgetRef.current?.();
+        return;
+      }
+      const stored = readCopiedVisit(storage, workingAsId, storeId, workerKey);
+      if (!stored) {
+        setClipboard(null);
+        setName("");
+        return;
+      }
+      setClipboard({ ...stored.copy, vin: stored.copy.vin || vinForRef.current(stored.copy.vehicleId) });
+      setName(stored.name);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [storage, workingAsId, storeId, workerKey]);
+  function remember(copy: CopiedAppointment, copiedName: string) {
+    setClipboard(copy);
+    setName(copiedName);
+    if (!storage || !workingAsId) return;
+    saveCopiedVisit(storage, { workingAsId, storeId, workerKey, name: copiedName, copy });
+  }
+  return { clipboard, name, remember };
 }
 
 type PasteStore = {
@@ -152,9 +214,15 @@ export type PasteResult = {
 export function commitPaste(
   store: PasteStore,
   input: Omit<Appointment, "id" | "orderId">,
-  opts?: { confirmOverride?: boolean; closeReason?: string },
+  opts?: { confirmOverride?: boolean; closeReason?: string; signedIn?: boolean },
 ): PasteResult {
   const state = store.getState();
+  if (opts?.signedIn === false) {
+    return { ok: false, error: "Sign in to paste.", appointmentId: "", overrideId: null };
+  }
+  if (!state.workingAsId) {
+    return { ok: false, error: "Choose who is working to book or change anything.", appointmentId: "", overrideId: null };
+  }
   if (state.userStoreId && state.activeStoreId && state.userStoreId !== state.activeStoreId) {
     return { ok: false, error: "Book on your own store. Each store keeps its own schedule.", appointmentId: "", overrideId: null };
   }

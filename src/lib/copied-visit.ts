@@ -2,9 +2,9 @@ import type { CopiedAppointment } from "./paste-appointment";
 
 const PREFIX = "jf-desk-copy:";
 
-/** The copy the desk keeps. Only the fields Paste already uses, plus the name on the card. */
+/** The copy the desk keeps. Keyed by who is Working as and the store, until sign-in exists. The VIN is not stored. */
 export type StoredCopy = {
-  userId: string;
+  workingAsId: string;
   storeId: string;
   workerKey: string;
   name: string;
@@ -19,8 +19,12 @@ type KeyedStorage = {
   readonly length?: number;
 };
 
-export function copyStorageKey(userId: string, storeId: string) {
-  return `${PREFIX}${userId}:${storeId}`;
+export function copyStorageKey(workingAsId: string, storeId: string) {
+  return `${PREFIX}${workingAsId}:${storeId}`;
+}
+
+export function isCopyStorageKey(key: string | null) {
+  return Boolean(key && key.startsWith(PREFIX));
 }
 
 function storageKeys(storage: KeyedStorage) {
@@ -36,30 +40,36 @@ function storageKeys(storage: KeyedStorage) {
 }
 
 export function saveCopiedVisit(storage: KeyedStorage, record: StoredCopy) {
-  storage.setItem(copyStorageKey(record.userId, record.storeId), JSON.stringify(record));
+  const stored: StoredCopy = { ...record, copy: { ...record.copy, vin: "" } };
+  storage.setItem(copyStorageKey(record.workingAsId, record.storeId), JSON.stringify(stored));
 }
 
-/** The copy for this user, store, and worker. A mismatch is dropped so it cannot leak. */
-export function readCopiedVisit(storage: KeyedStorage, userId: string, storeId: string, workerKey: string): StoredCopy | null {
-  const raw = storage.getItem(copyStorageKey(userId, storeId));
+/**
+ * The copy for this Working-as person, store, and worker. An empty person is
+ * not a mismatch: a fresh mount must not delete the copy before Working as
+ * is restored. A real mismatch is dropped so it cannot leak.
+ */
+export function readCopiedVisit(storage: KeyedStorage, workingAsId: string, storeId: string, workerKey: string): StoredCopy | null {
+  if (!workingAsId || !storeId) return null;
+  const raw = storage.getItem(copyStorageKey(workingAsId, storeId));
   if (!raw) return null;
   let parsed: StoredCopy;
   try {
     parsed = JSON.parse(raw) as StoredCopy;
   } catch {
-    storage.removeItem(copyStorageKey(userId, storeId));
+    storage.removeItem(copyStorageKey(workingAsId, storeId));
     return null;
   }
-  if (!parsed?.copy || parsed.userId !== userId || parsed.storeId !== storeId || parsed.workerKey !== workerKey) {
-    storage.removeItem(copyStorageKey(userId, storeId));
+  if (!parsed?.copy || parsed.workingAsId !== workingAsId || parsed.storeId !== storeId || parsed.workerKey !== workerKey) {
+    storage.removeItem(copyStorageKey(workingAsId, storeId));
     return null;
   }
-  return parsed;
+  return { ...parsed, copy: { ...parsed.copy, vin: "" } };
 }
 
-/** Sign-out and a worker change remove the copies for that user. */
-export function clearCopiedVisits(storage: KeyedStorage, userId?: string) {
-  const prefix = userId ? `${PREFIX}${userId}:` : PREFIX;
+/** Sign-out and a worker change remove the copies for that person. No id removes every copy. */
+export function clearCopiedVisits(storage: KeyedStorage, workingAsId?: string) {
+  const prefix = workingAsId ? `${PREFIX}${workingAsId}:` : PREFIX;
   for (const key of storageKeys(storage)) {
     if (key.startsWith(prefix)) storage.removeItem(key);
   }
