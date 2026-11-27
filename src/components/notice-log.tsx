@@ -16,6 +16,7 @@ export function NoticeLog({ rows }: { rows: ShopNotice[] }) {
           <tr>
             <th>When</th>
             <th>Kind</th>
+            <th>Who</th>
             <th>Customer</th>
             <th>Method</th>
             <th>Recipient</th>
@@ -27,6 +28,7 @@ export function NoticeLog({ rows }: { rows: ShopNotice[] }) {
             <tr key={row.id}>
               <td className="whitespace-nowrap">{shopWhen(row.at)}</td>
               <td>{KIND[row.kind]}</td>
+              <td>{row.who || "—"}</td>
               <td>{row.customerName}</td>
               <td>{METHOD[row.method]}</td>
               <td>{row.recipient}</td>

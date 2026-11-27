@@ -18,6 +18,10 @@ Application code in this repo has no root `LICENSE` file. Third-party packages a
 
 Customers, staff, vehicles, VINs, parts, labor, appointments, and repair orders in `src/lib/seed.ts` are invented for the demo. They are not an export from a live shop. Parts rows labeled `Aftermarket (demo)` are sample stock only. That label is not a claim that a part matches a branded line.
 
+## Cancel reasons
+
+The appointment cancel reasons in `src/lib/cancel.ts` — Customer request, Rescheduled, Vehicle sold or gone, Duplicate or entered in error, and Other — are this desk's own wording. They come from the owner's approved decisions on October 29, 2026. They were not copied from a vendor screen.
+
 ## Inspections
 
 The multi-point list in `src/lib/mpi.ts` is a generic industry pattern: fluids, brakes, tread, and underbody items, with green / yellow / red marks. It is a visual reference for this desk. It was not copied from a vendor help document.

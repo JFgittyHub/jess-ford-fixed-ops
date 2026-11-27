@@ -1,6 +1,8 @@
 import { genericOAuthClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
+import { clearTabWorker, withoutTabWorker } from "../tab-worker";
 import { runPreSignInSignOut, runSignOut } from "../../../scripts/sign-out-plan.mjs";
+import { clearCopiedVisits } from "../copied-visit";
 import { GROK_PROVIDERS } from "./providers";
 
 /**
@@ -35,7 +37,8 @@ export const authClient = createAuthClient({
  * with the key removed, sign-in is real in preview (baked preview client) and
  * when deployed (injected per-app client).
  */
-export const authEnabled = import.meta.env.VITE_AUTH_ENABLED !== "false";
+const authEnv = import.meta.env as { VITE_AUTH_ENABLED?: string } | undefined;
+export const authEnabled = authEnv?.VITE_AUTH_ENABLED !== "false" && authEnv != null;
 
 /** The upstream providers to render sign-in buttons for. */
 export { GROK_PROVIDERS };
@@ -117,6 +120,10 @@ export async function signIn(
     livePreview: inLivePreview(),
     hasBearer: Boolean(getBearerToken()),
     requestSignOut: () => authClient.signOut(),
+    clearCopies: () => {
+      if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+      if (typeof sessionStorage !== "undefined") clearTabWorker(sessionStorage);
+    },
     clearToken: () => setBearerToken(null),
   });
 
@@ -166,7 +173,7 @@ function openSignInPopup(providerId: string): Window | null {
   const url = `${origin}/auth/popup?providerId=${encodeURIComponent(providerId)}`;
   // Unique name per attempt so a prior attempt stuck on the SPA is not reused.
   const name = `grok-signin-${Date.now()}`;
-  return window.open(url, name, "popup,width=500,height=650");
+  return withoutTabWorker(window.sessionStorage, () => window.open(url, name, "popup,width=500,height=650"));
 }
 
 /**
@@ -224,11 +231,17 @@ export async function signOut(redirectTo = "/"): Promise<void> {
     hasBearer: Boolean(getBearerToken()),
     // Better Auth resolves with `{ error }` instead of rejecting, so surface a
     // failed response as a rejection for the sequence to act on.
+    clearCopies: () => {
+      if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+      if (typeof sessionStorage !== "undefined") clearTabWorker(sessionStorage);
+    },
     requestSignOut: async () => {
       const { error } = await authClient.signOut();
       if (error) throw new Error(error.message ?? "Sign-out failed");
     },
-    clearToken: () => setBearerToken(null),
+    clearToken: () => {
+      setBearerToken(null);
+    },
     redirect: () => {
       window.location.href = redirectTo;
     },

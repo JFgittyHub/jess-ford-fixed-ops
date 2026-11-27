@@ -1,11 +1,14 @@
 import { addDays, daysBetween, now } from "./clock";
+import { minutesFromLineHours, snapBlockMinutes } from "./labor-lines";
 import type { Appointment, OverrideReason, SchedulingSettings, WeekdayIndex } from "./types";
 
 /**
  * A slot is open only when the job's labor hours fit the technician's
  * remaining shop day and the advisor still has a free appointment that day.
  * Hours follow that store's open hours. Pending holds count the same way as
- * appointments. No-shows and declined holds do not.
+ * appointments. No-shows, cancelled appointments, and declined holds do not.
+ * A technician or advisor who is not on this store is refused. That is not
+ * a warning the advisor can override.
  */
 export type CapacityLoad = {
   id: string;
@@ -36,8 +39,10 @@ export type CapacitySide = {
 export type CapacityResult = {
   /** False when online customers should not see the slot. */
   open: boolean;
-  /** Set when an advisor may continue anyway. Null when the slot is open. */
+  /** Set when an advisor may continue anyway. Null when the slot is open or blocked. */
   warning: string | null;
+  /** Hard stop. The visit is not saved and no override is written. */
+  blocked: string | null;
   tech: CapacitySide;
   advisor: CapacitySide;
 };
@@ -53,24 +58,31 @@ export type OnlineSlot = {
 const EPSILON = 1e-9;
 
 export function laborHoursFor(laborOpIds: string[], minutes: number, laborOps: { id: string; hours: number }[]): number {
-  const fromOps = laborOpIds.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
+  const ids = Array.isArray(laborOpIds) ? laborOpIds : [];
+  const fromOps = ids.reduce((sum, id) => sum + (laborOps.find((op) => op.id === id)?.hours ?? 0), 0);
   const hours = fromOps > 0 ? fromOps : Math.max(0, minutes) / 60;
   return round2(hours);
 }
 
 export function appointmentLoads(
-  appointments: Pick<Appointment, "id" | "date" | "time" | "minutes" | "advisorId" | "techId" | "laborOpIds" | "status">[],
+  appointments: (Pick<Appointment, "id" | "date" | "time" | "minutes" | "advisorId" | "techId" | "laborOpIds" | "status"> & { lines?: { hours?: number }[]; lengthOverrideMinutes?: number | null })[],
   laborOps: { id: string; hours: number }[],
 ): CapacityLoad[] {
-  return appointments.map((row) => ({
-    id: row.id,
-    date: row.date,
-    time: row.time,
-    advisorId: row.advisorId,
-    techId: row.techId,
-    laborHours: laborHoursFor(row.laborOpIds, row.minutes, laborOps),
-    counts: row.status !== "no_show",
-  }));
+  return appointments.map((row) => {
+    const fromLines = minutesFromLineHours(row.lines ?? []);
+    const override = typeof row.lengthOverrideMinutes === "number" && Number.isFinite(row.lengthOverrideMinutes) ? row.lengthOverrideMinutes : null;
+    const block = override !== null ? override : fromLines !== null ? snapBlockMinutes(fromLines) : null;
+    const minutes = typeof row.minutes === "number" && Number.isFinite(row.minutes) ? row.minutes : 0;
+    return {
+      id: row.id,
+      date: row.date,
+      time: row.time,
+      advisorId: row.advisorId,
+      techId: row.techId,
+      laborHours: block !== null && Number.isFinite(block) ? round2(block / 60) : laborHoursFor(row.laborOpIds, minutes, laborOps),
+      counts: row.status !== "no_show" && row.status !== "cancelled",
+    };
+  });
 }
 
 /** Pending online requests use this shape. Declined rows do not take capacity. */
@@ -109,16 +121,18 @@ export function evaluateCapacity(input: {
   const advisorCapacity = !day.closed && knownAdvisor ? day.advisorCap : 0;
   const techOverloaded = !knownTech || techUsed + adding > techCapacity + EPSILON;
   const advisorOverloaded = !knownAdvisor || advisorUsed + 1 > advisorCapacity;
-  const warning = capacityWarning({
-    closed: day.closed,
-    knownTech,
-    knownAdvisor,
-    techOverloaded,
-    advisorOverloaded,
-  });
+  const blocked = day.closed ? "The shop is closed that day." : staffBlockMessage(knownTech, knownAdvisor);
+  const warning = blocked
+    ? null
+    : capacityWarning({
+        closed: false,
+        techOverloaded,
+        advisorOverloaded,
+      });
   return {
-    open: warning === null,
+    open: blocked === null && warning === null,
     warning,
+    blocked,
     tech: { used: techUsed, adding, capacity: techCapacity, overloaded: techOverloaded },
     advisor: { used: advisorUsed, adding: 1, capacity: advisorCapacity, overloaded: advisorOverloaded },
   };
@@ -138,6 +152,8 @@ export function assessAppointment(input: {
     techId: string;
     laborOpIds: string[];
     minutes: number;
+    /** Line-hour total. Set when concern lines carry hours, so an edited hour counts instead of the catalog hour. */
+    laborHours?: number;
     ignoreId?: string;
   };
 }): CapacityResult {
@@ -151,22 +167,44 @@ export function assessAppointment(input: {
       time: input.proposal.time,
       advisorId: input.proposal.advisorId,
       techId: input.proposal.techId,
-      laborHours: laborHoursFor(input.proposal.laborOpIds, input.proposal.minutes, input.laborOps),
+      laborHours: input.proposal.laborHours ?? laborHoursFor(input.proposal.laborOpIds, input.proposal.minutes, input.laborOps),
       ignoreId: input.proposal.ignoreId,
     },
   });
 }
 
-/** Sentence for the advisor form. Saving stays allowed and records an override. */
-export function advisorBookingNote(result: CapacityResult): string | null {
+function bookedDayLabel(iso: string) {
+  const [year, month, day] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(year, (month || 1) - 1, day || 1));
+  const week = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][date.getUTCDay()] ?? "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${week} ${months[date.getUTCMonth()] ?? ""} ${date.getUTCDate()}`;
+}
+
+/** Sentence for the advisor form. A block is a hard stop. A warning can still be saved. */
+export function advisorBookingNote(result: CapacityResult, detail?: { techName: string; date: string }): string | null {
+  if (result.blocked) return result.blocked;
   if (!result.warning) return null;
-  return `${result.warning} You can still book it. Online customers will not see this time.`;
+  const online = "People booking online will not be offered this time.";
+  if (result.tech.overloaded && detail?.techName && detail.date) {
+    const booked = (result.tech.used + result.tech.adding).toFixed(1);
+    const available = result.tech.capacity.toFixed(1);
+    return `${detail.techName} would have ${booked} hr booked on ${bookedDayLabel(detail.date)} (${available} hr available). You can still book it. ${online}`;
+  }
+  return `${result.warning} You can still book it. ${online}`;
+}
+
+export function staffBlockMessage(knownTech: boolean, knownAdvisor: boolean): string | null {
+  if (!knownTech && !knownAdvisor) return "That technician and advisor aren't on this store.";
+  if (!knownTech) return "That technician isn't on this store.";
+  if (!knownAdvisor) return "That advisor isn't on this store.";
+  return null;
 }
 
 export function overrideReason(result: CapacityResult): OverrideReason | null {
-  if (result.open || !result.warning) return null;
-  if (result.warning.startsWith("The store is closed")) return "closed";
-  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return "unknown-staff";
+  if (result.blocked || result.open || !result.warning) return null;
+  if (result.warning.startsWith("The shop is closed")) return "closed";
+  if (result.warning.includes("isn't on this store") || result.warning.includes("aren't on this store")) return null;
   if (result.tech.overloaded && result.advisor.overloaded) return "both";
   if (result.tech.overloaded) return "tech-hours";
   if (result.advisor.overloaded) return "advisor";
@@ -185,6 +223,10 @@ export function overrideReasonLabel(reason: OverrideReason): string {
       return "Store closed";
     case "unknown-staff":
       return "Staff not on this store";
+    case "past-close":
+      return "Runs past closing";
+    case "double-book":
+      return "Double-booked advisor";
   }
 }
 
@@ -240,19 +282,19 @@ export function onlineSlots(input: {
 
 function capacityWarning(input: {
   closed: boolean;
-  knownTech: boolean;
-  knownAdvisor: boolean;
   techOverloaded: boolean;
   advisorOverloaded: boolean;
 }): string | null {
-  if (input.closed) return "The store is closed that day.";
-  if (!input.knownTech && !input.knownAdvisor) return "That technician and advisor aren't on this store.";
-  if (!input.knownTech) return "That technician isn't on this store.";
-  if (!input.knownAdvisor) return "That advisor isn't on this store.";
+  if (input.closed) return "The shop is closed that day.";
   if (input.techOverloaded && input.advisorOverloaded) return "This would overload technician hours and advisor capacity.";
   if (input.techOverloaded) return "This would overload technician hours for that job.";
   if (input.advisorOverloaded) return "This would overload advisor capacity.";
   return null;
+}
+
+/** How many appointments one advisor can take that day. Zero when the store is closed. */
+export function advisorDayCapacity(scheduling: SchedulingSettings, iso: string): number {
+  return shopDay(scheduling, iso).advisorCap;
 }
 
 function shopDay(scheduling: SchedulingSettings, iso: string): {
@@ -301,6 +343,10 @@ function instant(iso: string, minutes: number): number {
   return Date.UTC(year, month - 1, day) + minutes * 60_000;
 }
 
+export function shopMinutes(date: Date = now()): { date: string; minutes: number } {
+  return shopNow(date);
+}
+
 function shopNow(date: Date): { date: string; minutes: number } {
   const map: Record<string, string> = {};
   for (const part of new Intl.DateTimeFormat("en-US", {
@@ -321,6 +367,104 @@ function shopNow(date: Date): { date: string; minutes: number } {
     iso = addDays(iso, 1);
   }
   return { date: iso, minutes: hour * 60 + Number(map.minute) };
+}
+
+/** A bookable start is a half-hour on that day's open grid. Anything else is refused. */
+export function visitTimeError(scheduling: SchedulingSettings, iso: string, time: string): string | null {
+  if (!time || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !/^\d{2}:(00|30)$/.test(time)) {
+    return "That time is not on the clock.";
+  }
+  const day = shopDay(scheduling, iso);
+  if (day.closed) return "The shop is closed that day.";
+  const [hour, minute] = time.split(":").map(Number);
+  const mins = hour * 60 + minute;
+  if (mins < day.openMinutes || mins >= day.closeMinutes) return "That time is outside shop hours.";
+  return null;
+}
+
+export const PAST_CLOSE_MESSAGE = "That visit runs past closing. A service manager can approve it.";
+
+/** The refusal an advisor sees when the visit starts on the grid and ends after close. */
+export function pastCloseMessage(scheduling: SchedulingSettings, iso: string): string {
+  const day = shopDay(scheduling, iso);
+  const h24 = Math.floor(day.closeMinutes / 60);
+  const minute = day.closeMinutes % 60;
+  const suffix = h24 >= 12 ? "PM" : "AM";
+  const hour = h24 % 12 || 12;
+  const label = `${hour}:${String(minute).padStart(2, "0")} ${suffix}`;
+  return `This visit runs past closing (${label}). A service manager can approve it.`;
+}
+export const PAST_CLOSE_REASON = "Add a reason for running past close.";
+
+/** A past-close note has to say something. "Tow truck" still counts; "yes" does not. */
+export const CLOSE_REASON_MIN = 8;
+
+export function realCloseReason(value: unknown): string | null {
+  const text = (typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().slice(0, 500);
+  if (text.length < CLOSE_REASON_MIN) return null;
+  return text;
+}
+export const PAST_TODAY_MESSAGE = "That start time has already passed today.";
+
+/** True when the visit starts on the grid and finishes after that day's close. */
+export function visitRunsPastClose(scheduling: SchedulingSettings, iso: string, time: string, minutes: number): boolean {
+  if (visitTimeError(scheduling, iso, time)) return false;
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes <= 0) return false;
+  const day = shopDay(scheduling, iso);
+  if (day.closeMinutes <= day.openMinutes) return false;
+  const [hour, minute] = time.split(":").map(Number);
+  const end = hour * 60 + minute + minutes;
+  return end > day.closeMinutes;
+}
+
+/** Start times on the open grid whose visit ends by close. */
+export function fittingStartTimes(scheduling: SchedulingSettings, iso: string, minutes: number, starts: string[]): string[] {
+  return starts.filter((time) => !visitTimeError(scheduling, iso, time) && !visitRunsPastClose(scheduling, iso, time, minutes));
+}
+
+/**
+ * The next 30-minute start that fits a visit. Today uses the next slot after now.
+ * A later day uses that day's first open slot. If today has nothing left, the next open day.
+ */
+export function nextOpenVisit(scheduling: SchedulingSettings, selected: string, nowDate: Date, minutes = 60): { date: string; time: string } {
+  const clock = shopNow(nowDate);
+  const first = (iso: string, earliest: number) => {
+    const day = shopDay(scheduling, iso);
+    if (day.closed || day.closeMinutes <= day.openMinutes) return "";
+    let cursor = Math.max(day.openMinutes, Math.ceil(earliest / 30) * 30);
+    const length = Math.max(30, minutes);
+    while (cursor < day.closeMinutes) {
+      if (cursor + length <= day.closeMinutes) return formatTime(cursor);
+      cursor += 30;
+    }
+    return "";
+  };
+  const later = selected > clock.date ? selected : "";
+  if (later) {
+    let day = later;
+    for (let guard = 0; guard < 21; guard += 1) {
+      const time = first(day, 0);
+      if (time) return { date: day, time };
+      day = addDays(day, 1);
+    }
+  }
+  const todayTime = first(clock.date, clock.minutes + 1);
+  if (todayTime) return { date: clock.date, time: todayTime };
+  let day = addDays(clock.date, 1);
+  for (let guard = 0; guard < 21; guard += 1) {
+    const time = first(day, 0);
+    if (time) return { date: day, time };
+    day = addDays(day, 1);
+  }
+  return { date: clock.date, time: formatTime(shopDay(scheduling, clock.date).openMinutes || 8 * 60) };
+}
+
+/** 30-minute steps, at least 30 minutes and under 24 hours. 31, 45, and 1440 are refused. */
+export function visitLengthError(minutes: unknown): string | null {
+  if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 30 || minutes >= 1440 || minutes % 30 !== 0) {
+    return "That length is not on this desk.";
+  }
+  return null;
 }
 
 function round2(value: number): number {

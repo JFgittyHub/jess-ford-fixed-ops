@@ -229,6 +229,38 @@ test("pre-sign-in: the preview skips the request when there is no bearer", async
   assert.equal(h.cleared, 1);
 });
 
+test("copied visits are dropped before sign-out asks the server", async () => {
+  const order = [];
+  await assert.rejects(runSignOut({
+    livePreview: false,
+    hasBearer: true,
+    clearCopies: () => order.push("copies"),
+    requestSignOut: () => {
+      order.push("request");
+      return hangs();
+    },
+    clearToken: () => order.push("clear"),
+    redirect: () => order.push("redirect"),
+    timeoutMs: TEST_TIMEOUT_MS,
+  }), /still signed in/);
+  assert.deepEqual(order, ["copies", "request"]);
+});
+
+test("copied visits are dropped before a new sign-in asks the server", async () => {
+  const order = [];
+  await runPreSignInSignOut({
+    livePreview: false,
+    hasBearer: true,
+    clearCopies: () => order.push("copies"),
+    requestSignOut: async () => {
+      order.push("request");
+    },
+    clearToken: () => order.push("clear"),
+    timeoutMs: TEST_TIMEOUT_MS,
+  });
+  assert.deepEqual(order, ["copies", "request", "clear"]);
+});
+
 test("every sign-out bound comes from one rule", () => {
   assert.equal(signOutTimeoutMs(true), PREVIEW_SIGN_OUT_TIMEOUT_MS);
   assert.equal(signOutTimeoutMs(false), DEPLOYED_SIGN_OUT_TIMEOUT_MS);

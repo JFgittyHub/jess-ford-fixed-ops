@@ -76,6 +76,7 @@ export function settleWithin(start, timeoutMs) {
  * @property {boolean} livePreview Whether the app is the sandbox preview iframe.
  * @property {boolean} hasBearer Whether a preview bearer token is stored.
  * @property {() => unknown} requestSignOut Ask the server to end the session; must reject on a failed response.
+ * @property {() => void} [clearCopies] Drop copied visits before the server is asked.
  * @property {() => void} clearToken Drop the stored bearer token.
  * @property {() => void} redirect Leave the page.
  * @property {number} [timeoutMs]
@@ -95,10 +96,12 @@ export async function runSignOut({
   livePreview,
   hasBearer,
   requestSignOut,
+  clearCopies,
   clearToken,
   redirect,
   timeoutMs,
 }) {
+  clearCopies?.();
   if (livePreview) {
     // No bearer means a partitioned iframe with nothing to invalidate; with one,
     // still invalidate it server-side, just don't block on the answer.
@@ -127,6 +130,7 @@ export async function runSignOut({
  * @property {boolean} livePreview Whether the app is the sandbox preview iframe.
  * @property {boolean} hasBearer Whether a preview bearer token is stored.
  * @property {() => unknown} requestSignOut Ask the server to end any prior session.
+ * @property {() => void} [clearCopies] Drop copied visits before the server is asked.
  * @property {() => void} clearToken Drop the stored bearer token.
  * @property {number} [timeoutMs]
  */
@@ -149,9 +153,11 @@ export async function runPreSignInSignOut({
   livePreview,
   hasBearer,
   requestSignOut,
+  clearCopies,
   clearToken,
   timeoutMs,
 }) {
+  clearCopies?.();
   // In the preview a missing bearer means there is nothing to clear.
   if (hasBearer || !livePreview) {
     await settleWithin(requestSignOut, timeoutMs ?? signOutTimeoutMs(livePreview));

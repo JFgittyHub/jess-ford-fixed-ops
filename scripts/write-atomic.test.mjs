@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
-  mkdtempSync,
+  mkdtempSync as makeTempDir,
+  rmSync,
   readFileSync,
   readdirSync,
   writeFileSync,
@@ -12,6 +13,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+
+const temps = [];
+function mkdtempSync(prefix) {
+  const root = makeTempDir(prefix);
+  temps.push(root);
+  return root;
+}
+test.after(() => {
+  for (const root of temps) rmSync(root, { recursive: true, force: true });
+});
 import { handOver, parseWriteAtomicArgs, stagingError } from "./write-atomic.mjs";
 
 const TEMPLATE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");

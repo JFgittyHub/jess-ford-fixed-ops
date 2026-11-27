@@ -1,13 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { guardLocked } from "@/lib/locked-route";
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
-import { BAY_LABEL, STATUS_LABEL, clockTime, formatDuration, punchHours, today as shopToday } from "@/lib/format";
+import { BAY_LABEL, clockTime, formatDuration, punchHours, reviewCap, roStatusLabel, today as shopToday } from "@/lib/format";
 import { lookups } from "@/lib/metrics";
+import { RO_WRITE_REFUSAL, roWritesEnabled } from "@/lib/ro-flags";
 import { useShop } from "@/lib/store";
-import type { BayStatus, RepairOrder, RoStatus, TimeLog } from "@/lib/types";
+import type { BayStatus, RepairOrder, TimeLog } from "@/lib/types";
 
-export const Route = createFileRoute("/tech-board")({ component: TechBoardPage });
+export const Route = createFileRoute("/tech-board")({ component: guardLocked(TechBoardPage) });
 
 function useNow() {
   const [now, setNow] = useState(() => Date.now());
@@ -19,13 +21,13 @@ function useNow() {
 }
 
 function assignedOpen(techId: string, orders: RepairOrder[]) {
-  return orders.filter((order) => order.status !== "invoiced" && order.labor.some((line) => line.techId === techId));
+  return orders.filter((order) => order.status !== "closed" && order.labor.some((line) => line.techId === techId));
 }
 
-function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, now: number) {
+function loggedHours(logs: TimeLog[], techId: string, orderId: string | null, now: number, orders: RepairOrder[]) {
   return logs
     .filter((row) => row.techId === techId && (orderId === null || row.orderId === orderId))
-    .reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now), 0);
+    .reduce((sum, row) => sum + punchHours(row.startedAt, row.endedAt, now, reviewCap(row, orders.find((order) => order.id === row.orderId)?.closedAt)), 0);
 }
 
 function TechBoardPage() {
@@ -33,6 +35,7 @@ function TechBoardPage() {
   const look = lookups(shop);
   const now = useNow();
   const [techId, setTechId] = useState("");
+  const [clockError, setClockError] = useState("");
   const tech = shop.techs.find((row) => row.id === techId);
   const roster = [...shop.techs].sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
 
@@ -57,6 +60,7 @@ function TechBoardPage() {
             ? "Add a technician on the roster, then pick them here. There is no password."
             : "Pick a technician. The board shows the open repair orders assigned to that person. There is no password."}
         </p>
+        {!roWritesEnabled() ? <p className="mt-3 text-sm text-muted">{RO_WRITE_REFUSAL}</p> : null}
         <div className="mt-5 max-w-md">{picker}</div>
       </Shell>
     );
@@ -66,7 +70,7 @@ function TechBoardPage() {
   const open = shop.timeLogs.find((row) => row.techId === tech.id && row.endedAt === null) ?? null;
   const current = open ? shop.orders.find((order) => order.id === open.orderId) : undefined;
   const todayLogs = shop.timeLogs.filter((row) => row.techId === tech.id && (row.startedAt.startsWith(shopToday()) || row.endedAt === null));
-  const today = loggedHours(todayLogs, tech.id, null, now);
+  const today = loggedHours(todayLogs, tech.id, null, now, shop.orders);
   const flagged = jobs.reduce((sum, order) => sum + order.labor.filter((line) => line.techId === tech.id).reduce((hours, line) => hours + line.hours, 0), 0);
   const ordered = [...jobs].sort((a, b) => (a.id === open?.orderId ? -1 : b.id === open?.orderId ? 1 : a.promiseTime.localeCompare(b.promiseTime)));
 
@@ -86,6 +90,9 @@ function TechBoardPage() {
           <p className="text-sm text-muted">Status</p>
           <p className="mt-1 font-display text-3xl leading-none">{open ? "On the clock" : "Off the clock"}</p>
           <p className="mt-2 text-sm text-muted">{current ? `RO ${current.number}` : "No repair order punched"}</p>
+          {roWritesEnabled() && open && current?.status === "closed" ? (
+            <Button onClick={() => shop.clockOut(tech.id)}>Clock out {tech.name}</Button>
+          ) : null}
         </article>
         <article className="card">
           <p className="text-sm text-muted">Clocked today</p>
@@ -107,14 +114,14 @@ function TechBoardPage() {
           const vehicle = look.vehicle.get(order.vehicleId);
           const lines = order.labor.filter((line) => line.techId === tech.id);
           const onThis = open?.orderId === order.id;
-          const hours = loggedHours(shop.timeLogs, tech.id, order.id, now);
+          const hours = loggedHours(shop.timeLogs, tech.id, order.id, now, shop.orders);
           return (
             <article key={order.id} className={onThis ? "card border-2 border-primary" : "card"}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="font-display text-3xl leading-none">RO {order.number}</p>
                   <p className="mt-2 font-semibold">{customer?.name ?? "Customer"} · {vehicle ? `${vehicle.year} ${vehicle.model}` : "Vehicle"}</p>
-                  <p className="text-sm text-muted">{STATUS_LABEL[order.status as RoStatus]} · {BAY_LABEL[(order.bay ?? "dispatch") as BayStatus]}{order.promiseTime ? ` · Promise ${clockTime(order.promiseTime)}` : ""}</p>
+                  <p className="text-sm text-muted">{roStatusLabel(order)} · {BAY_LABEL[(order.bay ?? "dispatch") as BayStatus]}{order.promiseTime ? ` · Promise ${clockTime(order.promiseTime)}` : ""}</p>
                 </div>
                 <div className="text-right">
                   <p className="tabular-nums font-semibold">{formatDuration(hours)} logged</p>
@@ -125,17 +132,20 @@ function TechBoardPage() {
                 {lines.map((line) => <li key={line.id}>{line.opcode} · {line.description}</li>)}
               </ul>
               <p className="mt-2 text-sm">{order.concern}</p>
+              {roWritesEnabled() ? (
               <div className="mt-4 flex flex-wrap gap-2">
                 {onThis ? (
-                  <Button onClick={() => shop.clockOut(tech.id)}>Clock out</Button>
+                  <Button onClick={() => { const result = shop.clockOut(tech.id); setClockError(result.error ?? ""); }}>Clock out {tech.name}</Button>
                 ) : (
-                  <Button tone="primary" onClick={() => shop.clockIn(tech.id, order.id)}>{open ? "Move clock here" : "Clock in"}</Button>
+                  <Button tone="primary" onClick={() => { const result = shop.clockIn(tech.id, order.id); setClockError(result.error ?? ""); }}>{open ? "Move clock here" : "Clock in"}</Button>
                 )}
               </div>
+              ) : <p className="mt-4 text-sm text-muted">Read-only — repair orders come from Dealertrack.</p>}
             </article>
           );
         })}
       </div>
+      {clockError ? <p role="alert" className="mt-2 text-sm text-[#8a3b2a]">{clockError}</p> : null}
     </Shell>
   );
 }

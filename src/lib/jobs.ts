@@ -4,6 +4,8 @@ export interface JobLine {
   concern: string;
   cause: string;
   correction: string;
+  /** Labor or parts saved before they belonged to a line. The advisor assigns them before close. */
+  needsAssignment?: boolean;
 }
 
 export function lineLetter(index: number) {

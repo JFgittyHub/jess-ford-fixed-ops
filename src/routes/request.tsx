@@ -1,11 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { Shell } from "@/components/shell";
+import { useEffect, useState } from "react";
+import { DeskLocked } from "@/components/shell";
 import { Button, Field } from "@/components/ui";
+import { advisorDayCapacity } from "@/lib/capacity";
+import { confirmedDemoStaffAccess } from "@/lib/demo";
 import { today } from "@/lib/format";
-import { lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
+import { advisorForWebRequest, lookupOnlineCustomer, revealSavedVehicles, visitSlots } from "@/lib/online-request";
 import { useShop } from "@/lib/store";
 import type { StoreId } from "@/lib/types";
+import { vinScheduleError } from "@/lib/vin";
 
 export const Route = createFileRoute("/request")({ component: RequestPage });
 
@@ -14,12 +17,29 @@ const STORES: { id: StoreId; label: string }[] = [
   { id: "pullman", label: "Pullman" },
 ];
 
+function requestDeviceId() {
+  try {
+    const key = "jf-request-device";
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const next = `dev-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(key, next);
+    return next;
+  } catch {
+    return "";
+  }
+}
+
 function RequestPage() {
   const shop = useShop();
+  const dataset = useShop((state) => state.dataset);
+  const storeName = useShop((state) => state.settings.storeName);
+  const [hydrated, setHydrated] = useState(() => useShop.persist.hasHydrated());
   const switchStore = useShop((state) => state.switchStore);
   const [step, setStep] = useState<"lookup" | "code" | "details" | "visit" | "sent">("lookup");
   const [query, setQuery] = useState("");
   const [note, setNote] = useState("");
+  const [customerNote, setCustomerNote] = useState("");
   const [error, setError] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [issuedCode, setIssuedCode] = useState<string | null>(null);
@@ -36,7 +56,6 @@ function RequestPage() {
   const [vin, setVin] = useState("");
   const [plate, setPlate] = useState("");
   const [serviceId, setServiceId] = useState(shop.settings.scheduling.onlineMenu[0]?.id ?? "");
-  const [advisorId, setAdvisorId] = useState(shop.advisors[0]?.id ?? "");
   const [transportId, setTransportId] = useState(shop.settings.scheduling.transportOptions[0]?.id ?? "");
   const [contactMethod, setContactMethod] = useState<"text" | "email" | "call">("text");
   const [date, setDate] = useState(today());
@@ -46,7 +65,12 @@ function RequestPage() {
   const menu = shop.settings.scheduling.onlineMenu;
   const transports = shop.settings.scheduling.transportOptions;
   const service = menu.some((row) => row.id === serviceId) ? serviceId : menu[0]?.id ?? "";
-  const advisor = shop.advisors.some((row) => row.id === advisorId) ? advisorId : shop.advisors[0]?.id ?? "";
+  const advisor = advisorForWebRequest(
+    shop.advisors,
+    shop.onlineRequests ?? [],
+    date,
+    Math.max(0, advisorDayCapacity(shop.settings.scheduling, date) - 1),
+  );
   const transport = transports.some((row) => row.id === transportId) ? transportId : transports[0]?.id ?? "";
   const slots = visitSlots(shop, { serviceId: service, advisorId: advisor });
   const dates = [...new Set(slots.map((slot) => slot.date))];
@@ -132,28 +156,48 @@ function RequestPage() {
       make,
       model,
       vin,
+      note: customerNote,
       plate,
+      deviceId: requestDeviceId(),
     });
     if (!result.ok) {
-      setError(result.reason === "full"
-        ? "That time is no longer open."
+      const scope = "scope" in result ? result.scope : undefined;
+      const waiting = "limit" in result && result.limit != null ? result.limit : 3;
+      setError(result.reason === "full" || scope === "day"
+        ? "That day is full. Pick another day."
         : result.reason === "code"
           ? "The code did not match, so the saved vehicle was not used."
-          : "Enter the visit details and try again.");
+          : result.reason === "vin"
+            ? (vinScheduleError(vin) || "Enter a 17-character VIN.")
+            : result.reason === "limit"
+              ? scope === "device"
+                ? `This browser already has ${waiting} requests waiting.`
+                : `This phone or email already has ${waiting} requests waiting.`
+              : "Enter the visit details and try again.");
       return;
     }
     setSentId(result.id);
     setStep("sent");
   }
 
+  useEffect(() => {
+    let live = true;
+    void Promise.resolve(useShop.persist.rehydrate()).finally(() => {
+      if (live) setHydrated(true);
+    });
+    return () => { live = false; };
+  }, []);
+
+  if (!hydrated || !confirmedDemoStaffAccess({ dataset })) return <DeskLocked storeName={storeName} />;
+
   return (
-    <Shell>
+    <main className="mx-auto min-h-screen max-w-3xl bg-bg px-4 py-8 text-ink">
       <p className="text-sm font-semibold uppercase tracking-wide text-muted">Online request</p>
       <h1 className="mt-1 font-display text-5xl leading-none tracking-tight">Request a visit</h1>
       <p className="mt-3 max-w-2xl text-muted">
-        Pick a service, a day, a time, an advisor, and waiter or drop-off. This stays a request until the shop confirms it. The menu shows labor time only.
+        Pick a service, a day, a time, and waiter or drop-off. This stays a request until the shop confirms it. The menu shows labor time only.
       </p>
-      <div role="group" aria-label="Store" className="mt-4 flex flex-wrap gap-2">
+      <div role="group" aria-label="Store" className="tap-targets mt-4 flex flex-wrap gap-2">
         {STORES.map((store) => (
           <Button
             key={store.id}
@@ -205,6 +249,7 @@ function RequestPage() {
             checkCode();
           }}
         >
+          {/* BLOCKER before real SMS or real data: the one-time code is shown on this page for the demo only. */}
           <p role="status" className="text-sm">
             Demo text to the mobile ending {mobileLast4}. The code is <strong className="tabular-nums">{issuedCode}</strong>. Nothing was sent.
           </p>
@@ -240,8 +285,17 @@ function RequestPage() {
               setStep("visit");
               return;
             }
-            if (!name.trim() || !make.trim() || !model.trim() || vin.trim().length < 8 || !plate.trim()) {
-              setError("Enter your name, make, model, VIN, and plate.");
+            if (!vin.trim()) {
+              setError("Enter a 17-character VIN.");
+              return;
+            }
+            const vinProblem = vinScheduleError(vin);
+            if (!name.trim() || !make.trim() || !model.trim() || !plate.trim() || vinProblem) {
+              setError(vinProblem || "Enter your name, make, model, VIN, and plate.");
+              return;
+            }
+            if (!phone.trim() && !email.trim()) {
+              setError("Enter a phone number or an email.");
               return;
             }
             setError("");
@@ -262,14 +316,15 @@ function RequestPage() {
             </fieldset>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Name"><input className="field" value={name} onChange={(event) => setName(event.target.value)} /></Field>
-              <Field label="Phone"><input className="field" value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
-              <Field label="Email"><input className="field" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
+              <Field label="Name"><input className="field" maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></Field>
+              <Field label="Phone"><input className="field" maxLength={40} value={phone} onChange={(event) => setPhone(event.target.value)} /></Field>
+              <Field label="Email"><input className="field" maxLength={120} value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
               <Field label="Year"><input className="field tabular-nums" value={year} onChange={(event) => setYear(event.target.value)} /></Field>
               <Field label="Make"><input className="field" value={make} onChange={(event) => setMake(event.target.value)} /></Field>
               <Field label="Model"><input className="field" value={model} onChange={(event) => setModel(event.target.value)} /></Field>
-              <Field label="VIN"><input className="field font-mono uppercase" value={vin} onChange={(event) => setVin(event.target.value.toUpperCase())} /></Field>
-              <Field label="License plate"><input className="field uppercase" value={plate} onChange={(event) => setPlate(event.target.value.toUpperCase())} /></Field>
+              <Field label="VIN"><input className="field font-mono uppercase" maxLength={17} value={vin} onChange={(event) => setVin(event.target.value.toUpperCase())} /></Field>
+              <Field label="License plate"><input className="field uppercase" maxLength={10} value={plate} onChange={(event) => setPlate(event.target.value.toUpperCase())} /></Field>
+              <Field label="Notes"><textarea className="field min-h-20" maxLength={500} value={customerNote} onChange={(event) => setCustomerNote(event.target.value)} /></Field>
             </div>
           )}
           {error ? <p role="alert" className="text-sm text-primary">{error}</p> : null}
@@ -293,11 +348,6 @@ function RequestPage() {
               {menu.map((row) => <option key={row.id} value={row.id}>{row.name} · {row.laborHours} hr</option>)}
             </select>
           </Field>
-          <Field label="Advisor">
-            <select className="field" value={advisor} onChange={(event) => setAdvisorId(event.target.value)}>
-              {shop.advisors.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-            </select>
-          </Field>
           <Field label="How should the shop reach you">
             <select className="field" value={contactMethod} onChange={(event) => setContactMethod(event.target.value as "text" | "email" | "call")}>
               <option value="text">Text</option>
@@ -318,7 +368,7 @@ function RequestPage() {
           <div>
             <p className="mb-2 text-sm font-semibold">Time</p>
             {times.length === 0 ? <p className="text-sm text-muted">No open times in the booking window for this advisor.</p> : (
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Open times">
+              <div className="tap-targets flex flex-wrap gap-2" role="group" aria-label="Open times">
                 {times.map((item) => (
                   <Button key={item} small type="button" tone={pickedTime === item ? "primary" : "ghost"} aria-pressed={pickedTime === item} onClick={() => setTime(item)}>
                     {item}
@@ -339,12 +389,31 @@ function RequestPage() {
         <div className="card mt-4 max-w-xl" role="status">
           <h2 className="font-display text-3xl leading-none">Request received</h2>
           <p className="mt-3 text-sm text-muted">
-            {sent.customerName} · {sent.serviceName} · {sent.date} at {sent.time} · {sent.advisorName} · {sent.transportName}. This is waiting for the shop. It is not a confirmed appointment.
+            {sent.customerName} · {sent.serviceName} · {sent.date} at {sent.time} · {sent.transportName}. This is waiting for the shop. It is not a confirmed appointment.
           </p>
           <p className="mt-2 text-sm">{sent.verified ? "Identity verified." : "Unverified. The shop will match the record when it confirms the request."}</p>
-          <Button className="mt-4" onClick={() => { setStep("lookup"); setSentId(null); setQuery(""); setEnteredCode(""); setVerified(false); }}>Request another</Button>
+          <Button className="mt-4" onClick={() => {
+            setStep("lookup");
+            setSentId(null);
+            setQuery("");
+            setEnteredCode("");
+            setVerified(false);
+            setCustomerId(null);
+            setVehicleId("");
+            setName("");
+            setPhone("");
+            setEmail("");
+            setYear("2020");
+            setMake("");
+            setModel("");
+            setVin("");
+            setPlate("");
+            setNote("");
+            setCustomerNote("");
+            setError("");
+          }}>Request another</Button>
         </div>
       ) : null}
-    </Shell>
+    </main>
   );
 }

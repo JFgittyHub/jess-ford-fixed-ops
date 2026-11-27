@@ -7,7 +7,14 @@
 
 const SHOP_TZ = "America/Los_Angeles";
 
-let pinned: Date | null = null;
+function envPinned(): Date | null {
+  const raw = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.JF_PIN_CLOCK;
+  if (!raw) return null;
+  const next = new Date(raw);
+  return Number.isNaN(next.getTime()) ? null : next;
+}
+
+let pinned: Date | null = envPinned();
 
 export function pinClock(value: Date | string | null) {
   if (value === null) {
@@ -20,7 +27,7 @@ export function pinClock(value: Date | string | null) {
 }
 
 export function resetClock() {
-  pinned = null;
+  pinned = envPinned();
 }
 
 export function now(): Date {

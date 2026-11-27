@@ -39,3 +39,12 @@ export function previewPathRewrite(): LocationRewrite | undefined {
   const prefix = previewPathPrefix(window.location.hostname, window.location.pathname);
   return prefix ? prefixRewrite(prefix) : undefined;
 }
+
+/**
+ * Preview hosts keep their port prefix. Case, encoding, and a trailing slash
+ * are handled by the router (caseSensitive: false, trailingSlash: "never")
+ * and by isLockedPath, so the public URL stays the one the browser asked for.
+ */
+export function deskLocationRewrite(): LocationRewrite | undefined {
+  return previewPathRewrite();
+}

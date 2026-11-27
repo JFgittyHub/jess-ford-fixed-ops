@@ -1,9 +1,19 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync as makeTempDir, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+
+const temps = [];
+function mkdtempSync(prefix) {
+  const root = makeTempDir(prefix);
+  temps.push(root);
+  return root;
+}
+test.after(() => {
+  for (const root of temps) rmSync(root, { recursive: true, force: true });
+});
 import { promisify } from "node:util";
 import {
   APP_ENV_REL_PATH,

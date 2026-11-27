@@ -36,6 +36,9 @@ export async function resolve(specifier, context, nextResolve) {
 }
 
 export async function load(url, context, nextLoad) {
+  if (url.split("?")[0].split("#")[0].endsWith(".css")) {
+    return { format: "module", source: "export default {}", shortCircuit: true };
+  }
   if (!url.endsWith(".tsx")) return nextLoad(url, context);
   const source = readFileSync(fileURLToPath(url), "utf8");
   const { outputText } = ts.transpileModule(source, {
