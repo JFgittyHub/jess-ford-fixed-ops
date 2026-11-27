@@ -1625,7 +1625,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             userStoreId: id,
             stores: state.stores,
             focusOrderId: null,
-            workingAsId: options?.keepWorker ? state.workingAsId : "",
+            workingAsId: state.workingAsId,
           };
         });
       },
