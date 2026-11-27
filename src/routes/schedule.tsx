@@ -117,6 +117,7 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
     shop.activeStoreId,
     workerKey,
     (vehicleId) => shop.vehicles.find((row) => row.id === vehicleId)?.vin ?? "",
+    (customerId) => shop.customers.find((row) => row.id === customerId)?.name ?? "Appointment",
     () => setPasteNotice(null),
   );
   const clipboard = deskCopy.clipboard;
@@ -934,6 +935,8 @@ export function AppointmentFields({
     draftSeen.current = draftKey;
     transferRef.current = false;
     capacityRef.current = false;
+    doubleRef.current = false;
+    if (doubleBook) setDoubleBook(null);
   }
   const laborOpIds = lineOpIds ?? storedOpIds;
   const lengths = [...new Set([...LENGTHS, visitMinutes])].sort((a, b) => a - b);

@@ -2,14 +2,42 @@ import type { CopiedAppointment } from "./paste-appointment";
 
 const PREFIX = "jf-desk-copy:";
 
-/** The copy the desk keeps. Keyed by who is Working as and the store, until sign-in exists. The VIN is not stored. */
+const COPY_LIMIT = 4096;
+
+/** The copy the desk keeps. Customer id only: no name, phone, email, address, or VIN. */
 export type StoredCopy = {
   workingAsId: string;
   storeId: string;
   workerKey: string;
-  name: string;
   copy: CopiedAppointment;
 };
+
+function text(value: unknown, max: number) {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+/** Only the fields Paste needs. Anything else, including a name or VIN, is dropped. */
+export function allowCopiedAppointment(copy: CopiedAppointment): CopiedAppointment {
+  const lines = Array.isArray(copy.lines) ? copy.lines.slice(0, 12) : [];
+  return {
+    customerId: text(copy.customerId, 64),
+    vehicleId: text(copy.vehicleId, 64),
+    vin: "",
+    concern: text(copy.concern, 500),
+    lines: lines.map((line) => ({
+      id: "",
+      code: text(line.code, 4),
+      concern: text(line.concern, 500),
+      ...(typeof line.laborOpId === "string" && line.laborOpId ? { laborOpId: line.laborOpId.slice(0, 64) } : {}),
+      ...(typeof line.hours === "number" && Number.isFinite(line.hours) ? { hours: line.hours } : {}),
+    })),
+    minutes: typeof copy.minutes === "number" && Number.isFinite(copy.minutes) ? copy.minutes : 30,
+    lane: text(copy.lane, 32),
+    advisorId: text(copy.advisorId, 64),
+    laborOpIds: (Array.isArray(copy.laborOpIds) ? copy.laborOpIds : []).slice(0, 12).map((id) => text(id, 64)).filter(Boolean),
+    lengthOverrideMinutes: typeof copy.lengthOverrideMinutes === "number" && Number.isFinite(copy.lengthOverrideMinutes) ? copy.lengthOverrideMinutes : null,
+  };
+}
 
 type KeyedStorage = {
   getItem(key: string): string | null;
@@ -40,8 +68,15 @@ function storageKeys(storage: KeyedStorage) {
 }
 
 export function saveCopiedVisit(storage: KeyedStorage, record: StoredCopy) {
-  const stored: StoredCopy = { ...record, copy: { ...record.copy, vin: "" } };
-  storage.setItem(copyStorageKey(record.workingAsId, record.storeId), JSON.stringify(stored));
+  const stored: StoredCopy = {
+    workingAsId: text(record.workingAsId, 64),
+    storeId: text(record.storeId, 64),
+    workerKey: text(record.workerKey, 200),
+    copy: allowCopiedAppointment(record.copy),
+  };
+  const json = JSON.stringify(stored);
+  if (json.length > COPY_LIMIT) return;
+  storage.setItem(copyStorageKey(stored.workingAsId, stored.storeId), json);
 }
 
 /**
@@ -51,20 +86,25 @@ export function saveCopiedVisit(storage: KeyedStorage, record: StoredCopy) {
  */
 export function readCopiedVisit(storage: KeyedStorage, workingAsId: string, storeId: string, workerKey: string): StoredCopy | null {
   if (!workingAsId || !storeId) return null;
-  const raw = storage.getItem(copyStorageKey(workingAsId, storeId));
+  const key = copyStorageKey(workingAsId, storeId);
+  const raw = storage.getItem(key);
   if (!raw) return null;
+  if (raw.length > COPY_LIMIT) {
+    storage.removeItem(key);
+    return null;
+  }
   let parsed: StoredCopy;
   try {
     parsed = JSON.parse(raw) as StoredCopy;
   } catch {
-    storage.removeItem(copyStorageKey(workingAsId, storeId));
+    storage.removeItem(key);
     return null;
   }
   if (!parsed?.copy || parsed.workingAsId !== workingAsId || parsed.storeId !== storeId || parsed.workerKey !== workerKey) {
-    storage.removeItem(copyStorageKey(workingAsId, storeId));
+    storage.removeItem(key);
     return null;
   }
-  return { ...parsed, copy: { ...parsed.copy, vin: "" } };
+  return { workingAsId, storeId, workerKey, copy: allowCopiedAppointment(parsed.copy) };
 }
 
 /** Sign-out and a worker change remove the copies for that person. No id removes every copy. */

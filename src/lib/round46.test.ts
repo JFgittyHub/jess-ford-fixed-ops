@@ -90,7 +90,7 @@ describe("round 29 lines, overlap, and a lasting copy", () => {
     host.remove();
 
     assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 90, lineMinutes: 120, override: null }), 120);
-    assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 0, lineMinutes: 30, override: null }), 90);
+    assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 0, lineMinutes: 30, override: null }), 120);
     assert.equal(deskBlockMinutes({ openedMinutes: 90, openedLineMinutes: 90, lineMinutes: 60, override: 90 }), 90);
   });
 
@@ -175,16 +175,19 @@ describe("round 29 lines, overlap, and a lasting copy", () => {
       workingAsId: "megan",
       storeId: store.getState().activeStoreId,
       workerKey,
-      name: "Helen Cho",
       copy: copiedFrom(row),
     };
     saveCopiedVisit(storage, record);
     const restored = readCopiedVisit(storage, "megan", record.storeId, workerKey);
-    assert.equal(restored?.name, "Helen Cho");
+    const customer = store.getState().customers.find((item) => item.id === row.customerId);
+    const raw = JSON.stringify(restored);
     assert.equal(restored?.copy.customerId, row.customerId);
     assert.equal(restored?.copy.vin, "");
+    assert.equal(raw.includes("\"name\""), false);
+    assert.equal(customer?.name ? raw.includes(customer.name) : false, false);
+    assert.equal(customer?.phone ? raw.includes(customer.phone) : false, false);
     assert.equal(readCopiedVisit(storage, "", record.storeId, workerKey), null);
-    assert.equal(readCopiedVisit(storage, "megan", record.storeId, workerKey)?.name, "Helen Cho");
+    assert.equal(readCopiedVisit(storage, "megan", record.storeId, workerKey)?.copy.customerId, row.customerId);
     assert.equal(readCopiedVisit(storage, "other-user", record.storeId, workerKey), null);
     saveCopiedVisit(storage, record);
     assert.equal(readCopiedVisit(storage, "megan", "pullman", workerKey), null);

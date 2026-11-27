@@ -116,38 +116,75 @@ export function useForgetCopy(workerKey: string, clear: (previousKey: string) =>
   }
 }
 
-/** The desk copy, restored after Working as is known and kept across a reload. An empty Working as does not delete it. */
-export function useDeskCopy(workingAsId: string, storeId: string, workerKey: string, vinFor: (vehicleId: string) => string, onForget?: () => void) {
+function workerPerson(key: string) {
+  return key.split("|")[2] ?? "";
+}
+
+/** The desk copy, restored after Working as is known and kept across a reload. An empty Working as on a fresh mount does not delete it. A real person change still clears the copy when it passes through blank. */
+export function useDeskCopy(
+  workingAsId: string,
+  storeId: string,
+  workerKey: string,
+  vinFor: (vehicleId: string) => string,
+  nameFor: (customerId: string) => string,
+  onForget?: () => void,
+) {
   const [clipboard, setClipboard] = useState<CopiedAppointment | null>(null);
   const [name, setName] = useState("");
   const vinForRef = useRef(vinFor);
   vinForRef.current = vinFor;
+  const nameForRef = useRef(nameFor);
+  nameForRef.current = nameFor;
   const onForgetRef = useRef(onForget);
   onForgetRef.current = onForget;
+  const lastReal = useRef<{ person: string; key: string } | null>(null);
   const storage = typeof localStorage === "undefined" ? null : localStorage;
-  useForgetCopy(workerKey, (previous) => {
-    const previousPerson = previous.split("|")[2] ?? "";
-    const nextPerson = workerKey.split("|")[2] ?? "";
-    if (!previousPerson || !nextPerson) return;
-    setClipboard(null);
-    setName("");
-    onForgetRef.current?.();
-    if (storage) clearCopiedVisits(storage, previousPerson);
-  });
-  useLayoutEffect(() => {
-    if (!storage || !workingAsId) return;
-    const stored = readCopiedVisit(storage, workingAsId, storeId, workerKey);
+  const showStored = (stored: { copy: CopiedAppointment } | null) => {
     if (!stored) {
       setClipboard(null);
       setName("");
       return;
     }
     setClipboard({ ...stored.copy, vin: stored.copy.vin || vinForRef.current(stored.copy.vehicleId) });
-    setName(stored.name);
+    setName(nameForRef.current(stored.copy.customerId) || "Appointment");
+  };
+  useForgetCopy(workerKey, (previous) => {
+    const nextPerson = workerPerson(workerKey);
+    const previousPerson = workerPerson(previous);
+    if (!nextPerson) {
+      if (previousPerson) lastReal.current = { person: previousPerson, key: previous };
+      return;
+    }
+    const prior = lastReal.current;
+    if (!prior && !previousPerson) {
+      lastReal.current = { person: nextPerson, key: workerKey };
+      return;
+    }
+    const left = prior?.person || previousPerson;
+    const leftKey = prior?.key || previous;
+    if (left && (left !== nextPerson || leftKey !== workerKey)) {
+      setClipboard(null);
+      setName("");
+      onForgetRef.current?.();
+      if (storage) clearCopiedVisits(storage, left);
+    }
+    lastReal.current = { person: nextPerson, key: workerKey };
+  });
+  useLayoutEffect(() => {
+    const person = workerPerson(workerKey);
+    if (person && !lastReal.current) lastReal.current = { person, key: workerKey };
+    if (!storage || !workingAsId) return;
+    showStored(readCopiedVisit(storage, workingAsId, storeId, workerKey));
   }, [storage, workingAsId, storeId, workerKey]);
   useLayoutEffect(() => {
     if (!storage || typeof window === "undefined") return;
     const onStorage = (event: StorageEvent) => {
+      if (event.key === null) {
+        setClipboard(null);
+        setName("");
+        onForgetRef.current?.();
+        return;
+      }
       if (!isCopyStorageKey(event.key)) return;
       if (!workingAsId || event.key !== copyStorageKey(workingAsId, storeId) || event.newValue == null) {
         setClipboard(null);
@@ -155,14 +192,7 @@ export function useDeskCopy(workingAsId: string, storeId: string, workerKey: str
         onForgetRef.current?.();
         return;
       }
-      const stored = readCopiedVisit(storage, workingAsId, storeId, workerKey);
-      if (!stored) {
-        setClipboard(null);
-        setName("");
-        return;
-      }
-      setClipboard({ ...stored.copy, vin: stored.copy.vin || vinForRef.current(stored.copy.vehicleId) });
-      setName(stored.name);
+      showStored(readCopiedVisit(storage, workingAsId, storeId, workerKey));
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
@@ -171,7 +201,7 @@ export function useDeskCopy(workingAsId: string, storeId: string, workerKey: str
     setClipboard(copy);
     setName(copiedName);
     if (!storage || !workingAsId) return;
-    saveCopiedVisit(storage, { workingAsId, storeId, workerKey, name: copiedName, copy });
+    saveCopiedVisit(storage, { workingAsId, storeId, workerKey, copy });
   }
   return { clipboard, name, remember };
 }

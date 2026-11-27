@@ -664,11 +664,16 @@ export function AppointmentCalendar({
   }
 
   const shown = appointments.map((row) => placed(row, draft));
-  const wideLanes = techs.some((tech) => stack(shown.filter((row) => row.date === day && row.techId === tech.id)).some((row) => row.lanes > 1));
+  const laneCounts = techs.map((tech) => {
+    const rows = stack(shown.filter((row) => row.date === day && row.techId === tech.id));
+    return Math.max(1, ...rows.map((row) => row.lanes));
+  });
+  const wideLanes = laneCounts.some((count) => count > 1);
+  const columnTracks = laneCounts.map((count) => `minmax(${count > 1 ? `${count * 9}rem` : "8.5rem"}, 1fr)`).join(" ");
 
   return (
     <div className="card mt-4 overflow-x-auto p-0" style={{ scrollMarginTop: "calc(var(--app-header-height, 0px) + var(--copy-bar-height, 0px))" }}>
-      <div className="grid min-w-[52rem]" data-lane-layout={wideLanes ? "side" : "single"} style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem repeat(${Math.max(techs.length, 1)}, minmax(${wideLanes ? "18rem" : "8.5rem"}, 1fr))` }}>
+      <div className="grid min-w-[52rem]" data-lane-layout={wideLanes ? "side" : "single"} style={{ display: "grid", minWidth: "52rem", gridTemplateColumns: `5.5rem ${columnTracks || "minmax(8.5rem, 1fr)"}` }}>
         <div className="border-b border-line" />
         {columnGroups(techs).map((group) => (
           <div key={group.key} className="border-b border-l border-line px-2 py-1 text-center text-xs font-semibold uppercase tracking-wide" style={{ gridColumn: `span ${group.count}`, background: BOARD_SHADE[group.board].head }}>
@@ -703,17 +708,16 @@ export function AppointmentCalendar({
         </div>
         {techs.map((tech) => {
           const rows = stack(shown.filter((row) => row.date === day && row.techId === tech.id));
-          const laneCount = Math.max(1, ...rows.map((row) => row.lanes));
           return (
             <div
               key={tech.id}
               data-tech={tech.id}
+              data-lanes={laneCounts[techs.indexOf(tech)] ?? 1}
               className="relative border-l border-line"
               style={{
                 position: "relative",
                 height,
-                minWidth: laneCount > 1 ? `${laneCount * 9}rem` : undefined,
-                overflow: "visible",
+                overflow: "hidden",
                 backgroundColor: BOARD_SHADE[tech.board].column,
                 backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${BOARD_SHADE[tech.board].line} 31px, ${BOARD_SHADE[tech.board].line} 32px)`,
               }}

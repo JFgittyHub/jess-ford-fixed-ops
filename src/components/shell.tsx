@@ -20,6 +20,7 @@ import {
   Receipt,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { readTabWorker, writeTabWorker } from "@/lib/tab-worker";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
@@ -162,6 +163,11 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const [backTo, setBackTo] = useState<string | null>(null);
 
   useLayoutEffect(() => {
+    const saved = readTabWorker(window.sessionStorage);
+    if (saved && !useShop.getState().workingAsId) useShop.getState().setWorkingAs(saved);
+  }, []);
+
+  useLayoutEffect(() => {
     const header = headerRef.current;
     if (!header || typeof document === "undefined") return;
     const apply = () => {
@@ -246,7 +252,10 @@ function OpenDesk({ children }: { children: ReactNode }) {
                     aria-label="Working as"
                     className="field h-8 max-w-48"
                     value={staffId}
-                    onChange={(event) => setWorkingAs(event.target.value)}
+                    onChange={(event) => {
+                      setWorkingAs(event.target.value);
+                      writeTabWorker(window.sessionStorage, event.target.value);
+                    }}
                   >
                     <option value="">Choose who is working</option>
                     {managers.length > 0 ? (

@@ -139,7 +139,7 @@ describe("round 30 line length only grows", () => {
       op.dispatchEvent(new Event("change", { bubbles: true }));
     });
     assert.equal(host.querySelector<HTMLInputElement>("[aria-label='Hours for line A']")?.value, "0.3");
-    assert.equal(host.querySelector<HTMLSelectElement>("[aria-label='Visit length']")?.value, "90");
+    assert.equal(host.querySelector<HTMLSelectElement>("[aria-label='Visit length']")?.value, "120");
     flushSync(() => {
       const hourNode = host.querySelector<HTMLInputElement>("[aria-label='Hours for line A']");
       assert.ok(hourNode && setValue);
@@ -238,18 +238,27 @@ describe("round 30 the copy stays with Working as", () => {
     assert.ok(row);
     const storeId = store.getState().activeStoreId;
     const meganKey = copyWorkerKey(store.getState());
+    const customer = store.getState().customers.find((item) => item.id === row.customerId);
+    assert.ok(customer?.name);
     const record: StoredCopy = {
       workingAsId: "megan",
       storeId,
       workerKey: meganKey,
-      name: "Helen Cho",
       copy: { ...copiedFrom(row), vin: row.vin },
     };
     saveCopiedVisit(localStorage, record);
-    assert.equal(JSON.parse(localStorage.getItem(copyStorageKey("megan", storeId)) ?? "{}").copy.vin, "");
+    const storedRaw = localStorage.getItem(copyStorageKey("megan", storeId)) ?? "";
+    assert.equal(JSON.parse(storedRaw).copy.vin, "");
+    assert.equal(storedRaw.includes(customer.name), false);
     const seen: string[] = [];
     function Probe({ workingAsId, workerKey, activeStore }: { workingAsId: string; workerKey: string; activeStore: string }) {
-      const copy = useDeskCopy(workingAsId, activeStore, workerKey, (vehicleId) => store.getState().vehicles.find((item) => item.id === vehicleId)?.vin ?? "");
+      const copy = useDeskCopy(
+        workingAsId,
+        activeStore,
+        workerKey,
+        (vehicleId) => store.getState().vehicles.find((item) => item.id === vehicleId)?.vin ?? "",
+        (customerId) => store.getState().customers.find((item) => item.id === customerId)?.name ?? "Appointment",
+      );
       seen.push(copy.name);
       return createElement("p", { "data-copied-name": copy.name }, copy.name || "none");
     }
@@ -262,11 +271,11 @@ describe("round 30 the copy stays with Working as", () => {
     };
     show({ workingAsId: "", workerKey: `|${storeId}||`, activeStore: storeId });
     assert.equal(host.textContent, "none");
-    assert.equal(readCopiedVisit(localStorage, "megan", storeId, meganKey)?.name, "Helen Cho");
+    assert.equal(readCopiedVisit(localStorage, "megan", storeId, meganKey)?.copy.customerId, row.customerId);
     show({ workingAsId: "megan", workerKey: meganKey, activeStore: storeId });
-    assert.equal(host.textContent, "Helen Cho");
+    assert.equal(host.textContent, customer.name);
     show({ workingAsId: "megan", workerKey: meganKey, activeStore: storeId }, true);
-    assert.equal(host.textContent, "Helen Cho");
+    assert.equal(host.textContent, customer.name);
     store.getState().setWorkingAs("derek");
     const derekKey = copyWorkerKey(store.getState());
     show({ workingAsId: "derek", workerKey: derekKey, activeStore: storeId });
@@ -274,7 +283,7 @@ describe("round 30 the copy stays with Working as", () => {
     assert.equal(readCopiedVisit(localStorage, "megan", storeId, meganKey), null);
     saveCopiedVisit(localStorage, { ...record, workerKey: derekKey, workingAsId: "derek" });
     show({ workingAsId: "derek", workerKey: derekKey, activeStore: storeId }, true);
-    assert.equal(host.textContent, "Helen Cho");
+    assert.equal(host.textContent, customer.name);
     const roleKey = derekKey.replace(/\|[^|]*$/, "|technician");
     show({ workingAsId: "derek", workerKey: roleKey, activeStore: storeId });
     assert.equal(host.textContent, "none");
@@ -284,7 +293,7 @@ describe("round 30 the copy stays with Working as", () => {
     assert.equal(localStorage.getItem(copyStorageKey("derek", storeId)), null);
     saveCopiedVisit(localStorage, { ...record, workerKey: derekKey, workingAsId: "derek" });
     show({ workingAsId: "derek", workerKey: derekKey, activeStore: storeId });
-    assert.equal(host.textContent, "Helen Cho");
+    assert.equal(host.textContent, customer.name);
     localStorage.removeItem(copyStorageKey("derek", storeId));
     const dropped = new window.Event("storage");
     Object.defineProperty(dropped, "key", { value: copyStorageKey("derek", storeId) });
@@ -415,11 +424,18 @@ describe("round 30 rendered copy and readable cards", () => {
       assert.match(copied, /^Copied /);
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.locator("[data-tech]").first().waitFor();
-      const kept = await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("jf-desk-copy:")));
-      assert.ok(kept.length > 0, "the reload deleted the copy");
-      await page.locator("[aria-label='Working as']").selectOption("megan");
       await page.locator("[data-copied]").waitFor();
+      assert.equal(await page.locator("[aria-label='Working as']").inputValue(), "megan");
       assert.match(await page.locator("[data-copied]").innerText(), /^Copied /);
+      const fresh = await browser.newContext();
+      const otherTab = await fresh.newPage();
+      await otherTab.setViewportSize({ width: 1280, height: 800 });
+      await otherTab.clock.install({ time: new Date("2026-11-16T20:00:00.000Z") });
+      await otherTab.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "domcontentloaded" });
+      await otherTab.locator("[data-tech]").first().waitFor();
+      assert.equal(await otherTab.locator("[aria-label='Working as']").inputValue(), "");
+      assert.equal(await otherTab.locator("[data-copied]").count(), 0);
+      await fresh.close();
       await page.getByRole("link", { name: "Pulse" }).click();
       await page.getByRole("link", { name: "Appointments" }).click();
       await page.locator("[data-tech]").first().waitFor();

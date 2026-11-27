@@ -109,7 +109,6 @@ export function linesForDesk(
   lengthOverrideMinutes?: number | null,
 ): AppointmentLine[] {
   if (!lines.length) return prepareConcernLines(lines, laborOpIds, minutes, laborOps);
-  void lengthOverrideMinutes;
   const prepared = lines.map((line, index) => {
     const laborOpId = line.laborOpId || laborOpIds[index] || "";
     if (!laborOpId) return { ...line };
@@ -120,7 +119,16 @@ export function linesForDesk(
     const catalog = op?.hours ?? (lines.length === 1 ? Math.round((minutes / 60) * 10) / 10 : MISC_MIN_HOURS);
     return { ...line, laborOpId, hours: clampLaborHours(op?.opcode ?? "", catalog) };
   });
-  return prepared;
+  if (typeof lengthOverrideMinutes === "number") return prepared;
+  const raw = minutesFromLineHours(prepared.filter((line) => line.laborOpId));
+  if (raw == null || prepared.length === 0) return prepared;
+  const snapped = snapBlockMinutes(raw);
+  if (snapped >= minutes) return prepared;
+  const last = [...prepared].reverse().findIndex((line) => line.laborOpId);
+  if (last < 0) return prepared;
+  const index = prepared.length - 1 - last;
+  const hours = roundLaborHours((prepared[index]?.hours ?? 0) + (minutes - snapped) / 60);
+  return prepared.map((line, at) => at === index ? { ...line, hours } : line);
 }
 
 /**
@@ -143,6 +151,8 @@ export function deskBlockMinutes(input: {
     if (snapped > opened && snapped > current) return snapped;
     return current;
   }
+  const delta = input.lineMinutes - input.openedLineMinutes;
+  if (delta > 0 && snapped < current) return snapBlockMinutes(current + delta);
   return snapped > current ? snapped : current;
 }
 
