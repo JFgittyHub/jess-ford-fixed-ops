@@ -1,5 +1,6 @@
 import { genericOAuthClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
+import { clearTabWorker, withoutTabWorker } from "../tab-worker";
 import { runPreSignInSignOut, runSignOut } from "../../../scripts/sign-out-plan.mjs";
 import { clearCopiedVisits } from "../copied-visit";
 import { GROK_PROVIDERS } from "./providers";
@@ -121,6 +122,7 @@ export async function signIn(
     requestSignOut: () => authClient.signOut(),
     clearCopies: () => {
       if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+      if (typeof sessionStorage !== "undefined") clearTabWorker(sessionStorage);
     },
     clearToken: () => setBearerToken(null),
   });
@@ -171,7 +173,7 @@ function openSignInPopup(providerId: string): Window | null {
   const url = `${origin}/auth/popup?providerId=${encodeURIComponent(providerId)}`;
   // Unique name per attempt so a prior attempt stuck on the SPA is not reused.
   const name = `grok-signin-${Date.now()}`;
-  return window.open(url, name, "popup,width=500,height=650");
+  return withoutTabWorker(window.sessionStorage, () => window.open(url, name, "popup,width=500,height=650"));
 }
 
 /**
@@ -231,6 +233,7 @@ export async function signOut(redirectTo = "/"): Promise<void> {
     // failed response as a rejection for the sequence to act on.
     clearCopies: () => {
       if (typeof localStorage !== "undefined") clearCopiedVisits(localStorage);
+      if (typeof sessionStorage !== "undefined") clearTabWorker(sessionStorage);
     },
     requestSignOut: async () => {
       const { error } = await authClient.signOut();

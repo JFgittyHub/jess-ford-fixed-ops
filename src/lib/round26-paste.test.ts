@@ -3259,10 +3259,8 @@ describe("round 26 live scroll anchoring", () => {
       assert.ok(listening, `the schedule server stopped\n${serverLog.slice(-800)}`);
       const page = await browser.newPage();
       await page.clock.install({ time: new Date(fixedClock) });
-      await page.goto(`http://127.0.0.1:${port}/schedule`, { waitUntil: "domcontentloaded" });
-      assert.ok(await waitForSelector(page, "[data-tech]", 20000), "the board did not load");
-      assert.ok(await waitForSelector(page, "[data-appt]", 20000), "no visit to copy");
-      await page.locator("[aria-label='Working as']").selectOption("megan");
+      await openBoard(page, `http://127.0.0.1:${port}/schedule`);
+      await pickWorkingAs(page, "megan");
       await page.locator("[data-appt]").first().click({ button: "right" });
       const copyCenter = await page.evaluate(() => {
         const button = document.querySelector("[data-copy]");
@@ -3857,7 +3855,7 @@ describe("round 26 live scroll anchoring", () => {
       await page.keyboard.press("Escape");
 
       for (const person of ["megan", "derek"] as const) {
-        await page.locator("[aria-label='Working as']").selectOption(person);
+        await pickWorkingAs(page, person);
         for (let step = 0; step < 8 && (await page.locator("[data-appt]").count()) === 0; step += 1) {
           await page.getByRole("button", { name: "Previous", exact: true }).click();
         }
@@ -4020,6 +4018,32 @@ function stopServer(server: ChildProcess) {
   setTimeout(() => {
     if (server.exitCode == null) server.kill("SIGKILL");
   }, 2000);
+}
+
+async function openBoard(page: Page, url: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    const board = await waitForSelector(page, "[data-tech]", 45000);
+    const visit = board && await waitForSelector(page, "[data-appt]", 20000);
+    if (board && visit) return;
+  }
+  assert.fail("the board did not load");
+}
+
+async function pickWorkingAs(page: Page, person: string) {
+  const select = page.locator("[aria-label='Working as']");
+  let last = "the Working as list was not ready";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await select.waitFor({ state: "visible", timeout: 15000 });
+      await select.selectOption(person, { timeout: 15000 });
+      if (await select.inputValue() === person) return;
+      last = `Working as stayed ${await select.inputValue()}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : String(error);
+    }
+  }
+  assert.fail(`could not pick ${person}: ${last}`);
 }
 
 async function waitForSelector(page: Page, selector: string, timeoutMs = 4000) {

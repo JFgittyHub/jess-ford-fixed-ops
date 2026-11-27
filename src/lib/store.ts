@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, pastCloseMessage, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_REASON, type CapacityResult } from "./capacity";
+import { advisorBookingNote, assessAppointment, overrideReason, overrideReasonLabel, pastCloseMessage, staffBlockMessage, visitLengthError, visitRunsPastClose, visitTimeError, PAST_CLOSE_REASON, CLOSE_REASON_MIN, type CapacityResult } from "./capacity";
+import { clearCopiedVisits } from "./copied-visit";
+import { clearTabWorker, writeTabWorker } from "./tab-worker";
 import { blockAfterLineEdit, blockMinutes, minutesFromLineHours, roundLaborHours, snapBlockMinutes, storedLaborLines } from "./labor-lines";
 import { bookingConcernError, vehicleBookingError } from "./booking";
 import { ARRIVED_CANCEL_CONFIRM, CANCEL_NOTE_MAX, CANCELLED_LOCKED, cancelInputError, deskActor, displayRecordedWhen, mayCancelAppointment, mayCloseRepairOrder, normalizeCancelHistory, repairOrderCancelBlock, repairOrderReinstateBlock } from "./cancel";
@@ -66,7 +68,7 @@ interface ShopActions {
   userStoreId: StoreId;
   stores: Record<StoreId, ShopData>;
   setFocus: (id: string | null) => void;
-  switchStore: (id: StoreId) => void;
+  switchStore: (id: StoreId, options?: { keepWorker?: boolean }) => void;
   updateSettings: (patch: Partial<ShopData["settings"]>) => void;
   updateDayHours: (weekday: WeekdayIndex, patch: Partial<Pick<DayHours, "closed" | "open" | "close">>) => void;
   addClosedDate: (iso: string) => boolean;
@@ -144,7 +146,7 @@ interface ShopActions {
   updateAppointment: (id: string, patch: Partial<Omit<Appointment, "id" | "orderId">>, closeReason?: string, confirmDoubleBook?: boolean, confirmOverride?: boolean) => { ok: boolean; error: string | null; warning?: string | null; needsCloseReason?: boolean; needsDoubleBook?: boolean; needsOverride?: boolean; overrideId?: string | null };
   addAppointment: (input: Omit<ShopData["appointments"][number], "id" | "orderId" | "status">, id?: string, closeReason?: string, audited?: symbol) => string;
   /** Advisor book or edit. Off-store staff is refused. A capacity warning still saves and records an override. */
-  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmDoubleBook?: boolean) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean; needsDoubleBook?: boolean };
+  saveAdvisorAppointment: (input: Omit<Appointment, "id" | "orderId">, existingId?: string, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmDoubleBook?: boolean, confirmOverride?: boolean) => { ok: boolean; appointmentId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean; needsDoubleBook?: boolean; needsOverride?: boolean };
   saveNewCustomerAppointment: (input: NewCustomerInput & Omit<Appointment, "id" | "orderId" | "customerId" | "vehicleId" | "vin" | "status"> & { plate: string }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmOverride?: boolean) => { ok: boolean; appointmentId: string; customerId: string; overrideId: string | null; error: string | null; warning?: string | null; needsTransfer?: boolean; needsCloseReason?: boolean; needsOverride?: boolean };
   cancelAppointment: (id: string, input: { reason: CancelReason; note?: string }, confirmArrived?: boolean) => { ok: boolean; error: string | null; arrivedConfirm: string | null };
   reinstateAppointment: (id: string, confirmOverride?: boolean) => { ok: boolean; overrideId: string | null; error: string | null; warning: string | null };
@@ -793,7 +795,7 @@ function applyVinClaim(state: ShopData, input: {
     const openOnVehicle = state.orders.some((order) => order.vehicleId === ownerVehicle.id && order.status !== "closed");
     if (openOnVehicle) return { ok: false, error: "This vehicle has an open repair order. Close it before transferring the VIN.", warning: null };
     const question = `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${typed.name}?`;
-    if (!input.confirm) return { ok: false, error: null, warning: question, needsTransfer: true };
+    if (input.confirm !== true) return { ok: false, error: null, warning: question, needsTransfer: true };
     const reason = transferReason(input.reason);
     if ("error" in reason) return { ok: false, error: reason.error, warning: question, needsTransfer: true };
     const at = now().toISOString();
@@ -1546,7 +1548,8 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         };
         const typedCloseReason = (value: string | undefined): string | null => {
           const text = asText(cleanFreeText(value ?? ""), REASON_MAX);
-          return text ? text : null;
+          if (!text || text.length < CLOSE_REASON_MIN) return null;
+          return text;
         };
         const logReasonOverride = (
           reason: OverrideReason,
@@ -1596,13 +1599,34 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         userStoreId: desk.activeStoreId,
         stores: desk.stores,
       focusOrderId: null,
-      switchStore: (id) => {
+      switchStore: (id, options) => {
         if (id !== "grand-coulee" && id !== "pullman") return;
+        const current = get().activeStoreId;
+        if (current === id) return;
+        if (!options?.keepWorker && typeof localStorage !== "undefined") {
+          clearCopiedVisits(localStorage);
+          if (typeof sessionStorage !== "undefined") {
+            clearTabWorker(sessionStorage);
+            const owner = typeof window !== "undefined" ? window.name : "";
+            writeTabWorker(sessionStorage, "", { storeId: id, owner });
+          }
+        }
         set((state) => {
           if (state.activeStoreId === id) return state;
           const next = state.stores[id];
           if (!next) return state;
-          return { ...next, roleLog: next.roleLog ?? [], ownershipLog: next.ownershipLog ?? [], settingsLog: next.settingsLog ?? [], requestLog: next.requestLog ?? [], activeStoreId: id, userStoreId: id, stores: state.stores, focusOrderId: null };
+          return {
+            ...next,
+            roleLog: next.roleLog ?? [],
+            ownershipLog: next.ownershipLog ?? [],
+            settingsLog: next.settingsLog ?? [],
+            requestLog: next.requestLog ?? [],
+            activeStoreId: id,
+            userStoreId: id,
+            stores: state.stores,
+            focusOrderId: null,
+            workingAsId: options?.keepWorker ? state.workingAsId : "",
+          };
         });
       },
       setFocus: (id) => set({ focusOrderId: id }),
@@ -3153,7 +3177,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (!namedActor(state)) return { ok: false, orderId: "", error: "Choose who is working.", warning: null };
           if (!rosterEditor(state)) return { ok: false, orderId: "", error: "Only an advisor or service manager can change the VIN.", warning: null };
           const owner = state.customers.find((row) => row.id === ownerVehicle.customerId);
-          if (!input.confirmTransfer) {
+          if (input.confirmTransfer !== true) {
             return { ok: false, orderId: "", error: null, warning: `This VIN is on file for ${owner?.name || "another customer"}. Transfer the vehicle to ${name}?`, needsTransfer: true };
           }
         }
@@ -3165,7 +3189,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         let vehicleId = same && ownerVehicle ? ownerVehicle.id : "";
         let transferNote: RoHistoryEntry | null = null;
         if (ownerVehicle && !same) {
-          const claim = applyVinClaim(draft, { vin: vinText, customerId, confirm: true, reason: input.transferReason, year: input.year, make: input.make, model });
+          const claim = applyVinClaim(draft, { vin: vinText, customerId, confirm: input.confirmTransfer === true, reason: input.transferReason, year: input.year, make: input.make, model });
           if (!claim.ok || !claim.state) return { ok: false, orderId: "", error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
           draft = claim.state;
           vehicleId = claim.vehicleId;
@@ -3245,7 +3269,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const order = state.orders.find((row) => row.id === orderId);
         if (!order) return { ok: false, error: "That repair order is not on this store.", warning: null };
         if (lockedOrder(order)) return { ok: false, error: "This repair order is closed and can't be changed.", warning: null };
-        const claim = applyVinClaim(state, { vin, customerId: order.customerId, confirm: confirmTransfer, reason: transferReasonText, orderId });
+        const claim = applyVinClaim(state, { vin, customerId: order.customerId, confirm: confirmTransfer === true, reason: transferReasonText, orderId });
         if (!claim.ok) return { ok: false, error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
         set(claim.state);
         const visit = { excludeOrderId: order.id, openedAt: order.openedAt, openedOn: order.openedOn, number: order.number, storeId: state.activeStoreId };
@@ -3486,11 +3510,16 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         const rawLineMinutes = Array.isArray(patch.lines) ? minutesFromLineHours(patch.lines.filter((line) => line.laborOpId)) : null;
         const explicitOverride = typeof patch.lengthOverrideMinutes === "number" ? patch.lengthOverrideMinutes : null;
-        const editedBlock = rawLineMinutes == null && typeof patch.minutes === "number" && typeof patch.lengthOverrideMinutes !== "number"
-          ? { minutes: patch.minutes, override: explicitOverride }
+        const typedMinutes = typeof patch.minutes === "number" ? patch.minutes : null;
+        const minutesOnly = typedMinutes !== null && explicitOverride === null && rawLineMinutes == null;
+        const editedBlock = minutesOnly && typedMinutes !== null
+          ? { minutes: typedMinutes, override: explicitOverride }
           : Array.isArray(patch.lines) || patch.lengthOverrideMinutes !== undefined
             ? blockAfterLineEdit(current.minutes, rawLineMinutes, explicitOverride)
-            : { minutes: typeof patch.minutes === "number" ? patch.minutes : current.minutes, override: explicitOverride };
+            : { minutes: typedMinutes ?? current.minutes, override: explicitOverride };
+        if (rawLineMinutes !== null && typedMinutes !== null && explicitOverride === null && typedMinutes !== editedBlock.minutes) {
+          return { ok: false, error: "That length is not on this desk." };
+        }
         const effectiveDate = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : current.date;
         const effectiveTime = patch.time !== undefined ? patch.time : current.time;
         const effectiveMinutes = editedBlock.minutes;
@@ -3525,7 +3554,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
             advisorId: patch.advisorId || current.advisorId,
             techId: patch.techId || current.techId,
             laborOpIds: Array.isArray(patch.laborOpIds) ? patch.laborOpIds : current.laborOpIds ?? [],
-            laborHours: typeof explicitOverride === "number" || rawLineMinutes !== null ? effectiveMinutes / 60 : undefined,
+            laborHours: (minutesOnly && (Array.isArray(patch.laborOpIds) ? patch.laborOpIds : current.laborOpIds ?? []).length === 0) || typeof explicitOverride === "number" || rawLineMinutes !== null ? effectiveMinutes / 60 : undefined,
             ignoreId: id,
           },
         });
@@ -3792,7 +3821,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         }
         return appointmentId;
       },
-      saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText, closeReason, confirmDoubleBook = false) => {
+      saveAdvisorAppointment: (input, existingId, confirmTransfer, transferReasonText, closeReason, confirmDoubleBook = false, confirmOverride = false) => {
         const state = get();
         if (ownStoreError(state)) return { ok: false, appointmentId: "", overrideId: null, error: ownStoreError(state) };
         if (!namedActor(state) || !rosterEditor(state)) {
@@ -3932,7 +3961,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (vinError) return { ok: false, appointmentId: "", overrideId: null, error: vinError };
           const selected = state.vehicles.find((row) => row.id === input.vehicleId);
           if (!selected || !sameVin(selected.vin, vinText) || !currentVehicle(selected)) {
-            const claim = applyVinClaim(state, { vin: vinText, customerId: input.customerId, confirm: confirmTransfer, reason: transferReasonText, year: selected?.year, make: selected?.make, model: selected?.model });
+            const claim = applyVinClaim(state, { vin: vinText, customerId: input.customerId, confirm: confirmTransfer === true, reason: transferReasonText, year: selected?.year, make: selected?.make, model: selected?.model });
             if (!claim.ok) return { ok: false, appointmentId: "", overrideId: null, error: claim.error, warning: claim.warning, needsTransfer: claim.needsTransfer };
             claimState = claim.state;
             vehicleId = claim.vehicleId;
@@ -3951,11 +3980,19 @@ export function createShopStore(options: ShopStoreOptions = {}) {
           if (claimState) set(claimState);
           appointmentCommitProbe?.();
           if (existingId) {
-            const edited = get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId }, closeNote ?? undefined, confirmDoubleBook === true, true);
+            const edited = get().updateAppointment(existingId, { ...input, vin: vinText, vehicleId }, closeNote ?? undefined, confirmDoubleBook === true, confirmOverride === true);
             if (!edited.ok) {
-              if (edited.needsDoubleBook) {
+              if (edited.needsDoubleBook || edited.needsOverride) {
                 set(snapshot);
-                return { ok: false, appointmentId: existingId, overrideId: null, error: null, warning: edited.warning ?? null, needsDoubleBook: true };
+                return {
+                  ok: false,
+                  appointmentId: existingId,
+                  overrideId: null,
+                  error: null,
+                  warning: edited.warning ?? null,
+                  needsDoubleBook: edited.needsDoubleBook,
+                  needsOverride: edited.needsOverride,
+                };
               }
               throw new Error(edited.error ?? "That appointment could not be saved.");
             }
@@ -4157,7 +4194,7 @@ export function createShopStore(options: ShopStoreOptions = {}) {
         const linked = current.orderId ? state.orders.find((order) => order.id === current.orderId) : undefined;
         const orderBlock = repairOrderCancelBlock(current.orderId, linked);
         if (orderBlock) return { ok: false, error: orderBlock, arrivedConfirm: null };
-        if (current.status === "arrived" && !confirmArrived) {
+        if (current.status === "arrived" && confirmArrived !== true) {
           return { ok: false, error: null, arrivedConfirm: ARRIVED_CANCEL_CONFIRM };
         }
         const reasonError = cancelInputError(input.reason, input.note ?? "");

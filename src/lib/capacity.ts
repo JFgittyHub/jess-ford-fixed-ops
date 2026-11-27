@@ -395,6 +395,15 @@ export function pastCloseMessage(scheduling: SchedulingSettings, iso: string): s
   return `This visit runs past closing (${label}). A service manager can approve it.`;
 }
 export const PAST_CLOSE_REASON = "Add a reason for running past close.";
+
+/** A past-close note has to say something. "Tow truck" still counts; "yes" does not. */
+export const CLOSE_REASON_MIN = 8;
+
+export function realCloseReason(value: unknown): string | null {
+  const text = (typeof value === "string" ? value : "").replace(/\s+/g, " ").trim().slice(0, 500);
+  if (text.length < CLOSE_REASON_MIN) return null;
+  return text;
+}
 export const PAST_TODAY_MESSAGE = "That start time has already passed today.";
 
 /** True when the visit starts on the grid and finishes after that day's close. */

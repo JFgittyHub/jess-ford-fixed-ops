@@ -166,7 +166,7 @@ describe("round 26 block, capacity, and the resize pad", () => {
     const edited = store.getState().saveAdvisorAppointment(body(store, {
       time: "08:00",
       lines: [{ id: "a", code: "A", concern: "Grew", laborOpId: misc.id, hours: 6 }],
-    }), second.appointmentId);
+    }), second.appointmentId, undefined, undefined, undefined, false, true);
     assert.equal(edited.ok, true, edited.error ?? "");
     assert.ok(edited.overrideId);
     const row = store.getState().overrides.find((item) => item.id === edited.overrideId);

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { advisorBookingNote, assessAppointment, pastCloseMessage, PAST_CLOSE_REASON, visitRunsPastClose, visitTimeError } from "./capacity";
+import { advisorBookingNote, assessAppointment, pastCloseMessage, PAST_CLOSE_REASON, realCloseReason, visitRunsPastClose, visitTimeError } from "./capacity";
 import { deskActor } from "./cancel";
 import { clearCopiedVisits, copyStorageKey, isCopyStorageKey, readCopiedVisit, saveCopiedVisit } from "./copied-visit";
 import { bookingDateMessage } from "./store";
@@ -152,7 +152,13 @@ export function useDeskCopy(
     const nextPerson = workerPerson(workerKey);
     const previousPerson = workerPerson(previous);
     if (!nextPerson) {
-      if (previousPerson) lastReal.current = { person: previousPerson, key: previous };
+      if (previousPerson) {
+        setClipboard(null);
+        setName("");
+        onForgetRef.current?.();
+        if (storage) clearCopiedVisits(storage, previousPerson);
+      }
+      lastReal.current = null;
       return;
     }
     const prior = lastReal.current;
@@ -201,7 +207,11 @@ export function useDeskCopy(
     setClipboard(copy);
     setName(copiedName);
     if (!storage || !workingAsId) return;
-    saveCopiedVisit(storage, { workingAsId, storeId, workerKey, copy });
+    const saved = saveCopiedVisit(storage, { workingAsId, storeId, workerKey, copy });
+    if (!saved.ok) {
+      setClipboard(null);
+      setName("");
+    }
   }
   return { clipboard, name, remember };
 }
@@ -263,7 +273,7 @@ export function commitPaste(
   if (pastClose && deskActor(state) !== "service-manager") {
     return { ok: false, error: pastCloseMessage(state.settings.scheduling, booked.date), appointmentId: "", overrideId: null };
   }
-  const reason = opts?.closeReason?.trim() ?? "";
+  const reason = realCloseReason(opts?.closeReason) ?? "";
   if (pastClose && !reason) {
     return { ok: false, error: PAST_CLOSE_REASON, needsCloseReason: true, appointmentId: "", overrideId: null };
   }
@@ -287,7 +297,7 @@ export function commitPaste(
   });
   if (judged.blocked) return { ok: false, error: judged.blocked, appointmentId: "", overrideId: null };
   const warning = advisorBookingNote(judged);
-  if (warning && !opts?.confirmOverride) {
+  if (warning && opts?.confirmOverride !== true) {
     return { ok: false, error: null, warning, needsOverride: true, appointmentId: "", overrideId: null };
   }
   const saved = state.saveAdvisorAppointment(booked, undefined, undefined, undefined, pastClose ? reason : undefined);

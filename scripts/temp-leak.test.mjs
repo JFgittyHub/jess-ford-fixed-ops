@@ -28,7 +28,7 @@ test("script suites leave no temp directories", () => {
       encoding: "utf8",
     });
     assert.equal(run.status, 0, run.stderr || run.stdout);
-    assert.match(run.stdout, /# pass [1-9]/);
+    assert.match(run.stdout, /(?:#|ℹ) pass [1-9]/);
     assert.deepEqual(readdirSync(scratch), []);
   } finally {
     rmSync(scratch, { recursive: true, force: true });

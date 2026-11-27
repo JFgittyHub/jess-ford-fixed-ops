@@ -20,7 +20,7 @@ import {
   Receipt,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { readTabWorker, writeTabWorker } from "@/lib/tab-worker";
+import { readTabSlot, writeTabWorker } from "@/lib/tab-worker";
 import { cn } from "@/lib/cn";
 import { confirmedDemoStaffAccess, isDemoMode } from "@/lib/demo";
 import { todayLabel } from "@/lib/format";
@@ -163,8 +163,14 @@ function OpenDesk({ children }: { children: ReactNode }) {
   const [backTo, setBackTo] = useState<string | null>(null);
 
   useLayoutEffect(() => {
-    const saved = readTabWorker(window.sessionStorage);
-    if (saved && !useShop.getState().workingAsId) useShop.getState().setWorkingAs(saved);
+    if (!window.name) window.name = `desk-${crypto.randomUUID?.() ?? Date.now()}`;
+    const slot = readTabSlot(window.sessionStorage, window.name);
+    if (!slot) return;
+    const state = useShop.getState();
+    if ((slot.storeId === "pullman" || slot.storeId === "grand-coulee") && slot.storeId !== state.activeStoreId) {
+      state.switchStore(slot.storeId, { keepWorker: true });
+    }
+    if (slot.person && !useShop.getState().workingAsId) useShop.getState().setWorkingAs(slot.person);
   }, []);
 
   useLayoutEffect(() => {
@@ -254,7 +260,8 @@ function OpenDesk({ children }: { children: ReactNode }) {
                     value={staffId}
                     onChange={(event) => {
                       setWorkingAs(event.target.value);
-                      writeTabWorker(window.sessionStorage, event.target.value);
+                      if (!window.name) window.name = `desk-${crypto.randomUUID?.() ?? Date.now()}`;
+                      writeTabWorker(window.sessionStorage, event.target.value, { storeId: activeStoreId, owner: window.name });
                     }}
                   >
                     <option value="">Choose who is working</option>

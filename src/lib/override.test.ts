@@ -46,6 +46,11 @@ describe("capacity overrides", () => {
     const edited = shop.getState().saveAdvisorAppointment(
       draft(shop.getState(), { minutes: 60, concern: "Oil change grew", laborOpIds: ["op-heavy"] }),
       saved.appointmentId,
+      undefined,
+      undefined,
+      undefined,
+      false,
+      true,
     );
     assert.equal(edited.appointmentId, saved.appointmentId);
     assert.equal(shop.getState().overrides.length, 1);

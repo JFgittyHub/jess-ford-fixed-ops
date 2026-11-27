@@ -10,7 +10,7 @@ import { OnlineRequestList } from "@/components/online-request-list";
 import { Shell } from "@/components/shell";
 import { Button, Field, Modal, Pill } from "@/components/ui";
 import { VEHICLE_MISSING, bookingAdvisorId, bookingFormBlock, deskSeedFor, deskSeedOnStore, type DeskSeed } from "@/lib/booking";
-import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, pastCloseMessage, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, shopMinutes, visitRunsPastClose, visitTimeError } from "@/lib/capacity";
+import { advisorBookingNote, appointmentLoads, assessAppointment, fittingStartTimes, nextOpenVisit, onlineSlots, pastCloseMessage, PAST_CLOSE_REASON, PAST_TODAY_MESSAGE, realCloseReason, shopMinutes, visitRunsPastClose, visitTimeError } from "@/lib/capacity";
 import { filterDeskCustomers, tenDigitPhone } from "@/lib/desk-customers";
 import { ARRIVED_CANCEL_CONFIRM, appointmentStatusLabel, appointmentsOnBoard, cancellationLine, cancelledOnDay, deskActor, mayCancelAppointment, repairOrderCancelBlock } from "@/lib/cancel";
 import { roCreationEnabled } from "@/lib/ro-flags";
@@ -655,9 +655,10 @@ function ScheduleDesk({ openRequests = false }: { openRequests?: boolean }) {
                 scheduling={shop.settings.scheduling}
                 capacityFor={(draft) => capacityFor(draft, editing.id)}
                 initial={editing}
-                onSubmit={(value, confirmTransfer, transferReason, closeReason, confirmDoubleBook) => {
-                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason, closeReason, confirmDoubleBook);
+                onSubmit={(value, confirmTransfer, transferReason, closeReason, confirmDoubleBook, confirmOverride) => {
+                  const result = shop.saveAdvisorAppointment(value, editing.id, confirmTransfer, transferReason, closeReason, confirmDoubleBook, confirmOverride);
                   if (result.needsDoubleBook) return { error: null, needsDoubleBook: true, warning: result.warning ?? null };
+                  if (result.needsOverride) return { error: null, needsOverride: true, warning: result.warning ?? null };
                   if (result.needsTransfer) return { error: result.error ?? null, needsTransfer: true, warning: result.warning ?? null };
                   if (!result.ok) return result.error;
                   setEditingId(null);
@@ -868,7 +869,7 @@ export function AppointmentFields({
   manager?: boolean;
   scheduling?: SchedulingSettings;
   capacityFor?: (draft: { date: string; time: string; minutes: number; advisorId: string; techId: string; laborOpIds: string[]; laborHours?: number }) => { blocked: string | null; warning: string | null };
-  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status" | "lengthOverrideMinutes">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmDoubleBook?: boolean) => string | null | { error: string | null; needsTransfer?: boolean; needsDoubleBook?: boolean; warning?: string | null };
+  onSubmit: (value: Pick<Appointment, "date" | "time" | "minutes" | "customerId" | "vehicleId" | "advisorId" | "techId" | "concern" | "lines" | "vin" | "laborOpIds" | "lane" | "status" | "lengthOverrideMinutes">, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmDoubleBook?: boolean, confirmOverride?: boolean) => string | null | { error: string | null; needsTransfer?: boolean; needsDoubleBook?: boolean; needsOverride?: boolean; warning?: string | null };
   onCreate?: (value: { name: string; phone: string; email: string; year: number; make: string; model: string; vin: string; plate: string; date: string; time: string; minutes: number; advisorId: string; techId: string; lane: string; concern: string; lines: Appointment["lines"]; laborOpIds: string[] }, confirmTransfer?: boolean, transferReason?: string, closeReason?: string, confirmOverride?: boolean) => string | null | { error: string | null; needsTransfer?: boolean; needsOverride?: boolean; warning?: string | null };
   onDirty?: () => void;
   onVisitChange?: (next: { date: string; time: string }) => void;
@@ -889,7 +890,7 @@ export function AppointmentFields({
   const [storedOpIds] = useState(initial.laborOpIds ?? []);
   const countedLines = lines.filter((line) => line.laborOpId && typeof line.hours === "number");
   const rawLineMinutes = minutesFromLineHours(countedLines);
-  const openedLineMinutes = minutesFromLineHours(openedLines.current.filter((line) => line.concern.trim() && line.laborOpId)) ?? 0;
+  const openedLineMinutes = minutesFromLineHours(openedLines.current.filter((line) => line.laborOpId && typeof line.hours === "number")) ?? 0;
   const lineSnap = rawLineMinutes !== null ? snapBlockMinutes(rawLineMinutes) : null;
   const visitMinutes = deskBlockMinutes({
     openedMinutes: initial.minutes,
@@ -983,7 +984,7 @@ export function AppointmentFields({
         const kept = lines.map((line, index) => ({ ...line, code: lineLetter(index), concern: line.concern.trim() })).filter((line) => line.concern);
         if (creating && onCreate) {
           if (runsPastClose && !manager) return;
-          if (runsPastClose && !closeReason.trim()) {
+          if (runsPastClose && !realCloseReason(closeReason)) {
             setFormError(PAST_CLOSE_REASON);
             return;
           }
@@ -1026,14 +1027,19 @@ export function AppointmentFields({
           return;
         }
         if (runsPastClose && !manager) return;
-        if (runsPastClose && !closeReason.trim()) {
+        if (runsPastClose && !realCloseReason(closeReason)) {
           setFormError(PAST_CLOSE_REASON);
           return;
         }
         const sentDouble = doubleRef.current;
+        const sentCapacity = capacityRef.current;
         const linesGrew = lineSnap !== null && lineSnap > (blockOverride ?? initial.minutes) && lineSnap > snapBlockMinutes(Math.max(0, openedLineMinutes));
-        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: linesGrew ? null : blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, sentDouble);
+        const result = onSubmit({ date, time, minutes: visitMinutes, lengthOverrideMinutes: linesGrew ? null : blockOverride, customerId, vehicleId: resolvedVehicle, advisorId, techId, lines: kept, concern: kept.map((line) => `${line.code}. ${line.concern}`).join(" · "), vin: vin.trim().toUpperCase(), laborOpIds, lane, status }, transferRef.current, transferReason, runsPastClose ? closeReason : undefined, sentDouble, sentCapacity);
         transferRef.current = false;
+        if (result && typeof result === "object" && result.needsOverride) {
+          capacityRef.current = false;
+          return;
+        }
         if (result && typeof result === "object" && result.needsDoubleBook) {
           doubleRef.current = false;
           setDoubleBook(result.warning || "Keeping both double-books the advisor.");

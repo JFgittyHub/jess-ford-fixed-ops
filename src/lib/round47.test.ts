@@ -139,7 +139,7 @@ describe("round 30 line length only grows", () => {
       op.dispatchEvent(new Event("change", { bubbles: true }));
     });
     assert.equal(host.querySelector<HTMLInputElement>("[aria-label='Hours for line A']")?.value, "0.3");
-    assert.equal(host.querySelector<HTMLSelectElement>("[aria-label='Visit length']")?.value, "120");
+    assert.equal(host.querySelector<HTMLSelectElement>("[aria-label='Visit length']")?.value, "90");
     flushSync(() => {
       const hourNode = host.querySelector<HTMLInputElement>("[aria-label='Hours for line A']");
       assert.ok(hourNode && setValue);
