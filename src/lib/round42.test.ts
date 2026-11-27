@@ -138,7 +138,7 @@ describe("round 25 block length", () => {
     const before = store.getState().overrides.length;
     const edited = store.getState().updateAppointment(second.appointmentId, {
       lines: [{ id: "a", code: "A", concern: "Short", laborOpId: misc.id, hours: 6 }],
-    });
+    }, undefined, false, true);
     assert.equal(edited.ok, true, edited.error ?? "");
     assert.equal(store.getState().appointments.find((row) => row.id === second.appointmentId)?.minutes, 360);
     assert.ok(store.getState().overrides.length > before);
